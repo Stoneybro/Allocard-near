@@ -150,6 +150,7 @@ mod tests {
         let (req_id, hash1) = compute_execute_hash(network_domain, &contract_id, &actor, &request).unwrap();
         let (_, hash2) = compute_execute_hash(network_domain, &contract_id, &actor, &request).unwrap();
 
+        println!("CANONICAL TEST HASH: {}", hex::encode(hash1));
         assert_eq!(hash1, hash2);
         assert_eq!(req_id[0], 0xa0);
         assert_eq!(req_id[31], 0x01);

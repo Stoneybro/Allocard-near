@@ -2,9 +2,14 @@
   "name": "@allocard/scripts",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "contracts:build": "bash ./contracts-build.sh",
-    "contracts:test": "bash ./contracts-test.sh"
+    "contracts:test": "bash ./contracts-test.sh",
+    "demo": "node --experimental-strip-types ./demo-cli.ts"
+  },
+  "dependencies": {
+    "@allocard/delegation-sdk": "workspace:*"
   }
 }
 
