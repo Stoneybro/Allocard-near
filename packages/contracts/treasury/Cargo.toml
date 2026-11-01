@@ -1,0 +1,23 @@
+[package]
+name = "allocard-treasury"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = { workspace = true }
+near-contract-standards = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+borsh = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+near-workspaces = { workspace = true }
+tokio = { workspace = true }
+

@@ -1,0 +1,10 @@
+{
+  "name": "@allocard/scripts",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "contracts:build": "bash ./contracts-build.sh",
+    "contracts:test": "bash ./contracts-test.sh"
+  }
+}
+

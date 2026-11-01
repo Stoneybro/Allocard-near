@@ -1,0 +1,16 @@
+{
+  "name": "allocard",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "contracts:build": "pnpm --filter @allocard/scripts run contracts:build",
+    "contracts:test": "pnpm --filter @allocard/scripts run contracts:test",
+    "sdk:build": "pnpm --filter @allocard/delegation-sdk run build",
+    "sdk:test": "pnpm --filter @allocard/delegation-sdk run test",
+    "web:dev": "pnpm --filter @allocard/web run dev",
+    "web:build": "pnpm --filter @allocard/web run build",
+    "delegation:check": "pnpm run sdk:build && pnpm run sdk:test && pnpm run web:build"
+  },
+  "packageManager": "pnpm@11.28.10"
+}
+

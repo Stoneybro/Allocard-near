@@ -1,0 +1,38 @@
+{
+  "name": "@allocard/delegation-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TypeScript SDK for the Allocard Delegation Engine on native NEAR",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.4.0",
+    "borsh": "^2.0.0",
+    "near-api-js": "^7.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "tsup": "^9.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  }
+}
+
