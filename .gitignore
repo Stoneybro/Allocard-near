@@ -2,6 +2,10 @@
 node_modules/
 .pnpm-store/
 
+# Temporary legacy imports
+legacy-frontend/
+temp*/
+
 # Build outputs
 .next/
 out/

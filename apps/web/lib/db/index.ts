@@ -1,0 +1,30 @@
+import { neon } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-http";
+import * as schema from "./schema";
+
+const databaseUrl = 
+  process.env.DATABASE_URL || 
+  process.env.ALLOCARD_STORAGE_DATABASE_URL ||
+  process.env.ALLOCARD_STORAGE_DATABASE_URL_UNPOOLED || 
+  process.env.ALLOCARD_STORAGE_POSTGRES_URL ||
+  process.env.POSTGRES_URL ||
+  process.env.POSTGRES_URL_NON_POOLING;
+
+function getDb() {
+  if (!databaseUrl) {
+    throw new Error("DATABASE_URL or equivalent environment variable is required to initialize the database client");
+  }
+  const sql = neon(databaseUrl);
+  return drizzle(sql, { schema });
+}
+
+let _db: ReturnType<typeof drizzle<typeof schema>> | null = null;
+
+export const db = new Proxy({} as ReturnType<typeof drizzle<typeof schema>>, {
+  get(_target, prop) {
+    if (!_db) {
+      _db = getDb();
+    }
+    return (_db as any)[prop];
+  },
+});
