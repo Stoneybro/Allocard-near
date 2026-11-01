@@ -1,194 +1,63 @@
-# Allocard Delegation Foundation
+# Allocard delegation foundation
 
-> **Autonomous Corporate Treasury & Hierarchical Delegation Engine on Native NEAR Protocol**
+Allocard lets principals spend from one company treasury within contract-enforced permissions, without prefunding employee wallets. Each payment selects a permission and satisfies every ancestor's policy and shared budget.
 
-Allocard provides an onchain treasury and authority delegation infrastructure built directly on native NEAR. It enables corporate treasuries, DAOs, and automated AI agents to execute budgetary transfers through cryptographically bounded, non-monotonic permissions without giving delegates direct access to root private keys or unconstrained spending authority.
+This repository contains a Rust treasury contract, a local TypeScript SDK, deployment tooling, and a **local UI simulation**. The UI does not connect a wallet, read live balances, or submit payments. Its sample outcomes do not demonstrate contract execution.
 
----
+## Layout and checks
 
-## 1. Architecture & Security Invariants
+- `packages/contracts/treasury`: Rust contract and sandbox tests.
+- `packages/delegation-sdk`: wallet-independent client, canonical hashes, exact token amounts, and optional `@allocard/delegation-sdk/near-api` binding for near-api-js v7.
+- `packages/scripts`: build, test, deployment, and offline envelope demo commands.
+- `apps/web`: Next.js simulation importing the SDK.
+- `docs/delegation/fixtures`: shared contract/SDK JSON fixtures.
 
-Allocard is built as a **Single Treasury Contract** model on NEAR, enforcing all financial, policy, and reservation constraints within atomic receipt boundaries:
+Run from the repository root:
 
-```
-                          ┌───────────────────────────┐
-                          │   Treasury Owner (Root)   │
-                          └─────────────┬─────────────┘
-                                        │ (Depth 0)
-                                        ▼
-                          ┌───────────────────────────┐
-                          │   Finance Manager (L1)    │  Lifetime: 10 NEAR
-                          └─────────────┬─────────────┘
-                                        │ (Depth 1)
-                                        ▼
-                          ┌───────────────────────────┐
-                          │   AI Travel Agent (L2)    │  Lifetime: 2 NEAR (Strict Recipient)
-                          └─────────────┬─────────────┘
-                                        │ (Execute Action)
-                                        ▼
-    ┌────────────────────────────────────────────────────────────────────────┐
-    │                        Allocard Treasury Contract                      │
-    │  1. Check Preflight (Epoch, Expiry, Revocation, Principal Blocks)      │
-    │  2. Pure Policy Path Evaluation (Ancestry, Ceilings, MetaMask Caps)    │
-    │  3. Lock Reservations (Usage.pending += amount)                       │
-    │  4. Debit Available Liquidity & Increment Pending Outgoing             │
-    │  5. Dispatch External Transfer (NearToken::transfer or ft_transfer)   │
-    │  6. Private Callback (on_transfer_result):                             │
-    │     - Success: pending -> settled, debit pending_outgoing              │
-    │     - Failure: release pending, restore principal to available         │
-    └────────────────────────────────────────────────────────────────────────┘
-```
-
-### Key Security Invariants
-1. **Permission Terminology**: All authority records are strictly termed **Permissions** (formerly "Grants"). A permission confers authority to spend up to configured budgets; it does not transfer custody of underlying tokens.
-2. **Two-Phase Atomic Dispatch**: Budget reservations across **all ancestors** in the delegation chain and ledger debiting occur synchronously in the originating receipt *before* any promise is scheduled.
-3. **Private Settlement Callback**: The `on_transfer_result` method is strictly `#[private]`, verified by NEAR runtime predecessor checks (`predecessor == current_account_id`). External callers cannot forge or manipulate execution outcomes.
-4. **Ancestry & Non-Monotonic Narrowing**: Child permissions must strictly equal or narrow their parent terms (ceilings, lifetime budgets, execution counts, recipient allowlists, and duration). Siblings independently consume their shared parent's capacity.
-5. **Replay Protection**: Versioned Borsh envelopes (`ALLOCARD_EXECUTE_V1`, `ALLOCARD_OWNER_WITHDRAW_V1`) bind domain, network domain, contract ID, actor, request ID, permission ID, action, and deadline. Replaying identical requests is idempotent; conflicting payloads are rejected with `ALLOCARD_REQUEST_ID_CONFLICT`.
-6. **O(1) Invalidation & 2-Step Handover**: The owner can invalidate all outstanding permissions in O(1) by advancing `authority_epoch`. Ownership handover requires explicit nominee acceptance.
-
----
-
-## 2. Monorepo Structure
-
-```
-Allocard/
-├── apps/
-│   └── web/                   # Next.js 16 (App Router, Turbopack, Tailwind CSS v4)
-├── packages/
-│   ├── contracts/
-│   │   ├── res/               # Compiled allocard_treasury.wasm (775 KB)
-│   │   └── treasury/          # Rust NEAR Smart Contract (near-sdk 5.30.0)
-│   ├── delegation-sdk/        # Local TypeScript SDK (near-api-js, @noble/hashes)
-│   └── scripts/               # Automation, compilation, deployment & CLI demo
-├── pnpm-workspace.yaml
-├── package.json
-└── README.md
-```
-
----
-
-## 3. Verified Commands
-
-All commands are verified and runnable from the repository root:
-
-### Contract Compilation & Testing
-```bash
-# Compile Rust treasury contract to optimized Wasm:
+```sh
 pnpm run contracts:build
-
-# Run all 24 contract unit tests + 3 sandbox integration tests:
 pnpm run contracts:test
-```
-
-### TypeScript SDK Build & Vitest Tests
-```bash
-# Build TypeScript SDK (CommonJS, ESM, and TypeScript declarations):
 pnpm run sdk:build
-
-# Run vitest test suite (canonical hashing, client mocks, request IDs):
 pnpm run sdk:test
-```
-
-### Independent CLI Demonstration
-```bash
-# Run standalone CLI demo verifying request IDs and canonical Borsh envelopes:
-pnpm run demo
-```
-
-### Next.js Web Application
-```bash
-# Run Next.js web application in development mode:
-pnpm run web:dev
-
-# Build production optimized Next.js app:
+pnpm --filter @allocard/delegation-sdk run typecheck
 pnpm run web:build
-```
-
-### Full Repository Pre-flight Check
-```bash
-# Validates SDK build, SDK unit tests, and Next.js production build:
 pnpm run delegation:check
 ```
 
----
+`contracts:test` builds fresh Wasm before running unit and sandbox tests. `delegation:check` includes contract tests, SDK build/tests, and the web build. Sandbox tests need permission to create local sockets and start the NEAR sandbox process. They are not silently skipped if the environment prevents that. To run only Rust unit tests: `cargo test --manifest-path packages/contracts/Cargo.toml --lib`.
 
-## 4. Measured Gas Limits (NEAR Sandbox Integration)
+`pnpm run demo` prepares canonical envelopes offline; it does not send transactions or verify settlement on a network.
 
-Sandbox measurements executed with `near-workspaces` across a 3-depth delegation hierarchy (`Root -> L1 -> L2 -> Leaf`):
+## Accounting and settlement
 
-| Operation | Measured Gas Burnt | Configured Allocation | Status |
-|---|---|---|---|
-| **3-Level Delegated Execution** | **8,477,663,094,096 Gas (8.48 TGas)** | 20 TGas (Transfer) + 30 TGas (Callback) | Well within limit |
-| **Private Settlement Callback** | ~2.5 TGas | 30 TGas | Well within limit |
-| **Root Permission Creation** | ~3.8 TGas | 40 TGas | Well within limit |
-| **Child Permission Creation** | ~4.2 TGas | 40 TGas | Well within limit |
+- Permission creation reserves no funds. Execution reserves each ancestor budget and debits available liquidity before scheduling a transfer.
+- Deferred collection writes are flushed and actual persistent growth is charged to `storage_funding_remaining`. Storage freed later becomes unallocated surplus.
+- Each execution separately reserves the maximum callback record growth in `callback_storage_reserved`. Settlement does not depend on a later storage top-up.
+- FT marker deposits debit `operating_budget_remaining`. Native payments protect available native principal, existing/projected storage, unused storage funding, callback reserves, and the greater of remaining operating funds and the configured operating floor.
+- Funds already dispatched are excluded from `available`; NEAR debits outgoing promise deposits from the runtime account balance. Do not subtract historical `pending_outgoing` a second time from that balance. Pending accounting remains until settlement, including after revocation or pause.
+- Only a proven failed receipt restores principal. Oversized/unreadable callback data leaves the execution pending and flagged for reconciliation. No timeout or administrator assertion releases reservations.
+- Identical withdrawal or delegated requests return the recorded execution even after pause, epoch changes, or ownership handover. Deliberate retries after failure require a new request ID.
 
----
+## SDK boundary
 
-## 5. Canonical Test Vectors
+JSON IDs, timestamps, amounts, and fixed-window indexes are decimal strings. Hashes are 64-character lowercase hex. Optional response fields can be `null`. `docs/delegation/fixtures/execution.json` is round-tripped by Rust and consumed by SDK tests, including integers above JavaScript's safe range.
 
-Both the Rust contract (`allocard-treasury`) and TypeScript SDK (`@allocard/delegation-sdk`) produce the identical canonical SHA-256 request hash:
+Inject a `NearCaller` for mutations and views. Mutation ID results accept either a decoded decimal string or a final NEAR outcome with a JSON-encoded `SuccessValue`. Failed, pending, signing-only, and malformed results are rejected. The optional near-api-js adapter waits for `FINAL`; the client then polls the contract execution record to distinguish dispatch from payment settlement.
 
-```json
-{
-  "network_domain": "near:mainnet",
-  "contract_id": "treasury.allocard.near",
-  "actor": "employee.near",
-  "request": {
-    "api_version": 1,
-    "request_id": "a000000000000000000000000000000000000000000000000000000000000001",
-    "permission_id": "42",
-    "action": {
-      "type": "Transfer",
-      "asset": { "type": "NativeNear" },
-      "receiver": "vendor.near",
-      "amount": "1000000000000000000000000"
-    },
-    "deadline_ms": "1700000000000"
-  }
-}
-```
+Use `parseTokenAmount` and `formatTokenAmount` for exact amounts. Floating-point arithmetic and scientific notation are not supported for transaction amounts.
 
-**Canonical SHA-256 Hash**:
-```
-1349d7047d8f44b5f5ea2ec182812d3aa0f40363d5add7e9dae19ac7e0b1ecd6
-```
+## Development deployment
 
----
+The updated treasury uses **state schema 2**. Its extra callback-reserve field changes Borsh state layout. Use a fresh deployment; do not overwrite a schema-1 treasury with this Wasm. No migration or application upgrade endpoint is supplied.
 
-## 6. Standard Error Codes
+The deployment script builds current code and batches `DeployContract` and `new` in one atomic transaction. It verifies the code hash, configured owner, and network domain afterward. The target account must already exist and hold enough NEAR for code/state storage and the operating floor.
 
-All contract panics use the stable `ALLOCARD_*` error prefix:
+Set `TREASURY_ACCOUNT_ID`, `OWNER_ACCOUNT_ID`, `NEAR_NETWORK` (default `testnet`), and deployment-only `TREASURY_DEPLOY_KEY`, then run `bash packages/scripts/deploy.sh`. `NEAR_RPC_URL` optionally overrides RPC. Keep deployment credentials outside the repository and outside the app server/browser. The script retains deployment keys and reports that bypass; it does not claim to create a locked production treasury.
 
-| Error Code | Meaning |
-|---|---|
-| `ALLOCARD_UNAUTHORIZED` | Caller does not hold permission or is not authorized |
-| `ALLOCARD_PAUSED` | Treasury operations are paused by owner |
-| `ALLOCARD_PRINCIPAL_BLOCKED` | Caller or ancestor principal is on the blocklist |
-| `ALLOCARD_INVALID_INPUT` | Malformed parameters, zero amounts, or non-zero deposit on 0-deposit method |
-| `ALLOCARD_PERMISSION_NOT_FOUND` | Permission ID does not exist |
-| `ALLOCARD_PERMISSION_REVOKED` | Permission or ancestor permission has been revoked |
-| `ALLOCARD_STALE_EPOCH` | Permission was issued in a previous authority epoch |
-| `ALLOCARD_MAX_DEPTH` | Hierarchy depth exceeds configured maximum (8) |
-| `ALLOCARD_CHILD_PERMISSION_EXPANSION` | Child permission attempts to expand parent terms |
-| `ALLOCARD_RECIPIENT_NOT_ALLOWED` | Recipient is not in the strict allowlist |
-| `ALLOCARD_PER_ACTION_LIMIT` | Transfer amount exceeds single-action ceiling or floor |
-| `ALLOCARD_LIFETIME_LIMIT` | Transfer amount exceeds cumulative lifetime allowance |
-| `ALLOCARD_WINDOW_LIMIT` | Transfer amount exceeds recurring fixed window allowance |
-| `ALLOCARD_STREAMING_LIMIT` | Transfer amount exceeds dynamically accrued linear allowance |
-| `ALLOCARD_EXECUTION_COUNT_EXCEEDED`| Permission has reached maximum executions count |
-| `ALLOCARD_APPROVAL_REQUIRED` | Transfer amount requires approver authorization |
-| `ALLOCARD_APPROVAL_EXPIRED` | Recorded approval has expired |
-| `ALLOCARD_DEADLINE_EXPIRED` | Execution deadline has passed |
-| `ALLOCARD_REQUEST_ID_CONFLICT` | Same actor and request ID submitted with different payload |
-| `ALLOCARD_INSUFFICIENT_AVAILABLE_FUNDS` | Treasury lacks spendable liquidity or operating reserve |
-| `ALLOCARD_INVALID_CALLBACK` | Callback receipt count was not 1 or caller is not contract itself |
+After initialization, fund `top_up_storage` and `top_up_operating` separately from `deposit_native`. FT transfers additionally require allowlisting/enabling the token and preparing token storage registration separately. Direct FT transfers do not create internal credits.
 
----
+## Limits and remaining work
 
-## 7. Known Limitations (v1)
+This is not an audited or production-ready treasury. Full-access deployment keys can replace its code or bypass contract controls. Locked deployments have no built-in upgrade/recovery path. Missing callbacks may lock reservations indefinitely. Retained history consumes storage. Fixed-duration windows are not calendar months.
 
-1. **Direct Transfers to Treasury**: Native transfers sent via bare transfers (without calling `deposit_native`) or unsupported FT tokens sent without `ft_on_transfer` are treated as unallocated surplus and are not credited to employee spendable allowances.
-2. **Calendar-Month Semantics**: Fixed windows are half-open fixed-duration intervals (`now_ms - anchor_ms) / duration_ms`). Variable calendar month lengths (28–31 days) require a subsequent policy version.
-3. **No Unsafe In-Flight Upgrades**: The v1 contract does not contain dynamic code execution or proxy delegate call endpoints that could bypass asset accounting.
+The sandbox tests currently cover selected native-transfer scenarios, not all acceptance categories in the foundation spec. Adversarial FT contracts, maximum-policy gas measurements, and NEP-366 relayer integration remain required before declaring the full foundation complete. Prior gas measurements predate the accounting changes and must be rerun; no updated throughput or maximum-bound claim is made here.

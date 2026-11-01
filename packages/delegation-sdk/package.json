@@ -12,13 +12,18 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./near-api": {
+      "types": "./dist/near-api.d.ts",
+      "import": "./dist/near-api.js",
+      "require": "./dist/near-api.cjs"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "build": "tsup src/index.ts src/near-api.ts --format cjs,esm --dts",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
@@ -35,4 +40,3 @@
     "vitest": "^3.0.0"
   }
 }
-

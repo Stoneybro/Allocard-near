@@ -30,6 +30,13 @@ async fn test_full_delegation_and_shared_budget() -> Result<(), Box<dyn std::err
         .await?;
     assert!(init_res.is_success());
 
+    owner
+        .call(treasury.id(), "top_up_storage")
+        .deposit(NearToken::from_near(2))
+        .transact()
+        .await?
+        .into_result()?;
+
     // 2. Deposit 10 NEAR to treasury
     let deposit_res = owner
         .call(treasury.id(), "deposit_native")
@@ -44,7 +51,10 @@ async fn test_full_delegation_and_shared_budget() -> Result<(), Box<dyn std::err
         .args_json(json!({ "asset": { "type": "NativeNear" } }))
         .await?
         .json()?;
-    assert_eq!(ledger["available"], NearToken::from_near(10).as_yoctonear().to_string());
+    assert_eq!(
+        ledger["available"],
+        NearToken::from_near(10).as_yoctonear().to_string()
+    );
 
     // 3. Owner creates root permission for manager with 2 NEAR lifetime limit and max depth 2
     let root_res = owner
@@ -242,7 +252,10 @@ async fn test_full_delegation_and_shared_budget() -> Result<(), Box<dyn std::err
         }))
         .await?
         .json()?;
-    assert_eq!(parent_usage["settled"], NearToken::from_near(2).as_yoctonear().to_string());
+    assert_eq!(
+        parent_usage["settled"],
+        NearToken::from_near(2).as_yoctonear().to_string()
+    );
     assert_eq!(parent_usage["pending"], "0");
 
     Ok(())
@@ -268,6 +281,13 @@ async fn test_adversarial_isolation_and_security() -> Result<(), Box<dyn std::er
         }))
         .transact()
         .await?;
+
+    owner
+        .call(treasury.id(), "top_up_storage")
+        .deposit(NearToken::from_near(2))
+        .transact()
+        .await?
+        .into_result()?;
 
     // 2. Attacker cannot create root permission
     let attack_root = attacker
@@ -352,6 +372,13 @@ async fn test_gas_measurement_and_revocation_cascade() -> Result<(), Box<dyn std
         }))
         .transact()
         .await?;
+
+    owner
+        .call(treasury.id(), "top_up_storage")
+        .deposit(NearToken::from_near(2))
+        .transact()
+        .await?
+        .into_result()?;
 
     // Fund treasury
     let _ = owner
@@ -443,7 +470,11 @@ async fn test_gas_measurement_and_revocation_cascade() -> Result<(), Box<dyn std
 
     assert!(exec_res.is_success());
     let gas_burnt = exec_res.total_gas_burnt;
-    println!("MEASURED GAS BURNT FOR 3-DEPTH EXECUTION: {} Gas ({:.2} TGas)", gas_burnt.as_gas(), (gas_burnt.as_gas() as f64) / 1e12);
+    println!(
+        "MEASURED GAS BURNT FOR 3-DEPTH EXECUTION: {} Gas ({:.2} TGas)",
+        gas_burnt.as_gas(),
+        (gas_burnt.as_gas() as f64) / 1e12
+    );
 
     // Now test revocation cascading: L1 revokes L2 permission
     let revoke_res = l1_delegate

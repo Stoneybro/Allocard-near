@@ -14,6 +14,24 @@ import {
   Usage,
 } from "./types.js";
 
+/** Accept decoded IDs or a NEAR FinalExecutionOutcome (e.g. Account.functionCall).
+ * Wallet bindings must wait for a final outcome; signing-only results are rejected.
+ */
+export function decodeMutationId(result: unknown): string {
+  let decoded: unknown = result;
+  if (typeof result === "object" && result !== null) {
+    const status = (result as { status?: { SuccessValue?: string; Failure?: unknown } }).status;
+    if (status?.Failure !== undefined) throw new Error(`NEAR transaction failed: ${JSON.stringify(status.Failure)}`);
+    if (typeof status?.SuccessValue !== "string") throw new Error("Expected final NEAR execution outcome");
+    const bytes = Uint8Array.from(atob(status.SuccessValue), (char) => char.charCodeAt(0));
+    decoded = JSON.parse(new TextDecoder().decode(bytes));
+  }
+  if (typeof decoded !== "string" || !/^(0|[1-9][0-9]*)$/.test(decoded) || BigInt(decoded) > (1n << 64n) - 1n) {
+    throw new Error("Expected a decimal u64 contract result");
+  }
+  return decoded;
+}
+
 export interface NearCaller {
   accountId?: string;
   viewFunction(params: {
@@ -150,7 +168,7 @@ export class AllocardTreasuryClient {
       gas: DEFAULT_MUTATION_GAS,
       attachedDeposit: "0",
     });
-    return typeof res === "string" ? res : res?.toString?.() || String(res);
+    return decodeMutationId(res);
   }
 
   async createChildPermission(parentId: string, spec: PermissionSpec): Promise<string> {
@@ -162,7 +180,7 @@ export class AllocardTreasuryClient {
       gas: DEFAULT_MUTATION_GAS,
       attachedDeposit: "0",
     });
-    return typeof res === "string" ? res : res?.toString?.() || String(res);
+    return decodeMutationId(res);
   }
 
   async revokePermission(permissionId: string): Promise<void> {
@@ -226,7 +244,7 @@ export class AllocardTreasuryClient {
       attachedDeposit: "0",
     });
 
-    const executionId = typeof res === "string" ? res : res?.toString?.() || String(res);
+    const executionId = decodeMutationId(res);
 
     const waitForOutcome = async (timeoutMs = 30000, intervalMs = 1000): Promise<Execution> => {
       const startTime = Date.now();
@@ -259,7 +277,7 @@ export class AllocardTreasuryClient {
       attachedDeposit: "0",
     });
 
-    const executionId = typeof res === "string" ? res : res?.toString?.() || String(res);
+    const executionId = decodeMutationId(res);
 
     const waitForOutcome = async (timeoutMs = 30000, intervalMs = 1000): Promise<Execution> => {
       const startTime = Date.now();

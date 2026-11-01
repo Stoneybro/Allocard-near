@@ -7,7 +7,19 @@ pub type PermissionId = u64;
 pub type ExecutionId = u64;
 
 /// Supported asset identifiers in Allocard.
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    BorshSerialize,
+    BorshDeserialize,
+    Serialize,
+    Deserialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+)]
 #[borsh(crate = "near_sdk::borsh")]
 #[serde(crate = "near_sdk::serde", tag = "type", content = "contract_id")]
 pub enum AssetId {
@@ -54,11 +66,25 @@ pub struct ApprovalRule {
 }
 
 /// Key used to look up approved requests.
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    BorshSerialize,
+    BorshDeserialize,
+    Serialize,
+    Deserialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+)]
 #[borsh(crate = "near_sdk::borsh")]
 #[serde(crate = "near_sdk::serde")]
 pub struct ApprovalKey {
+    #[serde(with = "hex32")]
     pub request_hash: [u8; 32],
+    #[serde(with = "decimal_u64")]
     pub permission_id: PermissionId,
     pub asset: AssetId,
 }
@@ -118,31 +144,59 @@ pub struct Permission {
     pub rules: Vec<AssetRule>,
     pub redelegation_depth: u8,
     pub revoked: bool,
+    #[serde(with = "optional_hex32")]
     pub metadata_hash: Option<[u8; 32]>,
 }
 
 /// Budget scope for counter tracking.
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    BorshSerialize,
+    BorshDeserialize,
+    Serialize,
+    Deserialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+)]
 #[borsh(crate = "near_sdk::borsh")]
 #[serde(crate = "near_sdk::serde", tag = "type", content = "window_index")]
 pub enum BudgetScope {
     Lifetime,
-    FixedWindow(u64),
+    FixedWindow(#[serde(with = "decimal_u64")] u64),
     Streaming,
 }
 
 /// Storage key for budget usage.
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    BorshSerialize,
+    BorshDeserialize,
+    Serialize,
+    Deserialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+)]
 #[borsh(crate = "near_sdk::borsh")]
 #[serde(crate = "near_sdk::serde")]
 pub struct BudgetKey {
+    #[serde(with = "decimal_u64")]
     pub permission_id: PermissionId,
     pub asset: AssetId,
     pub scope: BudgetScope,
 }
 
 /// Settled and pending financial usage for a specific budget key.
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(
+    BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq,
+)]
 #[borsh(crate = "near_sdk::borsh")]
 #[serde(crate = "near_sdk::serde")]
 pub struct Usage {
@@ -151,7 +205,9 @@ pub struct Usage {
 }
 
 /// Execution usage tracking on a Permission (for max_executions limit).
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(
+    BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq,
+)]
 #[borsh(crate = "near_sdk::borsh")]
 #[serde(crate = "near_sdk::serde")]
 pub struct PermissionUsage {
@@ -159,7 +215,9 @@ pub struct PermissionUsage {
 }
 
 /// Treasury balance ledger for an asset.
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(
+    BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq,
+)]
 #[borsh(crate = "near_sdk::borsh")]
 #[serde(crate = "near_sdk::serde")]
 pub struct AssetLedger {
@@ -255,7 +313,9 @@ pub struct Reservation {
 pub struct Execution {
     pub id: U64,
     pub actor: AccountId,
+    #[serde(with = "hex32")]
     pub request_id: [u8; 32],
+    #[serde(with = "hex32")]
     pub request_hash: [u8; 32],
     pub authority_mode: AuthorityMode,
     pub permission_id: Option<U64>,
@@ -286,6 +346,7 @@ pub struct TreasuryConfig {
     pub min_operating_reserve: U128,
     pub callback_gas: Gas,
     pub transfer_gas: Gas,
+    pub callback_storage_reserved: U128,
     pub storage_funding_remaining: U128,
     pub operating_budget_remaining: U128,
     pub pending_execution_count: u32,
@@ -315,4 +376,46 @@ pub struct PreviewResult {
     pub offending_permission_id: Option<U64>,
     pub requested_amount: U128,
     pub available_budget: Option<U128>,
+}
+
+// JSON adapters do not alter Borsh state or canonical request hashes.
+mod decimal_u64 {
+    use near_sdk::serde::{Deserialize, Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(value: &u64, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&value.to_string())
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(near_sdk::serde::de::Error::custom)
+    }
+}
+mod hex32 {
+    use near_sdk::serde::{Deserialize, Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(value: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&hex::encode(value))
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[u8; 32], D::Error> {
+        crate::canonical::parse_request_id(&String::deserialize(deserializer)?)
+            .map_err(near_sdk::serde::de::Error::custom)
+    }
+}
+mod optional_hex32 {
+    use near_sdk::serde::{Deserialize, Deserializer, Serialize, Serializer};
+    pub fn serialize<S: Serializer>(
+        value: &Option<[u8; 32]>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        value.map(hex::encode).serialize(serializer)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<[u8; 32]>, D::Error> {
+        Option::<String>::deserialize(deserializer)?
+            .map(|value| {
+                crate::canonical::parse_request_id(&value)
+                    .map_err(near_sdk::serde::de::Error::custom)
+            })
+            .transpose()
+    }
 }

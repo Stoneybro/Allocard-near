@@ -9,3 +9,7 @@ This directory contains technical notes, trust models, and architectural guides 
 - `packages/scripts`: Contract build, test, deploy, and verification scripts.
 - `apps/web`: Next.js web application for treasury management and spending.
 
+
+## Current implementation status
+
+See the root README for schema-2 deployment requirements, separate resource pools, SDK JSON formats, and validation commands. The web app is a local simulation. The contract/SDK fixes do not establish completion of all foundation acceptance categories; maximum-bound sandbox measurements and relayer/FT adversarial coverage remain outstanding.

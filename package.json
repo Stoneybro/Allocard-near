@@ -10,8 +10,7 @@
     "demo": "pnpm --filter @allocard/scripts run demo",
     "web:dev": "pnpm --filter @allocard/web run dev",
     "web:build": "pnpm --filter @allocard/web run build",
-    "delegation:check": "pnpm run sdk:build && pnpm run sdk:test && pnpm run web:build"
+    "delegation:check": "pnpm run contracts:test && pnpm run sdk:build && pnpm run sdk:test && pnpm run web:build"
   },
   "packageManager": "pnpm@11.28.10"
 }
-

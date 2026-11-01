@@ -9,6 +9,7 @@ use near_sdk::json_types::{U128, U64};
 use near_sdk::store::{LookupMap, Vector};
 use near_sdk::{
     env, ext_contract, near, AccountId, BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise,
+    PromiseError,
 };
 
 use crate::canonical::parse_request_id;
@@ -63,6 +64,18 @@ impl TreasuryContract {
     #[init]
     pub fn new(config: InitConfig) -> Self {
         assert!(!env::state_exists(), "Contract is already initialized");
+        if config.network_domain.is_empty() || config.network_domain.len() > 64 {
+            env::panic_str(ERR_INVALID_INPUT);
+        }
+        if config
+            .callback_gas
+            .is_some_and(|gas| gas < Gas::from_tgas(10))
+            || config
+                .transfer_gas
+                .is_some_and(|gas| gas < Gas::from_tgas(10))
+        {
+            env::panic_str(ERR_INVALID_INPUT);
+        }
 
         let mut asset_ledgers = LookupMap::new(StorageKey::AssetLedgers);
         let mut registered_assets = Vector::new(StorageKey::RegisteredAssets);
@@ -79,7 +92,7 @@ impl TreasuryContract {
         registered_assets.push(AssetId::NativeNear);
 
         let treasury_config = TreasuryConfig {
-            schema_version: 1,
+            schema_version: 2,
             network_domain: config.network_domain.clone(),
             owner: config.owner.clone(),
             pending_owner: None,
@@ -87,11 +100,18 @@ impl TreasuryContract {
             paused: false,
             next_permission_id: U64(1),
             next_execution_id: U64(1),
-            max_total_permissions: config.max_total_permissions.unwrap_or(DEFAULT_MAX_TOTAL_PERMISSIONS),
-            max_pending_executions: config.max_pending_executions.unwrap_or(DEFAULT_MAX_PENDING_EXECUTIONS),
-            min_operating_reserve: config.min_operating_reserve.unwrap_or(U128(DEFAULT_MIN_OPERATING_RESERVE)),
+            max_total_permissions: config
+                .max_total_permissions
+                .unwrap_or(DEFAULT_MAX_TOTAL_PERMISSIONS),
+            max_pending_executions: config
+                .max_pending_executions
+                .unwrap_or(DEFAULT_MAX_PENDING_EXECUTIONS),
+            min_operating_reserve: config
+                .min_operating_reserve
+                .unwrap_or(U128(DEFAULT_MIN_OPERATING_RESERVE)),
             callback_gas: config.callback_gas.unwrap_or(DEFAULT_CALLBACK_GAS),
             transfer_gas: config.transfer_gas.unwrap_or(DEFAULT_TRANSFER_GAS),
+            callback_storage_reserved: U128(0),
             storage_funding_remaining: U128(0),
             operating_budget_remaining: U128(0),
             pending_execution_count: 0,
@@ -102,7 +122,7 @@ impl TreasuryContract {
             owner: &config.owner,
         });
 
-        Self {
+        let mut contract = Self {
             config: treasury_config,
             permissions: LookupMap::new(StorageKey::Permissions),
             blocked_principals: LookupMap::new(StorageKey::BlockedPrincipals),
@@ -113,13 +133,18 @@ impl TreasuryContract {
             executions: LookupMap::new(StorageKey::Executions),
             replay_map: LookupMap::new(StorageKey::ReplayMap),
             approvals: LookupMap::new(StorageKey::Approvals),
-        }
+        };
+        contract.flush_collections();
+        contract.assert_physical_solvency(0);
+        contract
     }
 
     // --- Authority Lifecycle & Permissions ---
 
     /// Creates a root permission (depth 0, issuer is treasury owner).
     pub fn create_root_permission(&mut self, spec: PermissionSpec) -> U64 {
+        let storage_before = self.storage_checkpoint();
+        self.assert_input_bound();
         self.assert_zero_deposit();
         self.assert_unpaused();
         self.assert_owner();
@@ -130,7 +155,7 @@ impl TreasuryContract {
             env::panic_str(ERR_INVALID_INPUT);
         }
 
-        if (self.config.next_permission_id.0 as u32) > self.config.max_total_permissions {
+        if self.config.next_permission_id.0 > u64::from(self.config.max_total_permissions) {
             env::panic_str(ERR_INVALID_INPUT);
         }
 
@@ -175,11 +200,14 @@ impl TreasuryContract {
             epoch: self.config.authority_epoch,
         });
 
+        self.charge_storage(storage_before);
         U64(permission_id)
     }
 
     /// Creates a child permission under an existing active parent permission.
     pub fn create_child_permission(&mut self, parent_id: U64, spec: PermissionSpec) -> U64 {
+        let storage_before = self.storage_checkpoint();
+        self.assert_input_bound();
         self.assert_zero_deposit();
         self.assert_unpaused();
 
@@ -201,7 +229,7 @@ impl TreasuryContract {
             env::panic_str(ERR_INVALID_INPUT);
         }
 
-        if (self.config.next_permission_id.0 as u32) > self.config.max_total_permissions {
+        if self.config.next_permission_id.0 > u64::from(self.config.max_total_permissions) {
             env::panic_str(ERR_INVALID_INPUT);
         }
 
@@ -262,11 +290,13 @@ impl TreasuryContract {
             epoch: self.config.authority_epoch,
         });
 
+        self.charge_storage(storage_before);
         U64(permission_id)
     }
 
     /// Revokes a permission. Can be called by owner, issuer, any ancestor delegate, or the delegate themselves.
     pub fn revoke_permission(&mut self, permission_id: U64) {
+        let storage_before = self.storage_checkpoint();
         self.assert_zero_deposit();
         let caller = env::predecessor_account_id();
 
@@ -318,10 +348,12 @@ impl TreasuryContract {
             permission_id,
             revoker: &caller,
         });
+        self.charge_storage(storage_before);
     }
 
     /// Blocks or unblocks a principal account.
     pub fn set_principal_blocked(&mut self, account: AccountId, blocked: bool) {
+        let storage_before = self.storage_checkpoint();
         self.assert_zero_deposit();
         self.assert_owner();
 
@@ -336,20 +368,24 @@ impl TreasuryContract {
             principal: &account,
             blocked,
         });
+        self.charge_storage(storage_before);
     }
 
     /// Sets the treasury paused state.
     pub fn set_paused(&mut self, paused: bool) {
+        let storage_before = self.storage_checkpoint();
         self.assert_zero_deposit();
         self.assert_owner();
 
         self.config.paused = paused;
 
         emit_event(EventLogData::PauseChanged { paused });
+        self.charge_storage(storage_before);
     }
 
     /// Advances the authority epoch in O(1), immediately invalidating all past permissions.
     pub fn invalidate_all_permissions(&mut self) {
+        let storage_before = self.storage_checkpoint();
         self.assert_zero_deposit();
         self.assert_owner();
 
@@ -358,11 +394,13 @@ impl TreasuryContract {
         emit_event(EventLogData::AuthorityEpochChanged {
             new_epoch: self.config.authority_epoch,
         });
+        self.charge_storage(storage_before);
     }
 
     // --- Ownership Handover (Two-Step) ---
 
     pub fn nominate_owner(&mut self, nominee: AccountId) {
+        let storage_before = self.storage_checkpoint();
         self.assert_zero_deposit();
         self.assert_owner();
 
@@ -374,16 +412,20 @@ impl TreasuryContract {
         self.config.pending_owner = Some(nominee.clone());
 
         emit_event(EventLogData::OwnerNominated { nominee: &nominee });
+        self.charge_storage(storage_before);
     }
 
     pub fn cancel_owner_nomination(&mut self) {
+        let storage_before = self.storage_checkpoint();
         self.assert_zero_deposit();
         self.assert_owner();
 
         self.config.pending_owner = None;
+        self.charge_storage(storage_before);
     }
 
     pub fn accept_ownership(&mut self) {
+        let storage_before = self.storage_checkpoint();
         self.assert_zero_deposit();
 
         let caller = env::predecessor_account_id();
@@ -410,11 +452,13 @@ impl TreasuryContract {
         emit_event(EventLogData::AuthorityEpochChanged {
             new_epoch: self.config.authority_epoch,
         });
+        self.charge_storage(storage_before);
     }
 
     // --- Asset Registration & Management ---
 
     pub fn register_asset(&mut self, asset: AssetId) {
+        let storage_before = self.storage_checkpoint();
         self.assert_zero_deposit();
         self.assert_owner();
 
@@ -435,9 +479,11 @@ impl TreasuryContract {
         emit_event(EventLogData::AssetRegistered {
             asset: &asset_to_string(&asset),
         });
+        self.charge_storage(storage_before);
     }
 
     pub fn set_asset_enabled(&mut self, asset: AssetId, enabled: bool) {
+        let storage_before = self.storage_checkpoint();
         self.assert_zero_deposit();
         self.assert_owner();
 
@@ -454,12 +500,14 @@ impl TreasuryContract {
             asset: &asset_to_string(&asset),
             enabled,
         });
+        self.charge_storage(storage_before);
     }
 
     // --- Deposits & Top-ups ---
 
     #[payable]
     pub fn deposit_native(&mut self) {
+        let storage_before = self.storage_checkpoint();
         let deposit = env::attached_deposit().as_yoctonear();
         if deposit == 0 {
             env::panic_str(ERR_INVALID_INPUT);
@@ -486,10 +534,12 @@ impl TreasuryContract {
             sender: &sender,
             amount: U128(deposit),
         });
+        self.charge_storage(storage_before);
     }
 
     #[payable]
     pub fn top_up_operating(&mut self) {
+        let storage_before = self.storage_checkpoint();
         let deposit = env::attached_deposit().as_yoctonear();
         if deposit == 0 {
             env::panic_str(ERR_INVALID_INPUT);
@@ -501,10 +551,12 @@ impl TreasuryContract {
                 .checked_add(deposit)
                 .unwrap_or_else(|| env::panic_str(ERR_INVALID_INPUT)),
         );
+        self.charge_storage(storage_before);
     }
 
     #[payable]
     pub fn top_up_storage(&mut self) {
+        let storage_before = self.storage_checkpoint();
         let deposit = env::attached_deposit().as_yoctonear();
         if deposit == 0 {
             env::panic_str(ERR_INVALID_INPUT);
@@ -516,10 +568,12 @@ impl TreasuryContract {
                 .checked_add(deposit)
                 .unwrap_or_else(|| env::panic_str(ERR_INVALID_INPUT)),
         );
+        self.charge_storage(storage_before);
     }
 
     /// NEP-141 token receiver callback.
     pub fn ft_on_transfer(&mut self, sender_id: AccountId, amount: U128, msg: String) -> U128 {
+        let storage_before = self.storage_checkpoint();
         let token_contract = env::predecessor_account_id();
         let asset = AssetId::Nep141(token_contract.clone());
 
@@ -556,14 +610,16 @@ impl TreasuryContract {
             amount,
         });
 
+        self.charge_storage(storage_before);
         U128(0) // 0 tokens unused, 100% credited to treasury
     }
 
     // --- Approvals ---
 
     pub fn approve_request(&mut self, actor: AccountId, request: ExecuteRequest) {
+        let storage_before = self.storage_checkpoint();
+        self.assert_input_bound();
         self.assert_zero_deposit();
-        self.assert_unpaused();
 
         let approver = env::predecessor_account_id();
         self.assert_not_blocked(&approver);
@@ -658,9 +714,11 @@ impl TreasuryContract {
         if matched_rules == 0 {
             env::panic_str(ERR_UNAUTHORIZED);
         }
+        self.charge_storage(storage_before);
     }
 
     pub fn revoke_approval(&mut self, actor: AccountId, request: ExecuteRequest) {
+        let storage_before = self.storage_checkpoint();
         self.assert_zero_deposit();
         let approver = env::predecessor_account_id();
 
@@ -695,11 +753,14 @@ impl TreasuryContract {
                 }
             }
         }
+        self.charge_storage(storage_before);
     }
 
     // --- Execution Dispatch (Two-Phase) ---
 
     pub fn execute(&mut self, request: ExecuteRequest) -> U64 {
+        let storage_before = self.storage_checkpoint();
+        self.assert_input_bound();
         self.assert_zero_deposit();
 
         let actor = env::predecessor_account_id();
@@ -717,7 +778,11 @@ impl TreasuryContract {
         .unwrap_or_else(|e| env::panic_str(e));
 
         // Replay handling first!
-        if let Some(existing_id) = self.replay_map.get(&(actor.clone(), request_id_bytes)).copied() {
+        if let Some(existing_id) = self
+            .replay_map
+            .get(&(actor.clone(), request_id_bytes))
+            .copied()
+        {
             let existing = self
                 .executions
                 .get(&existing_id)
@@ -752,7 +817,11 @@ impl TreasuryContract {
         }
 
         let required_gas = self.config.transfer_gas.as_gas() + self.config.callback_gas.as_gas();
-        if env::prepaid_gas().as_gas() < required_gas {
+        if env::prepaid_gas()
+            .as_gas()
+            .saturating_sub(env::used_gas().as_gas())
+            < required_gas + Gas::from_tgas(10).as_gas()
+        {
             env::panic_str(ERR_INSUFFICIENT_GAS);
         }
 
@@ -767,20 +836,6 @@ impl TreasuryContract {
         }
         if ledger.available.0 < amount {
             env::panic_str(ERR_INSUFFICIENT_AVAILABLE_FUNDS);
-        }
-
-        if let AssetId::NativeNear = asset {
-            let current_balance = env::account_balance().as_yoctonear();
-            let storage_req = (env::storage_usage() as u128)
-                .checked_mul(env::storage_byte_cost().as_yoctonear())
-                .unwrap_or(0);
-            let operating_floor = self.config.min_operating_reserve.0;
-            let total_locked = storage_req
-                .saturating_add(operating_floor)
-                .saturating_add(ledger.pending_outgoing.0);
-            if current_balance < total_locked.saturating_add(amount) {
-                env::panic_str(ERR_INSUFFICIENT_AVAILABLE_FUNDS);
-            }
         }
 
         let path = self
@@ -810,6 +865,7 @@ impl TreasuryContract {
 
         // Check required approvals and consume them
         for (perm_id, approver) in &outcome.required_approvals {
+            self.assert_not_blocked(approver);
             let app_key = ApprovalKey {
                 request_hash: hash,
                 permission_id: *perm_id,
@@ -840,7 +896,11 @@ impl TreasuryContract {
         // Increment execution count for permissions with max_executions
         for perm in &path {
             if perm.max_executions.is_some() {
-                let mut pu = self.permission_usage.get(&perm.id.0).cloned().unwrap_or_default();
+                let mut pu = self
+                    .permission_usage
+                    .get(&perm.id.0)
+                    .cloned()
+                    .unwrap_or_default();
                 pu.executions_count += 1;
                 self.permission_usage.insert(perm.id.0, pu);
             }
@@ -872,7 +932,8 @@ impl TreasuryContract {
         };
 
         self.executions.insert(execution_id, execution);
-        self.replay_map.insert((actor.clone(), request_id_bytes), execution_id);
+        self.replay_map
+            .insert((actor.clone(), request_id_bytes), execution_id);
 
         emit_event(EventLogData::ExecutionDispatched {
             execution_id: U64(execution_id),
@@ -882,25 +943,22 @@ impl TreasuryContract {
             asset: &asset_to_string(&asset),
         });
 
+        self.reserve_callback_storage();
+        self.charge_storage(storage_before);
+        self.prepare_dispatch(&asset, amount);
         self.dispatch_action_promise(&asset, request.action.receiver(), amount, execution_id);
 
         U64(execution_id)
     }
 
     pub fn owner_withdraw(&mut self, request: OwnerWithdrawRequest) -> U64 {
+        let storage_before = self.storage_checkpoint();
+        self.assert_input_bound();
         self.assert_zero_deposit();
-        self.assert_unpaused();
-        self.assert_owner();
-
-        let owner = self.config.owner.clone();
-        self.assert_not_blocked(&owner);
+        let owner = env::predecessor_account_id();
 
         if request.api_version != 1 {
             env::panic_str(ERR_INVALID_INPUT);
-        }
-
-        if request.authority_epoch != self.config.authority_epoch {
-            env::panic_str(ERR_STALE_EPOCH);
         }
 
         let (request_id_bytes, hash) = crate::canonical::compute_owner_withdraw_hash(
@@ -912,7 +970,11 @@ impl TreasuryContract {
         .unwrap_or_else(|e| env::panic_str(e));
 
         // Replay check
-        if let Some(existing_id) = self.replay_map.get(&(owner.clone(), request_id_bytes)).copied() {
+        if let Some(existing_id) = self
+            .replay_map
+            .get(&(owner.clone(), request_id_bytes))
+            .copied()
+        {
             let existing = self
                 .executions
                 .get(&existing_id)
@@ -923,6 +985,13 @@ impl TreasuryContract {
             } else {
                 env::panic_str(ERR_REQUEST_ID_CONFLICT);
             }
+        }
+
+        self.assert_unpaused();
+        self.assert_owner();
+        self.assert_not_blocked(&owner);
+        if request.authority_epoch != self.config.authority_epoch {
+            env::panic_str(ERR_STALE_EPOCH);
         }
 
         let now_ms = env::block_timestamp_ms();
@@ -943,7 +1012,11 @@ impl TreasuryContract {
         }
 
         let required_gas = self.config.transfer_gas.as_gas() + self.config.callback_gas.as_gas();
-        if env::prepaid_gas().as_gas() < required_gas {
+        if env::prepaid_gas()
+            .as_gas()
+            .saturating_sub(env::used_gas().as_gas())
+            < required_gas + Gas::from_tgas(10).as_gas()
+        {
             env::panic_str(ERR_INSUFFICIENT_GAS);
         }
 
@@ -958,20 +1031,6 @@ impl TreasuryContract {
         }
         if ledger.available.0 < amount {
             env::panic_str(ERR_INSUFFICIENT_AVAILABLE_FUNDS);
-        }
-
-        if let AssetId::NativeNear = asset {
-            let current_balance = env::account_balance().as_yoctonear();
-            let storage_req = (env::storage_usage() as u128)
-                .checked_mul(env::storage_byte_cost().as_yoctonear())
-                .unwrap_or(0);
-            let operating_floor = self.config.min_operating_reserve.0;
-            let total_locked = storage_req
-                .saturating_add(operating_floor)
-                .saturating_add(ledger.pending_outgoing.0);
-            if current_balance < total_locked.saturating_add(amount) {
-                env::panic_str(ERR_INSUFFICIENT_AVAILABLE_FUNDS);
-            }
         }
 
         ledger.available = U128(ledger.available.0 - amount);
@@ -999,7 +1058,8 @@ impl TreasuryContract {
         };
 
         self.executions.insert(execution_id, execution);
-        self.replay_map.insert((owner.clone(), request_id_bytes), execution_id);
+        self.replay_map
+            .insert((owner.clone(), request_id_bytes), execution_id);
 
         emit_event(EventLogData::ExecutionDispatched {
             execution_id: U64(execution_id),
@@ -1009,6 +1069,9 @@ impl TreasuryContract {
             asset: &asset_to_string(&asset),
         });
 
+        self.reserve_callback_storage();
+        self.charge_storage(storage_before);
+        self.prepare_dispatch(&asset, amount);
         self.dispatch_action_promise(&asset, request.action.receiver(), amount, execution_id);
 
         U64(execution_id)
@@ -1035,24 +1098,59 @@ impl TreasuryContract {
 
         let succeeded = match env::promise_result_checked(0, 4096) {
             Ok(_) => true,
-            Err(_) => false,
+            Err(PromiseError::Failed) => false,
+            Err(_) => {
+                // A successful receipt with unreadable data is NOT proof of failure.
+                execution.needs_reconciliation = true;
+                self.executions.insert(execution_id.0, execution.clone());
+                return execution;
+            }
         };
+        execution.needs_reconciliation = false;
+        let callback_storage = self.callback_storage_cost();
+        self.config.callback_storage_reserved = U128(
+            self.config
+                .callback_storage_reserved
+                .0
+                .checked_sub(callback_storage)
+                .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
+        );
 
         if succeeded {
             for res in &execution.reservations {
                 let mut u = self.usage.get(&res.budget_key).cloned().unwrap_or_default();
-                u.pending = U128(u.pending.0.saturating_sub(res.amount.0));
-                u.settled = U128(u.settled.0.saturating_add(res.amount.0));
+                u.pending = U128(
+                    u.pending
+                        .0
+                        .checked_sub(res.amount.0)
+                        .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
+                );
+                u.settled = U128(
+                    u.settled
+                        .0
+                        .checked_add(res.amount.0)
+                        .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
+                );
                 self.usage.insert(res.budget_key.clone(), u);
             }
 
             if let Some(mut ledger) = self.asset_ledgers.get(execution.action.asset()).cloned() {
-                ledger.pending_outgoing =
-                    U128(ledger.pending_outgoing.0.saturating_sub(execution.action.amount()));
-                self.asset_ledgers.insert(execution.action.asset().clone(), ledger);
+                ledger.pending_outgoing = U128(
+                    ledger
+                        .pending_outgoing
+                        .0
+                        .checked_sub(execution.action.amount())
+                        .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
+                );
+                self.asset_ledgers
+                    .insert(execution.action.asset().clone(), ledger);
             }
 
-            self.config.pending_execution_count = self.config.pending_execution_count.saturating_sub(1);
+            self.config.pending_execution_count = self
+                .config
+                .pending_execution_count
+                .checked_sub(1)
+                .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK));
             execution.status = ExecutionStatus::Succeeded;
             self.executions.insert(execution_id.0, execution.clone());
 
@@ -1061,19 +1159,39 @@ impl TreasuryContract {
             // Proven external failure: release reservations without adding settled; restore principal to available
             for res in &execution.reservations {
                 let mut u = self.usage.get(&res.budget_key).cloned().unwrap_or_default();
-                u.pending = U128(u.pending.0.saturating_sub(res.amount.0));
+                u.pending = U128(
+                    u.pending
+                        .0
+                        .checked_sub(res.amount.0)
+                        .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
+                );
                 self.usage.insert(res.budget_key.clone(), u);
             }
 
             if let Some(mut ledger) = self.asset_ledgers.get(execution.action.asset()).cloned() {
-                ledger.pending_outgoing =
-                    U128(ledger.pending_outgoing.0.saturating_sub(execution.action.amount()));
-                ledger.available =
-                    U128(ledger.available.0.saturating_add(execution.action.amount()));
-                self.asset_ledgers.insert(execution.action.asset().clone(), ledger);
+                ledger.pending_outgoing = U128(
+                    ledger
+                        .pending_outgoing
+                        .0
+                        .checked_sub(execution.action.amount())
+                        .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
+                );
+                ledger.available = U128(
+                    ledger
+                        .available
+                        .0
+                        .checked_add(execution.action.amount())
+                        .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
+                );
+                self.asset_ledgers
+                    .insert(execution.action.asset().clone(), ledger);
             }
 
-            self.config.pending_execution_count = self.config.pending_execution_count.saturating_sub(1);
+            self.config.pending_execution_count = self
+                .config
+                .pending_execution_count
+                .checked_sub(1)
+                .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK));
             execution.status = ExecutionStatus::Failed;
             execution.failure_code = Some(ERR_EXECUTION_FAILED.to_string());
             self.executions.insert(execution_id.0, execution.clone());
@@ -1089,6 +1207,7 @@ impl TreasuryContract {
 
     /// Flags an execution pending for > 10 minutes as needing reconciliation.
     pub fn flag_unresolved(&mut self, execution_id: U64) {
+        let storage_before = self.storage_checkpoint();
         self.assert_zero_deposit();
         let caller = env::predecessor_account_id();
 
@@ -1114,6 +1233,7 @@ impl TreasuryContract {
             execution_id,
             flagger: &caller,
         });
+        self.charge_storage(storage_before);
     }
 
     // --- Views ---
@@ -1132,7 +1252,10 @@ impl TreasuryContract {
     }
 
     pub fn is_principal_blocked(&self, account: AccountId) -> bool {
-        self.blocked_principals.get(&account).copied().unwrap_or(false)
+        self.blocked_principals
+            .get(&account)
+            .copied()
+            .unwrap_or(false)
     }
 
     pub fn get_permission_usage(&self, permission_id: U64) -> PermissionUsage {
@@ -1163,13 +1286,22 @@ impl TreasuryContract {
         self.executions.get(&execution_id.0).cloned()
     }
 
-    pub fn get_execution_by_request(&self, actor: AccountId, request_id: String) -> Option<Execution> {
+    pub fn get_execution_by_request(
+        &self,
+        actor: AccountId,
+        request_id: String,
+    ) -> Option<Execution> {
         let id_bytes = parse_request_id(&request_id).ok()?;
         let exec_id = self.replay_map.get(&(actor, id_bytes)).copied()?;
         self.executions.get(&exec_id).cloned()
     }
 
-    pub fn get_approval(&self, request_hash: String, permission_id: U64, asset: AssetId) -> Option<ApprovalRecord> {
+    pub fn get_approval(
+        &self,
+        request_hash: String,
+        permission_id: U64,
+        asset: AssetId,
+    ) -> Option<ApprovalRecord> {
         let hash_bytes = parse_request_id(&request_hash).ok()?;
         let key = ApprovalKey {
             request_hash: hash_bytes,
@@ -1320,6 +1452,141 @@ impl TreasuryContract {
 
 // --- Internal Helper Methods (not exposed to NEAR RPC) ---
 impl TreasuryContract {
+    fn assert_input_bound(&self) {
+        if env::input().is_some_and(|input| input.len() > crate::policy::MAX_SERIALIZED_INPUT_BYTES)
+        {
+            env::panic_str(ERR_INPUT_TOO_LARGE);
+        }
+    }
+
+    fn flush_collections(&mut self) {
+        self.permissions.flush();
+        self.blocked_principals.flush();
+        self.usage.flush();
+        self.permission_usage.flush();
+        self.asset_ledgers.flush();
+        self.registered_assets.flush();
+        self.executions.flush();
+        self.replay_map.flush();
+        self.approvals.flush();
+    }
+
+    fn storage_checkpoint(&mut self) -> u64 {
+        self.flush_collections();
+        env::storage_usage()
+            .checked_add(borsh::to_vec(self).unwrap().len() as u64)
+            .unwrap_or_else(|| env::panic_str(ERR_STORAGE_RESERVE_LOW))
+    }
+
+    fn charge_storage(&mut self, before: u64) {
+        let after = self.storage_checkpoint();
+        let cost = u128::from(after.saturating_sub(before))
+            .checked_mul(env::storage_byte_cost().as_yoctonear())
+            .unwrap_or_else(|| env::panic_str(ERR_STORAGE_RESERVE_LOW));
+        self.config.storage_funding_remaining = U128(
+            self.config
+                .storage_funding_remaining
+                .0
+                .checked_sub(cost)
+                .unwrap_or_else(|| env::panic_str(ERR_STORAGE_RESERVE_LOW)),
+        );
+        // Freed storage is conservative surplus, never automatically credited as principal.
+        if after > before {
+            self.assert_physical_solvency(0);
+        }
+    }
+
+    fn callback_storage_cost(&self) -> u128 {
+        // None -> Some(String), including length prefix and the fixed failure code.
+        (4 + ERR_EXECUTION_FAILED.len() as u128)
+            .checked_mul(env::storage_byte_cost().as_yoctonear())
+            .unwrap_or_else(|| env::panic_str(ERR_STORAGE_RESERVE_LOW))
+    }
+
+    fn reserve_callback_storage(&mut self) {
+        let cost = self.callback_storage_cost();
+        self.config.storage_funding_remaining = U128(
+            self.config
+                .storage_funding_remaining
+                .0
+                .checked_sub(cost)
+                .unwrap_or_else(|| env::panic_str(ERR_STORAGE_RESERVE_LOW)),
+        );
+        self.config.callback_storage_reserved = U128(
+            self.config
+                .callback_storage_reserved
+                .0
+                .checked_add(cost)
+                .unwrap_or_else(|| env::panic_str(ERR_STORAGE_RESERVE_LOW)),
+        );
+    }
+
+    fn assert_physical_solvency(&self, extra_outgoing: u128) {
+        // env::storage_usage still includes the prior STATE representation until
+        // near-sdk writes the new state after this method returns.
+        let state_len = borsh::to_vec(self).unwrap().len() as u64;
+        let old_state = env::storage_read(b"STATE");
+        let projected_bytes = env::storage_usage()
+            .checked_sub(old_state.as_ref().map_or(0, |bytes| bytes.len() as u64))
+            .and_then(|bytes| bytes.checked_add(state_len))
+            .and_then(|bytes| bytes.checked_add(if old_state.is_none() { 5 } else { 0 }))
+            .unwrap_or_else(|| env::panic_str(ERR_STORAGE_RESERVE_LOW));
+        let storage = u128::from(projected_bytes)
+            .checked_mul(env::storage_byte_cost().as_yoctonear())
+            .unwrap_or_else(|| env::panic_str(ERR_STORAGE_RESERVE_LOW));
+        let principal = self
+            .asset_ledgers
+            .get(&AssetId::NativeNear)
+            .map_or(0, |ledger| ledger.available.0);
+        let required = [
+            storage,
+            self.config.storage_funding_remaining.0,
+            self.config.callback_storage_reserved.0,
+            self.config
+                .operating_budget_remaining
+                .0
+                .max(self.config.min_operating_reserve.0),
+            principal,
+            extra_outgoing,
+        ]
+        .into_iter()
+        .try_fold(0u128, |sum, value| sum.checked_add(value))
+        .unwrap_or_else(|| env::panic_str(ERR_INSUFFICIENT_AVAILABLE_FUNDS));
+        if env::account_balance().as_yoctonear() < required {
+            env::panic_str(ERR_INSUFFICIENT_AVAILABLE_FUNDS);
+        }
+    }
+
+    fn prepare_dispatch(&mut self, asset: &AssetId, amount: u128) {
+        let required = self
+            .config
+            .transfer_gas
+            .as_gas()
+            .checked_add(self.config.callback_gas.as_gas())
+            .and_then(|gas| gas.checked_add(Gas::from_tgas(2).as_gas()))
+            .unwrap_or_else(|| env::panic_str(ERR_INSUFFICIENT_GAS));
+        if env::prepaid_gas()
+            .as_gas()
+            .saturating_sub(env::used_gas().as_gas())
+            < required
+        {
+            env::panic_str(ERR_INSUFFICIENT_GAS);
+        }
+        match asset {
+            AssetId::NativeNear => self.assert_physical_solvency(amount),
+            AssetId::Nep141(_) => {
+                self.config.operating_budget_remaining = U128(
+                    self.config
+                        .operating_budget_remaining
+                        .0
+                        .checked_sub(1)
+                        .unwrap_or_else(|| env::panic_str(ERR_OPERATING_RESERVE_LOW)),
+                );
+                self.assert_physical_solvency(1);
+            }
+        }
+    }
+
     fn assert_zero_deposit(&self) {
         if env::attached_deposit() > NearToken::from_yoctonear(0) {
             env::panic_str(ERR_INVALID_INPUT);
@@ -1432,6 +1699,13 @@ mod tests {
     use near_sdk::test_utils::{accounts, VMContextBuilder};
     use near_sdk::testing_env;
 
+    fn funded_contract(config: InitConfig) -> TreasuryContract {
+        let mut contract = TreasuryContract::new(config);
+        contract.config.storage_funding_remaining = U128(10u128.pow(24));
+        contract.config.operating_budget_remaining = U128(10u128.pow(23));
+        contract
+    }
+
     fn get_context(predecessor: AccountId) -> VMContextBuilder {
         let mut builder = VMContextBuilder::new();
         builder
@@ -1461,7 +1735,7 @@ mod tests {
         let context = get_context(accounts(1));
         testing_env!(context.build());
 
-        let contract = TreasuryContract::new(InitConfig {
+        let contract = funded_contract(InitConfig {
             network_domain: "testnet".to_string(),
             owner: accounts(1),
             max_total_permissions: None,
@@ -1486,7 +1760,7 @@ mod tests {
         let context = get_context(accounts(1));
         testing_env!(context.build());
 
-        let mut contract = TreasuryContract::new(InitConfig {
+        let mut contract = funded_contract(InitConfig {
             network_domain: "testnet".to_string(),
             owner: accounts(1),
             max_total_permissions: None,
@@ -1521,7 +1795,7 @@ mod tests {
         let mut context = get_context(accounts(1));
         testing_env!(context.build());
 
-        let mut contract = TreasuryContract::new(InitConfig {
+        let mut contract = funded_contract(InitConfig {
             network_domain: "testnet".to_string(),
             owner: accounts(1),
             max_total_permissions: None,
@@ -1576,7 +1850,7 @@ mod tests {
         let mut context = get_context(accounts(1));
         testing_env!(context.build());
 
-        let mut contract = TreasuryContract::new(InitConfig {
+        let mut contract = funded_contract(InitConfig {
             network_domain: "testnet".to_string(),
             owner: accounts(1),
             max_total_permissions: None,
@@ -1625,7 +1899,7 @@ mod tests {
         let context = get_context(accounts(1));
         testing_env!(context.build());
 
-        let mut contract = TreasuryContract::new(InitConfig {
+        let mut contract = funded_contract(InitConfig {
             network_domain: "testnet".to_string(),
             owner: accounts(1),
             max_total_permissions: None,
@@ -1649,7 +1923,7 @@ mod tests {
         let context = get_context(accounts(1));
         testing_env!(context.build());
 
-        let mut contract = TreasuryContract::new(InitConfig {
+        let mut contract = funded_contract(InitConfig {
             network_domain: "testnet".to_string(),
             owner: accounts(1),
             max_total_permissions: None,
@@ -1667,9 +1941,11 @@ mod tests {
     #[test]
     fn test_deposit_native_and_top_ups() {
         let mut context = get_context(accounts(2));
-        testing_env!(context.attached_deposit(NearToken::from_yoctonear(1_000_000)).build());
+        testing_env!(context
+            .attached_deposit(NearToken::from_yoctonear(1_000_000))
+            .build());
 
-        let mut contract = TreasuryContract::new(InitConfig {
+        let mut contract = funded_contract(InitConfig {
             network_domain: "testnet".to_string(),
             owner: accounts(1),
             max_total_permissions: None,
@@ -1684,10 +1960,16 @@ mod tests {
         assert_eq!(ledger.available.0, 1_000_000);
 
         contract.top_up_operating();
-        assert_eq!(contract.get_config().operating_budget_remaining.0, 1_000_000);
+        assert_eq!(
+            contract.get_config().operating_budget_remaining.0,
+            10u128.pow(23) + 1_000_000
+        );
 
         contract.top_up_storage();
-        assert_eq!(contract.get_config().storage_funding_remaining.0, 1_000_000);
+        assert_eq!(
+            contract.get_config().storage_funding_remaining.0,
+            10u128.pow(24) + 1_000_000
+        );
     }
 
     #[test]
@@ -1695,7 +1977,7 @@ mod tests {
         let mut context = get_context(accounts(1));
         testing_env!(context.build());
 
-        let mut contract = TreasuryContract::new(InitConfig {
+        let mut contract = funded_contract(InitConfig {
             network_domain: "testnet".to_string(),
             owner: accounts(1),
             max_total_permissions: None,
@@ -1726,7 +2008,7 @@ mod tests {
         let mut context = get_context(accounts(1));
         testing_env!(context.build());
 
-        let mut contract = TreasuryContract::new(InitConfig {
+        let mut contract = funded_contract(InitConfig {
             network_domain: "testnet".to_string(),
             owner: accounts(1),
             max_total_permissions: None,
@@ -1754,7 +2036,7 @@ mod tests {
         let mut context = get_context(accounts(1));
         testing_env!(context.build());
 
-        let mut contract = TreasuryContract::new(InitConfig {
+        let mut contract = funded_contract(InitConfig {
             network_domain: "testnet".to_string(),
             owner: accounts(1),
             max_total_permissions: None,
@@ -1791,7 +2073,8 @@ mod tests {
 
         let req = ExecuteRequest {
             api_version: 1,
-            request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20".to_string(),
+            request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+                .to_string(),
             permission_id: root_id,
             action: Action::Transfer {
                 asset: AssetId::NativeNear,
@@ -1805,13 +2088,9 @@ mod tests {
         testing_env!(context.predecessor_account_id(accounts(3)).build());
         contract.approve_request(accounts(2), req.clone());
 
-        let (_req_id, req_hash) = crate::canonical::compute_execute_hash(
-            "testnet",
-            &accounts(0),
-            &accounts(2),
-            &req,
-        )
-        .unwrap();
+        let (_req_id, req_hash) =
+            crate::canonical::compute_execute_hash("testnet", &accounts(0), &accounts(2), &req)
+                .unwrap();
         let app = contract
             .get_approval(hex::encode(req_hash), root_id, AssetId::NativeNear)
             .unwrap();
@@ -1829,7 +2108,7 @@ mod tests {
         let mut context = get_context(accounts(1));
         testing_env!(context.build());
 
-        let mut contract = TreasuryContract::new(InitConfig {
+        let mut contract = funded_contract(InitConfig {
             network_domain: "testnet".to_string(),
             owner: accounts(1),
             max_total_permissions: None,
@@ -1840,9 +2119,13 @@ mod tests {
         });
 
         // Fund the treasury
-        testing_env!(context.attached_deposit(NearToken::from_yoctonear(10_000)).build());
+        testing_env!(context
+            .attached_deposit(NearToken::from_yoctonear(10_000))
+            .build());
         contract.deposit_native();
-        testing_env!(context.attached_deposit(NearToken::from_yoctonear(0)).build());
+        testing_env!(context
+            .attached_deposit(NearToken::from_yoctonear(0))
+            .build());
 
         // Create root permission for accounts(2)
         let root_id = contract.create_root_permission(PermissionSpec {
@@ -1871,7 +2154,8 @@ mod tests {
         // 1. Preview valid small request (<= 100, no approval needed)
         let small_req = ExecuteRequest {
             api_version: 1,
-            request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20".to_string(),
+            request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+                .to_string(),
             permission_id: root_id,
             action: Action::Transfer {
                 asset: AssetId::NativeNear,
@@ -1887,7 +2171,8 @@ mod tests {
         // 2. Preview large request (> 100, approval needed but not recorded yet)
         let large_req = ExecuteRequest {
             api_version: 1,
-            request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f21".to_string(),
+            request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f21"
+                .to_string(),
             permission_id: root_id,
             action: Action::Transfer {
                 asset: AssetId::NativeNear,
@@ -1912,7 +2197,8 @@ mod tests {
         // 3. Preview recipient not allowed
         let invalid_rcpt_req = ExecuteRequest {
             api_version: 1,
-            request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f22".to_string(),
+            request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f22"
+                .to_string(),
             permission_id: root_id,
             action: Action::Transfer {
                 asset: AssetId::NativeNear,
@@ -1923,17 +2209,22 @@ mod tests {
         };
         let preview = contract.preview_execute(accounts(2), invalid_rcpt_req);
         assert!(!preview.allowed);
-        assert_eq!(preview.error_code, Some(ERR_RECIPIENT_NOT_ALLOWED.to_string()));
+        assert_eq!(
+            preview.error_code,
+            Some(ERR_RECIPIENT_NOT_ALLOWED.to_string())
+        );
     }
 
     #[test]
     fn test_execute_native_and_replay_idempotency() {
         let mut context = get_context(accounts(1));
-        context.account_balance(NearToken::from_yoctonear(100_000_000_000_000_000_000_000_000));
+        context.account_balance(NearToken::from_yoctonear(
+            100_000_000_000_000_000_000_000_000,
+        ));
         context.prepaid_gas(Gas::from_tgas(100));
         testing_env!(context.build());
 
-        let mut contract = TreasuryContract::new(InitConfig {
+        let mut contract = funded_contract(InitConfig {
             network_domain: "testnet".to_string(),
             owner: accounts(1),
             max_total_permissions: None,
@@ -1944,9 +2235,13 @@ mod tests {
         });
 
         // Deposit funds
-        testing_env!(context.attached_deposit(NearToken::from_yoctonear(10_000)).build());
+        testing_env!(context
+            .attached_deposit(NearToken::from_yoctonear(10_000))
+            .build());
         contract.deposit_native();
-        testing_env!(context.attached_deposit(NearToken::from_yoctonear(0)).build());
+        testing_env!(context
+            .attached_deposit(NearToken::from_yoctonear(0))
+            .build());
 
         let root_id = contract.create_root_permission(PermissionSpec {
             delegate: accounts(2),
@@ -1970,7 +2265,8 @@ mod tests {
 
         let req = ExecuteRequest {
             api_version: 1,
-            request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20".to_string(),
+            request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+                .to_string(),
             permission_id: root_id,
             action: Action::Transfer {
                 asset: AssetId::NativeNear,
@@ -2011,7 +2307,8 @@ mod tests {
         // Same request_id with different payload must fail with ERR_REQUEST_ID_CONFLICT
         let conflict_req = ExecuteRequest {
             api_version: 1,
-            request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20".to_string(),
+            request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+                .to_string(),
             permission_id: root_id,
             action: Action::Transfer {
                 asset: AssetId::NativeNear,
@@ -2031,11 +2328,13 @@ mod tests {
     #[test]
     fn test_owner_withdraw_and_replay() {
         let mut context = get_context(accounts(1));
-        context.account_balance(NearToken::from_yoctonear(100_000_000_000_000_000_000_000_000));
+        context.account_balance(NearToken::from_yoctonear(
+            100_000_000_000_000_000_000_000_000,
+        ));
         context.prepaid_gas(Gas::from_tgas(100));
         testing_env!(context.build());
 
-        let mut contract = TreasuryContract::new(InitConfig {
+        let mut contract = funded_contract(InitConfig {
             network_domain: "testnet".to_string(),
             owner: accounts(1),
             max_total_permissions: None,
@@ -2046,13 +2345,18 @@ mod tests {
         });
 
         // Deposit funds
-        testing_env!(context.attached_deposit(NearToken::from_yoctonear(10_000)).build());
+        testing_env!(context
+            .attached_deposit(NearToken::from_yoctonear(10_000))
+            .build());
         contract.deposit_native();
-        testing_env!(context.attached_deposit(NearToken::from_yoctonear(0)).build());
+        testing_env!(context
+            .attached_deposit(NearToken::from_yoctonear(0))
+            .build());
 
         let req = OwnerWithdrawRequest {
             api_version: 1,
-            request_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            request_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .to_string(),
             authority_epoch: U64(1),
             action: Action::Transfer {
                 asset: AssetId::NativeNear,
@@ -2076,19 +2380,29 @@ mod tests {
         assert_eq!(ledger.pending_outgoing.0, 2_000);
 
         // Replay returns same ID
-        let replay_id = contract.owner_withdraw(req);
+        let replay_id = contract.owner_withdraw(req.clone());
         assert_eq!(replay_id.0, 1);
+        contract.set_paused(true);
+        contract.invalidate_all_permissions();
+        contract.nominate_owner(accounts(3));
+        testing_env!(context.predecessor_account_id(accounts(3)).build());
+        contract.accept_ownership();
+        testing_env!(context.predecessor_account_id(accounts(1)).build());
+        assert_eq!(contract.owner_withdraw(req).0, 1);
+        assert_eq!(contract.config.pending_execution_count, 1);
     }
 
     #[test]
     #[allow(deprecated)]
     fn test_callback_settlement_success_and_failure() {
         let mut context = get_context(accounts(1));
-        context.account_balance(NearToken::from_yoctonear(100_000_000_000_000_000_000_000_000));
+        context.account_balance(NearToken::from_yoctonear(
+            100_000_000_000_000_000_000_000_000,
+        ));
         context.prepaid_gas(Gas::from_tgas(100));
         testing_env!(context.build());
 
-        let mut contract = TreasuryContract::new(InitConfig {
+        let mut contract = funded_contract(InitConfig {
             network_domain: "testnet".to_string(),
             owner: accounts(1),
             max_total_permissions: None,
@@ -2098,9 +2412,13 @@ mod tests {
             transfer_gas: None,
         });
 
-        testing_env!(context.attached_deposit(NearToken::from_yoctonear(10_000)).build());
+        testing_env!(context
+            .attached_deposit(NearToken::from_yoctonear(10_000))
+            .build());
         contract.deposit_native();
-        testing_env!(context.attached_deposit(NearToken::from_yoctonear(0)).build());
+        testing_env!(context
+            .attached_deposit(NearToken::from_yoctonear(0))
+            .build());
 
         let root_id = contract.create_root_permission(PermissionSpec {
             delegate: accounts(2),
@@ -2125,7 +2443,8 @@ mod tests {
         // 1. Dispatch execution 1
         let req1 = ExecuteRequest {
             api_version: 1,
-            request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20".to_string(),
+            request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+                .to_string(),
             permission_id: root_id,
             action: Action::Transfer {
                 asset: AssetId::NativeNear,
@@ -2145,8 +2464,38 @@ mod tests {
             near_sdk::PromiseResult::Successful(vec![]),
         );
 
+        near_sdk::test_utils::testing_env_with_promise_results(
+            context.build(),
+            near_sdk::PromiseResult::Successful(vec![0; 4097]),
+        );
+        let unknown = contract.on_transfer_result(exec_id_1);
+        assert_eq!(unknown.status, ExecutionStatus::Pending);
+        assert!(unknown.needs_reconciliation);
+        assert!(contract.config.callback_storage_reserved.0 > 0);
+        assert_eq!(
+            contract
+                .get_usage(root_id, AssetId::NativeNear, BudgetScope::Lifetime)
+                .pending
+                .0,
+            400
+        );
+        assert_eq!(
+            contract
+                .get_asset_ledger(AssetId::NativeNear)
+                .unwrap()
+                .available
+                .0,
+            9_600
+        );
+        near_sdk::test_utils::testing_env_with_promise_results(
+            context.build(),
+            near_sdk::PromiseResult::Successful(vec![]),
+        );
         let res1 = contract.on_transfer_result(exec_id_1);
         assert_eq!(res1.status, ExecutionStatus::Succeeded);
+        let count = contract.config.pending_execution_count;
+        contract.on_transfer_result(exec_id_1);
+        assert_eq!(contract.config.pending_execution_count, count);
 
         // Verify usage: pending is 0, settled is 400
         let u1 = contract.get_usage(root_id, AssetId::NativeNear, BudgetScope::Lifetime);
@@ -2161,7 +2510,8 @@ mod tests {
         // 2. Dispatch execution 2 and simulate failure
         let req2 = ExecuteRequest {
             api_version: 1,
-            request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f21".to_string(),
+            request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f21"
+                .to_string(),
             permission_id: root_id,
             action: Action::Transfer {
                 asset: AssetId::NativeNear,
@@ -2193,17 +2543,20 @@ mod tests {
         let l2 = contract.get_asset_ledger(AssetId::NativeNear).unwrap();
         assert_eq!(l2.pending_outgoing.0, 0);
         assert_eq!(l2.available.0, 9_600);
+        assert_eq!(contract.config.callback_storage_reserved.0, 0);
     }
 
     #[test]
     fn test_flag_unresolved() {
         let mut context = get_context(accounts(1));
-        context.account_balance(NearToken::from_yoctonear(100_000_000_000_000_000_000_000_000));
+        context.account_balance(NearToken::from_yoctonear(
+            100_000_000_000_000_000_000_000_000,
+        ));
         context.prepaid_gas(Gas::from_tgas(100));
         context.block_timestamp(1_000_000 * 1_000_000); // 1,000,000 ms
         testing_env!(context.build());
 
-        let mut contract = TreasuryContract::new(InitConfig {
+        let mut contract = funded_contract(InitConfig {
             network_domain: "testnet".to_string(),
             owner: accounts(1),
             max_total_permissions: None,
@@ -2213,9 +2566,13 @@ mod tests {
             transfer_gas: None,
         });
 
-        testing_env!(context.attached_deposit(NearToken::from_yoctonear(10_000)).build());
+        testing_env!(context
+            .attached_deposit(NearToken::from_yoctonear(10_000))
+            .build());
         contract.deposit_native();
-        testing_env!(context.attached_deposit(NearToken::from_yoctonear(0)).build());
+        testing_env!(context
+            .attached_deposit(NearToken::from_yoctonear(0))
+            .build());
 
         let root_id = contract.create_root_permission(PermissionSpec {
             delegate: accounts(2),
@@ -2239,7 +2596,8 @@ mod tests {
 
         let req = ExecuteRequest {
             api_version: 1,
-            request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20".to_string(),
+            request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+                .to_string(),
             permission_id: root_id,
             action: Action::Transfer {
                 asset: AssetId::NativeNear,
@@ -2261,5 +2619,97 @@ mod tests {
 
         let exec = contract.get_execution(exec_id).unwrap();
         assert!(exec.needs_reconciliation);
+    }
+    fn default_config() -> InitConfig {
+        InitConfig {
+            network_domain: "near:testnet".into(),
+            owner: accounts(1),
+            max_total_permissions: None,
+            max_pending_executions: None,
+            min_operating_reserve: None,
+            callback_gas: None,
+            transfer_gas: None,
+        }
+    }
+
+    #[test]
+    fn execution_json_matches_sdk_fixture() {
+        let json = include_str!("../../../../docs/delegation/fixtures/execution.json");
+        let execution: Execution = near_sdk::serde_json::from_str(json).unwrap();
+        assert_eq!(
+            execution.reservations[0].budget_key.permission_id,
+            9_007_199_254_740_993
+        );
+        assert_eq!(
+            near_sdk::serde_json::to_value(execution).unwrap(),
+            near_sdk::serde_json::from_str::<near_sdk::serde_json::Value>(json).unwrap()
+        );
+    }
+
+    #[test]
+    fn persistent_growth_charges_storage_pool() {
+        testing_env!(get_context(accounts(1)).build());
+        let mut contract = funded_contract(default_config());
+        let before = contract.config.storage_funding_remaining.0;
+        contract.set_principal_blocked(accounts(2), true);
+        assert!(contract.config.storage_funding_remaining.0 < before);
+        let charged = contract.config.storage_funding_remaining.0;
+        contract.set_principal_blocked(accounts(2), false);
+        assert_eq!(contract.config.storage_funding_remaining.0, charged);
+    }
+
+    #[test]
+    #[should_panic(expected = "ALLOCARD_STORAGE_RESERVE_LOW")]
+    fn unfunded_storage_cannot_borrow_principal() {
+        testing_env!(get_context(accounts(1)).build());
+        let mut contract = TreasuryContract::new(default_config());
+        contract.set_principal_blocked(accounts(2), true);
+    }
+
+    #[test]
+    fn token_marker_debits_operating_pool() {
+        testing_env!(get_context(accounts(1)).build());
+        let mut contract = funded_contract(default_config());
+        let before = contract.config.operating_budget_remaining.0;
+        contract.prepare_dispatch(&AssetId::Nep141(accounts(3)), 100);
+        assert_eq!(contract.config.operating_budget_remaining.0, before - 1);
+        assert_eq!(
+            contract
+                .get_asset_ledger(AssetId::NativeNear)
+                .unwrap()
+                .available
+                .0,
+            0
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "ALLOCARD_OPERATING_RESERVE_LOW")]
+    fn token_dispatch_rejects_empty_operating_pool() {
+        testing_env!(get_context(accounts(1)).build());
+        let mut contract = funded_contract(default_config());
+        contract.config.operating_budget_remaining = U128(0);
+        contract.prepare_dispatch(&AssetId::Nep141(accounts(3)), 100);
+    }
+
+    #[test]
+    #[should_panic(expected = "ALLOCARD_INSUFFICIENT_AVAILABLE_FUNDS")]
+    fn native_dispatch_preserves_unspent_storage_funding() {
+        let mut context = get_context(accounts(1));
+        testing_env!(context.build());
+        let mut contract = funded_contract(default_config());
+        context.account_balance(NearToken::from_near(1));
+        testing_env!(context.build());
+        contract.prepare_dispatch(&AssetId::NativeNear, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "ALLOCARD_INPUT_TOO_LARGE")]
+    fn execute_rejects_oversized_input() {
+        let mut context = get_context(accounts(1));
+        context.context.input = vec![0; 8193].into();
+        testing_env!(context.build());
+        let contract = funded_contract(default_config());
+        contract.assert_input_bound();
     }
 }

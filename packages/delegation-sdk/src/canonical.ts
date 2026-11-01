@@ -30,6 +30,7 @@ export class BorshWriter {
   }
 
   writeUint16LE(val: number) {
+    if (!Number.isInteger(val) || val < 0 || val > 65535) throw new Error("Invalid u16");
     this.ensureCapacity(2);
     this.buffer[this.offset] = val & 0xff;
     this.buffer[this.offset + 1] = (val >> 8) & 0xff;
@@ -48,6 +49,8 @@ export class BorshWriter {
   writeUint64LE(val: bigint | number | string) {
     this.ensureCapacity(8);
     const bi = BigInt(val);
+    if (typeof val === "number" && !Number.isSafeInteger(val)) throw new Error("Unsafe integer");
+    if (bi < 0n || bi > (1n << 64n) - 1n) throw new Error("Invalid u64");
     const view = new DataView(this.buffer.buffer, this.offset, 8);
     view.setBigUint64(0, bi, true);
     this.offset += 8;
@@ -56,6 +59,7 @@ export class BorshWriter {
   writeUint128LE(val: bigint | string) {
     this.ensureCapacity(16);
     const bi = BigInt(val);
+    if (bi < 0n || bi > (1n << 128n) - 1n) throw new Error("Invalid u128");
     const low = bi & 0xffffffffffffffffn;
     const high = bi >> 64n;
     const view = new DataView(this.buffer.buffer, this.offset, 16);

@@ -3,6 +3,8 @@
 import React, { useState } from "react";
 import {
   SDK_VERSION,
+  parseTokenAmount,
+  formatTokenAmount,
   generateRequestId,
   computeExecuteHash,
   type Permission,
@@ -18,6 +20,7 @@ interface MockPermissionRecord extends Permission {
 }
 
 export default function Home() {
+  const [simulationError, setSimulationError] = useState<string | null>(null);
   const [activeRole, setActiveRole] = useState<UserRole>("owner");
   const [contractId, setContractId] = useState("treasury.allocard.testnet");
   const [networkDomain] = useState("near:testnet");
@@ -114,13 +117,15 @@ export default function Home() {
 
   // Handlers
   const handlePreview = () => {
+    setSimulationError(null);
+    try {
     const selectedPerm = permissions.find((p) => p.id === execPermissionId);
     if (!selectedPerm) {
       setPreviewOutcome({
         allowed: false,
         error_code: "ALLOCARD_PERMISSION_NOT_FOUND",
         error_message: "Permission ID does not exist",
-        requested_amount: (parseFloat(execAmount) * 1e24).toString(),
+        requested_amount: parseTokenAmount(execAmount),
       });
       return;
     }
@@ -130,7 +135,7 @@ export default function Home() {
         allowed: false,
         error_code: "ALLOCARD_PERMISSION_REVOKED",
         error_message: "This permission has been revoked by an ancestor authority",
-        requested_amount: (parseFloat(execAmount) * 1e24).toString(),
+        requested_amount: parseTokenAmount(execAmount),
       });
       return;
     }
@@ -142,20 +147,20 @@ export default function Home() {
         error_code: "ALLOCARD_RECIPIENT_NOT_ALLOWED",
         error_message: `Recipient ${execRecipient} is not allowed by this permission's strict recipient list`,
         offending_permission_id: selectedPerm.id,
-        requested_amount: (parseFloat(execAmount) * 1e24).toString(),
+        requested_amount: parseTokenAmount(execAmount),
       });
       return;
     }
 
-    const reqAmtNear = parseFloat(execAmount);
-    const maxPerActionNear = parseFloat(rule.max_per_action || "0") / 1e24;
-    if (reqAmtNear > maxPerActionNear) {
+    const reqAmtUnits = BigInt(parseTokenAmount(execAmount));
+    const maxPerActionUnits = BigInt(rule.max_per_action || "0");
+    if (rule.max_per_action && reqAmtUnits > maxPerActionUnits) {
       setPreviewOutcome({
         allowed: false,
         error_code: "ALLOCARD_PER_ACTION_LIMIT",
-        error_message: `Requested ${reqAmtNear} NEAR exceeds per-action ceiling of ${maxPerActionNear} NEAR`,
+        error_message: `Requested ${execAmount} NEAR exceeds per-action ceiling of ${formatTokenAmount(maxPerActionUnits.toString())} NEAR`,
         offending_permission_id: selectedPerm.id,
-        requested_amount: (reqAmtNear * 1e24).toString(),
+        requested_amount: reqAmtUnits.toString(),
       });
       return;
     }
@@ -164,12 +169,24 @@ export default function Home() {
       allowed: true,
       error_code: undefined,
       error_message: undefined,
-      requested_amount: (reqAmtNear * 1e24).toString(),
+      requested_amount: reqAmtUnits.toString(),
       available_budget: rule.lifetime_limit,
     });
+
+    } catch (error) {
+      setSimulationError(error instanceof Error ? error.message : "Invalid simulation input");
+      setIsExecuting(false);
+    }
   };
 
   const handleExecute = async () => {
+    setSimulationError(null);
+    try {
+    const units = BigInt(parseTokenAmount(execAmount));
+    if (isPaused || units <= BigInt(0) || units > BigInt(parseTokenAmount(treasuryBalance))) {
+      throw new Error("Simulation paused, amount invalid, or sample funds insufficient");
+    }
+
     setIsExecuting(true);
     const reqId = generateRequestId();
     const req: ExecuteRequest = {
@@ -180,7 +197,7 @@ export default function Home() {
         type: "Transfer",
         asset: { type: "NativeNear" },
         receiver: execRecipient,
-        amount: (parseFloat(execAmount) * 1e24).toString(),
+        amount: parseTokenAmount(execAmount),
       },
       deadline_ms: (Date.now() + 300000).toString(),
     };
@@ -209,18 +226,23 @@ export default function Home() {
 
     setHistory([newExec, ...history]);
     setPendingOutgoing("0.00");
-    setTreasuryBalance((parseFloat(treasuryBalance) - parseFloat(execAmount)).toFixed(2));
+    setTreasuryBalance(formatTokenAmount((BigInt(parseTokenAmount(treasuryBalance)) - BigInt(parseTokenAmount(execAmount))).toString()));
 
     // Update permission settled usage
     setPermissions((prev) =>
       prev.map((p) =>
         p.id === execPermissionId
-          ? { ...p, settled: (parseFloat(p.settled) + parseFloat(execAmount)).toFixed(2) }
+          ? { ...p, settled: formatTokenAmount((BigInt(parseTokenAmount(p.settled)) + BigInt(parseTokenAmount(execAmount))).toString()) }
           : p
       )
     );
 
     setIsExecuting(false);
+
+    } catch (error) {
+      setSimulationError(error instanceof Error ? error.message : "Invalid simulation input");
+      setIsExecuting(false);
+    }
   };
 
   const handleRevoke = (id: string) => {
@@ -230,7 +252,7 @@ export default function Home() {
   };
 
   const handleEpochAdvance = () => {
-    const next = (parseInt(authorityEpoch) + 1).toString();
+    const next = (BigInt(authorityEpoch) + BigInt(1)).toString();
     setAuthorityEpoch(next);
     // Advancing epoch invalidates old permissions immediately in O(1)
     setPermissions([]);
@@ -238,6 +260,10 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans selection:bg-indigo-500 selection:text-white">
+      <div role="status" className="bg-amber-950 px-6 py-3 text-sm text-amber-200">
+        Local simulation — no wallet connected. Balances, approvals and payment outcomes are sample data; no funds move.
+      </div>
+      {simulationError && <p role="alert" className="px-6 py-3 text-rose-300">{simulationError}</p>}
       {/* Header */}
       <header className="border-b border-zinc-800 bg-zinc-900/50 backdrop-blur sticky top-0 z-50 px-6 py-4 flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -379,13 +405,13 @@ export default function Home() {
                           <div>
                             <span className="text-zinc-500 block">Cap / Action</span>
                             <span className="font-medium text-zinc-300">
-                              {parseFloat(perm.rules[0]?.max_per_action || "0") / 1e24} NEAR
+                              {formatTokenAmount(perm.rules[0]?.max_per_action || "0")} NEAR
                             </span>
                           </div>
                           <div>
                             <span className="text-zinc-500 block">Lifetime Budget</span>
                             <span className="font-medium text-zinc-300">
-                              {parseFloat(perm.rules[0]?.lifetime_limit || "0") / 1e24} NEAR
+                              {formatTokenAmount(perm.rules[0]?.lifetime_limit || "0")} NEAR
                             </span>
                           </div>
                           <div>
@@ -457,7 +483,7 @@ export default function Home() {
                     />
                   </div>
                   <div>
-                    <label className="text-zinc-400 mb-1 block">Max Executions (MetaMask Cap)</label>
+                    <label className="text-zinc-400 mb-1 block">Maximum Executions</label>
                     <input
                       type="number"
                       value={newMaxExecutions}
@@ -468,6 +494,7 @@ export default function Home() {
                 </div>
                 <button
                   onClick={() => {
+                    try {
                     const newId = (permissions.length + 1).toString();
                     setPermissions([
                       ...permissions,
@@ -487,18 +514,22 @@ export default function Home() {
                           {
                             asset: { type: "NativeNear" },
                             recipients: { type: "Any" },
-                            max_per_action: (parseFloat(newMaxPerAction) * 1e24).toString(),
-                            lifetime_limit: (parseFloat(newLifetime) * 1e24).toString(),
+                            max_per_action: parseTokenAmount(newMaxPerAction),
+                            lifetime_limit: parseTokenAmount(newLifetime),
                             acknowledge_unbounded_budget: false,
                           },
                         ],
                         settled: "0.00",
                       },
                     ]);
+                    setSimulationError(null);
+                    } catch (error) {
+                      setSimulationError(error instanceof Error ? error.message : "Invalid amount");
+                    }
                   }}
                   className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-medium text-xs text-white transition shadow-lg shadow-indigo-600/20"
                 >
-                  Create Permission on Native NEAR
+                  Add Sample Permission
                 </button>
               </div>
             )}
@@ -522,7 +553,7 @@ export default function Home() {
                   >
                     {permissions.map((p) => (
                       <option key={p.id} value={p.id}>
-                        #{p.id} ({p.delegate}) - Cap: {parseFloat(p.rules[0]?.max_per_action || "0") / 1e24} NEAR
+                        #{p.id} ({p.delegate}) - Cap: {formatTokenAmount(p.rules[0]?.max_per_action || "0")} NEAR
                       </option>
                     ))}
                   </select>
@@ -554,14 +585,14 @@ export default function Home() {
                   onClick={handlePreview}
                   className="flex-1 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium text-xs transition"
                 >
-                  Preflight Check (Preview)
+                  Illustrative Policy Check
                 </button>
                 <button
                   onClick={handleExecute}
                   disabled={isExecuting}
                   className="flex-1 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs transition disabled:opacity-50"
                 >
-                  {isExecuting ? "Locking & Dispatching..." : "Execute Action"}
+                  {isExecuting ? "Simulating..." : "Simulate Payment"}
                 </button>
               </div>
 
@@ -575,7 +606,7 @@ export default function Home() {
                   }`}
                 >
                   <div className="flex items-center gap-2 font-semibold">
-                    <span>{previewOutcome.allowed ? "✓ PREFLIGHT ALLOWED" : "✗ REJECTED BY POLICY"}</span>
+                    <span>{previewOutcome.allowed ? "✓ SAMPLE CHECK PASSED" : "✗ SAMPLE CHECK FAILED"}</span>
                     {previewOutcome.error_code && (
                       <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-rose-900/40">
                         {previewOutcome.error_code}
@@ -591,7 +622,7 @@ export default function Home() {
 
             {/* Execution Audit Trail */}
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-zinc-300">Settled Executions</h3>
+              <h3 className="text-sm font-semibold text-zinc-300">Simulated Payments</h3>
               <div className="space-y-2">
                 {history.map((item) => (
                   <div
@@ -606,7 +637,7 @@ export default function Home() {
                         </span>
                       </div>
                       <span className="font-mono text-[11px] text-zinc-400 mt-1 block">
-                        {item.action.receiver}: {parseFloat(item.action.amount) / 1e24} NEAR
+                        {item.action.receiver}: {formatTokenAmount(item.action.amount)} NEAR
                       </span>
                     </div>
                     <span className="text-[10px] font-mono text-zinc-500 truncate max-w-[120px]">

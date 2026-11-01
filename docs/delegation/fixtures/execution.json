@@ -1,0 +1,15 @@
+{
+  "id": "18446744073709551615",
+  "actor": "employee.near",
+  "request_id": "0000000000000000000000000000000000000000000000000000000000000000",
+  "request_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+  "authority_mode": "Delegated",
+  "permission_id": "9007199254740993",
+  "epoch": "1",
+  "action": {"type": "Transfer", "asset": {"type": "Nep141", "contract_id": "token.near"}, "receiver": "vendor.near", "amount": "340282366920938463463374607431768211455"},
+  "created_at_ms": "1700000000000",
+  "status": "Pending",
+  "needs_reconciliation": false,
+  "reservations": [{"budget_key": {"permission_id": "9007199254740993", "asset": {"type": "Nep141", "contract_id": "token.near"}, "scope": {"type": "FixedWindow", "window_index": "9007199254740993"}}, "amount": "340282366920938463463374607431768211455"}],
+  "failure_code": null
+}

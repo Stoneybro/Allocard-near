@@ -15,7 +15,7 @@ export interface FixedWindowLimit {
 export interface StreamingLimit {
   rate_per_second: string;
   start_ms: string;
-  max_cap?: string;
+  max_cap?: string | null;
 }
 
 export interface ApprovalRule {
@@ -26,39 +26,39 @@ export interface ApprovalRule {
 export interface AssetRule {
   asset: AssetId;
   recipients: Recipients;
-  min_per_action?: string;
-  max_per_action?: string;
-  lifetime_limit?: string;
-  fixed_window?: FixedWindowLimit;
-  streaming?: StreamingLimit;
-  approval?: ApprovalRule;
+  min_per_action?: string | null;
+  max_per_action?: string | null;
+  lifetime_limit?: string | null;
+  fixed_window?: FixedWindowLimit | null;
+  streaming?: StreamingLimit | null;
+  approval?: ApprovalRule | null;
   acknowledge_unbounded_budget: boolean;
 }
 
 export interface PermissionSpec {
   delegate: string;
   valid_from_ms: string;
-  expires_at_ms?: string;
-  max_executions?: number;
+  expires_at_ms?: string | null;
+  max_executions?: number | null;
   rules: AssetRule[];
   redelegation_depth: number;
-  metadata_hash?: string;
+  metadata_hash?: string | null;
 }
 
 export interface Permission {
   id: string;
-  parent_id?: string;
+  parent_id?: string | null;
   issuer: string;
   delegate: string;
   epoch: string;
   depth: number;
   valid_from_ms: string;
-  expires_at_ms?: string;
-  max_executions?: number;
+  expires_at_ms?: string | null;
+  max_executions?: number | null;
   rules: AssetRule[];
   redelegation_depth: number;
   revoked: boolean;
-  metadata_hash?: string;
+  metadata_hash?: string | null;
 }
 
 export interface BudgetScopeLifetime {
@@ -67,7 +67,7 @@ export interface BudgetScopeLifetime {
 
 export interface BudgetScopeFixedWindow {
   type: "FixedWindow";
-  window_index: number;
+  window_index: string;
 }
 
 export interface BudgetScopeStreaming {
@@ -80,7 +80,7 @@ export type BudgetScope =
   | BudgetScopeStreaming;
 
 export interface BudgetKey {
-  permission_id: number;
+  permission_id: string;
   asset: AssetId;
   scope: BudgetScope;
 }
@@ -136,21 +136,21 @@ export interface Execution {
   request_id: string;
   request_hash: string;
   authority_mode: "Delegated" | "OwnerWithdrawal";
-  permission_id?: string;
+  permission_id?: string | null;
   epoch: string;
   action: Action;
   created_at_ms: string;
   status: ExecutionStatus;
   needs_reconciliation: boolean;
   reservations: Reservation[];
-  failure_code?: string;
+  failure_code?: string | null;
 }
 
 export interface TreasuryConfig {
   schema_version: number;
   network_domain: string;
   owner: string;
-  pending_owner?: string;
+  pending_owner?: string | null;
   authority_epoch: string;
   paused: boolean;
   next_permission_id: string;
@@ -160,6 +160,7 @@ export interface TreasuryConfig {
   min_operating_reserve: string;
   callback_gas: string;
   transfer_gas: string;
+  callback_storage_reserved: string;
   storage_funding_remaining: string;
   operating_budget_remaining: string;
   pending_execution_count: number;
@@ -167,12 +168,12 @@ export interface TreasuryConfig {
 
 export interface PreviewResult {
   allowed: boolean;
-  error_code?: string;
-  error_message?: string;
-  required_approver?: string;
-  offending_permission_id?: string;
+  error_code?: string | null;
+  error_message?: string | null;
+  required_approver?: string | null;
+  offending_permission_id?: string | null;
   requested_amount: string;
-  available_budget?: string;
+  available_budget?: string | null;
 }
 
 export interface ApprovalRecord {

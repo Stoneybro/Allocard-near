@@ -10,6 +10,8 @@ if [ -f "$HOME/.cargo/env" ]; then
     source "$HOME/.cargo/env"
 fi
 
+bash "${SCRIPT_DIR}/contracts-build.sh"
+
 echo "Running Rust tests for Allocard contracts..."
 cd "${CONTRACTS_DIR}"
 cargo test --workspace
