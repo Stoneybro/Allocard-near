@@ -154,9 +154,11 @@ Hard schema bounds: maximum 8 grants in a path (root depth 0, leaf depth <= 7); 
     AssetPermission {
       asset: AssetId,
       recipients: Any | Only(Vec<AccountId>),
+      min_per_action: Option<u128>,
       max_per_action: Option<u128>,
       lifetime_limit: Option<u128>,
       fixed_window: Option<FixedWindowLimit>,
+      streaming: Option<StreamingLimit>,
       approval: Option<ApprovalRule>,
       acknowledge_unbounded_budget: bool
     }
@@ -167,6 +169,12 @@ Hard schema bounds: maximum 8 grants in a path (root depth 0, leaf depth <= 7); 
       anchor_ms: u64
     }
 
+    StreamingLimit {
+      rate_per_second: u128,
+      start_ms: u64,
+      max_cap: Option<u128>
+    }
+
     ApprovalRule {
       approver: AccountId,
       above_amount: u128             // approval required when amount > threshold
@@ -174,13 +182,15 @@ Hard schema bounds: maximum 8 grants in a path (root depth 0, leaf depth <= 7); 
 
 Every permission represents a direct transfer of that asset in v1. No permission means no authority for that asset. Duplicate asset entries and duplicate recipient entries are rejected. Only([]) is rejected rather than ambiguously interpreted.
 
-Amounts, caps and window duration must be positive. A grant must have at least one permission. Finite expires_at must exceed valid_from. Root redelegation_depth must fit the hard path bound. If both lifetime_limit and fixed_window are absent, acknowledge_unbounded_budget MUST be true. This is an explicit unbounded cumulative allowance, possibly still restricted by per-action/recipient/ancestor rules; the SDK must display it. A per-action cap alone does not bound cumulative spending.
+Amounts, caps, floors and window duration must be positive. When min_per_action and max_per_action are both set, max_per_action >= min_per_action. A grant must have at least one permission. Finite expires_at must exceed valid_from. Root redelegation_depth must fit the hard path bound. If lifetime_limit, fixed_window and streaming are all absent, acknowledge_unbounded_budget MUST be true. This is an explicit unbounded cumulative allowance, possibly still restricted by per-action/recipient/ancestor rules; the SDK must display it. A per-action cap alone does not bound cumulative spending.
 
 Budget windows are half-open intervals. For t >= anchor:
 
     window_index = (t - anchor_ms) / duration_ms
 
 Before anchor the permission is unavailable. A 30-day window is not a calendar month. The UI must not label it monthly. Calendar-month semantics require a later policy version.
+
+For streaming limits at time t >= start_ms, accrued allowance is min(rate_per_second * (t - start_ms) / 1000, max_cap) (or uncapped by max_cap if None). Before start_ms the available streaming allowance is zero.
 
 ### 5.3 Grant
 
@@ -193,6 +203,7 @@ Before anchor the permission is unavailable. A 30-day window is not a calendar m
       depth: u8,
       valid_from_ms: u64,
       expires_at_ms: Option<u64>,    // exclusive; None = no local expiry
+      max_executions: Option<u32>,   // total number of executions allowed; None = unlimited
       permissions: Vec<AssetPermission>,
       redelegation_depth: u8,       // 0 means may not create children
       revoked: bool,
@@ -213,7 +224,9 @@ Child constraints at creation:
 - Child assets are a subset of parent's assets.
 - If parent has Only recipients, child also uses Only and is a subset.
 - If parent has max_per_action, child supplies a cap <= it.
+- If parent has min_per_action, child supplies a floor >= it.
 - If parent has lifetime_limit, child supplies a lifetime cap <= it.
+- If parent has max_executions, child supplies a count cap <= it.
 - Fixed-window definitions may differ; always enforce every ancestor's own buckets. Do not incorrectly compare numeric limits with different durations.
 - Parent approval policies remain inherited even if the child adds none.
 
@@ -224,14 +237,20 @@ These checks improve configuration clarity. Full path evaluation at execution re
     BudgetKey {
       grant_id: GrantId,
       asset: AssetId,
-      scope: Lifetime | FixedWindow { window_index: u64 }
+      scope: Lifetime | FixedWindow { window_index: u64 } | Streaming
     }
 
     Usage { settled: u128, pending: u128 }
 
-Each applicable lifetime/window counter is separate. A grant can have both; both must pass. All checks use checked arithmetic:
+    GrantUsage {
+      executions_count: u32
+    }
+
+Each applicable lifetime/window/streaming counter is separate. A grant can have multiple; all must pass. All checks use checked arithmetic:
 
     settled + pending + amount <= limit
+
+For streaming, limit is dynamically computed at evaluation timestamp. If grant has max_executions, executions_count + 1 <= max_executions is required.
 
 A limit belongs to a particular grant, not to a principal or child wallet. Siblings share their parent's counters. Multiple roots have separate counters but share treasury liquidity. No historical grant/counter/request deletion in v1; state growth is funded and observable.
 
@@ -441,6 +460,7 @@ Stable error codes at minimum:
     GRANT_EXPIRED, INVALID_ANCESTRY, MAX_DEPTH, REDELEGATION_DISABLED,
     CHILD_PERMISSION_EXPANSION, ASSET_NOT_ALLOWED, ASSET_DISABLED,
     RECIPIENT_NOT_ALLOWED, PER_ACTION_LIMIT, LIFETIME_LIMIT, WINDOW_LIMIT,
+    STREAMING_LIMIT, EXECUTION_COUNT_EXCEEDED,
     APPROVAL_REQUIRED, APPROVAL_EXPIRED, DEADLINE_EXPIRED,
     REQUEST_ID_CONFLICT, INSUFFICIENT_AVAILABLE_FUNDS, OPERATING_RESERVE_LOW,
     STORAGE_RESERVE_LOW, INSUFFICIENT_GAS, PENDING_LIMIT,

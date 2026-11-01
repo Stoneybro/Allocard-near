@@ -1,3 +1,8 @@
+pub mod canonical;
+pub mod errors;
+pub mod policy;
+pub mod types;
+
 use near_sdk::near;
 
 #[near(contract_state)]
@@ -26,4 +31,3 @@ mod tests {
         assert_eq!(contract.get_version(), "0.1.0");
     }
 }
-
