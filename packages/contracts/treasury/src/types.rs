@@ -53,6 +53,25 @@ pub struct ApprovalRule {
     pub above_amount: U128,
 }
 
+/// Key used to look up approved requests.
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[borsh(crate = "near_sdk::borsh")]
+#[serde(crate = "near_sdk::serde")]
+pub struct ApprovalKey {
+    pub request_hash: [u8; 32],
+    pub permission_id: PermissionId,
+    pub asset: AssetId,
+}
+
+/// Recorded approval by an authorized approver.
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[borsh(crate = "near_sdk::borsh")]
+#[serde(crate = "near_sdk::serde")]
+pub struct ApprovalRecord {
+    pub approver: AccountId,
+    pub expires_at_ms: U64,
+}
+
 /// Granular asset spending rule within a Permission.
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[borsh(crate = "near_sdk::borsh")]

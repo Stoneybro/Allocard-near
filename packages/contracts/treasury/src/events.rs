@@ -1,4 +1,4 @@
-use near_sdk::json_types::U64;
+use near_sdk::json_types::{U128, U64};
 use near_sdk::serde::Serialize;
 use near_sdk::{env, AccountId};
 
@@ -40,11 +40,46 @@ pub enum EventLogData<'a> {
         new_owner: &'a AccountId,
     },
     AssetRegistered {
-        asset: String,
+        asset: &'a str,
     },
     AssetStatusChanged {
-        asset: String,
+        asset: &'a str,
         enabled: bool,
+    },
+    TreasuryDeposit {
+        asset: &'a str,
+        sender: &'a AccountId,
+        amount: U128,
+    },
+    ApprovalRecorded {
+        request_hash: &'a str,
+        permission_id: U64,
+        asset: &'a str,
+        approver: &'a AccountId,
+    },
+    ApprovalRevoked {
+        request_hash: &'a str,
+        permission_id: U64,
+        asset: &'a str,
+        approver: &'a AccountId,
+    },
+    ExecutionDispatched {
+        execution_id: U64,
+        actor: &'a AccountId,
+        permission_id: Option<U64>,
+        amount: U128,
+        asset: &'a str,
+    },
+    ExecutionSucceeded {
+        execution_id: U64,
+    },
+    ExecutionFailed {
+        execution_id: U64,
+        failure_code: &'a str,
+    },
+    ExecutionFlagged {
+        execution_id: U64,
+        flagger: &'a AccountId,
     },
 }
 
