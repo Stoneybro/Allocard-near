@@ -3,7 +3,7 @@ use near_sdk::json_types::{U128, U64};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{AccountId, Gas};
 
-pub type GrantId = u64;
+pub type PermissionId = u64;
 pub type ExecutionId = u64;
 
 /// Supported asset identifiers in Allocard.
@@ -53,11 +53,11 @@ pub struct ApprovalRule {
     pub above_amount: U128,
 }
 
-/// Granular asset spending permission on a Grant.
+/// Granular asset spending rule within a Permission.
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[borsh(crate = "near_sdk::borsh")]
 #[serde(crate = "near_sdk::serde")]
-pub struct AssetPermission {
+pub struct AssetRule {
     pub asset: AssetId,
     pub recipients: Recipients,
     pub min_per_action: Option<U128>,
@@ -69,24 +69,24 @@ pub struct AssetPermission {
     pub acknowledge_unbounded_budget: bool,
 }
 
-/// Grant specification submitted to create a new root or child grant.
+/// Specification submitted to create a new root or child permission.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(crate = "near_sdk::serde")]
-pub struct GrantSpec {
+pub struct PermissionSpec {
     pub delegate: AccountId,
     pub valid_from_ms: U64,
     pub expires_at_ms: Option<U64>,
     pub max_executions: Option<u32>,
-    pub permissions: Vec<AssetPermission>,
+    pub rules: Vec<AssetRule>,
     pub redelegation_depth: u8,
     pub metadata_hash: Option<String>,
 }
 
-/// Stored, immutable Grant record.
+/// Stored, immutable Permission record.
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[borsh(crate = "near_sdk::borsh")]
 #[serde(crate = "near_sdk::serde")]
-pub struct Grant {
+pub struct Permission {
     pub id: U64,
     pub parent_id: Option<U64>,
     pub issuer: AccountId,
@@ -96,7 +96,7 @@ pub struct Grant {
     pub valid_from_ms: U64,
     pub expires_at_ms: Option<U64>,
     pub max_executions: Option<u32>,
-    pub permissions: Vec<AssetPermission>,
+    pub rules: Vec<AssetRule>,
     pub redelegation_depth: u8,
     pub revoked: bool,
     pub metadata_hash: Option<[u8; 32]>,
@@ -117,7 +117,7 @@ pub enum BudgetScope {
 #[borsh(crate = "near_sdk::borsh")]
 #[serde(crate = "near_sdk::serde")]
 pub struct BudgetKey {
-    pub grant_id: GrantId,
+    pub permission_id: PermissionId,
     pub asset: AssetId,
     pub scope: BudgetScope,
 }
@@ -131,11 +131,11 @@ pub struct Usage {
     pub pending: U128,
 }
 
-/// Grant execution usage tracking (for max_executions limit).
+/// Execution usage tracking on a Permission (for max_executions limit).
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[borsh(crate = "near_sdk::borsh")]
 #[serde(crate = "near_sdk::serde")]
-pub struct GrantUsage {
+pub struct PermissionUsage {
     pub executions_count: u32,
 }
 
@@ -181,13 +181,13 @@ impl Action {
     }
 }
 
-/// Request to execute an action via a delegated Grant.
+/// Request to execute an action via a delegated Permission.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(crate = "near_sdk::serde")]
 pub struct ExecuteRequest {
     pub api_version: u16,
     pub request_id: String, // 64 lowercase hex characters
-    pub grant_id: U64,
+    pub permission_id: U64,
     pub action: Action,
     pub deadline_ms: U64,
 }
@@ -239,7 +239,7 @@ pub struct Execution {
     pub request_id: [u8; 32],
     pub request_hash: [u8; 32],
     pub authority_mode: AuthorityMode,
-    pub grant_id: Option<U64>,
+    pub permission_id: Option<U64>,
     pub epoch: U64,
     pub action: Action,
     pub created_at_ms: U64,
@@ -260,9 +260,9 @@ pub struct TreasuryConfig {
     pub pending_owner: Option<AccountId>,
     pub authority_epoch: U64,
     pub paused: bool,
-    pub next_grant_id: U64,
+    pub next_permission_id: U64,
     pub next_execution_id: U64,
-    pub max_total_grants: u32,
+    pub max_total_permissions: u32,
     pub max_pending_executions: u32,
     pub min_operating_reserve: U128,
     pub callback_gas: Gas,
@@ -278,7 +278,7 @@ pub struct TreasuryConfig {
 pub struct InitConfig {
     pub network_domain: String,
     pub owner: AccountId,
-    pub max_total_grants: Option<u32>,
+    pub max_total_permissions: Option<u32>,
     pub max_pending_executions: Option<u32>,
     pub min_operating_reserve: Option<U128>,
     pub callback_gas: Option<Gas>,
@@ -293,7 +293,7 @@ pub struct PreviewResult {
     pub error_code: Option<String>,
     pub error_message: Option<String>,
     pub required_approver: Option<AccountId>,
-    pub offending_grant_id: Option<U64>,
+    pub offending_permission_id: Option<U64>,
     pub requested_amount: U128,
     pub available_budget: Option<U128>,
 }

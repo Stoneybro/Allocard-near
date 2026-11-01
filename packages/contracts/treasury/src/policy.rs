@@ -2,18 +2,18 @@ use near_sdk::AccountId;
 
 use crate::errors::*;
 use crate::types::{
-    Action, BudgetKey, BudgetScope, Grant, GrantId, GrantSpec, GrantUsage,
-    Recipients, Reservation, StreamingLimit, Usage,
+    Action, BudgetKey, BudgetScope, Permission, PermissionId, PermissionSpec,
+    PermissionUsage, Recipients, Reservation, StreamingLimit, Usage,
 };
 
 pub const MAX_DEPTH: u8 = 8; // Root is depth 0, max depth index is 7
-pub const MAX_PERMISSIONS_PER_GRANT: usize = 16;
-pub const MAX_RECIPIENTS_PER_PERMISSION: usize = 64;
+pub const MAX_RULES_PER_PERMISSION: usize = 16;
+pub const MAX_RECIPIENTS_PER_RULE: usize = 64;
 pub const MAX_SERIALIZED_INPUT_BYTES: usize = 8192; // 8 KiB
 
-/// Validates that a grant specification adheres to hard bounds and positive amounts.
-pub fn validate_grant_spec(spec: &GrantSpec) -> Result<(), &'static str> {
-    if spec.permissions.is_empty() || spec.permissions.len() > MAX_PERMISSIONS_PER_GRANT {
+/// Validates that a permission specification adheres to hard bounds and positive amounts.
+pub fn validate_permission_spec(spec: &PermissionSpec) -> Result<(), &'static str> {
+    if spec.rules.is_empty() || spec.rules.len() > MAX_RULES_PER_PERMISSION {
         return Err(ERR_INVALID_INPUT);
     }
 
@@ -29,17 +29,17 @@ pub fn validate_grant_spec(spec: &GrantSpec) -> Result<(), &'static str> {
         }
     }
 
-    // Check for duplicate assets in permissions
-    let mut seen_assets = Vec::with_capacity(spec.permissions.len());
-    for perm in &spec.permissions {
-        if seen_assets.contains(&perm.asset) {
-            return Err(ERR_INVALID_INPUT); // No duplicate asset permissions
+    // Check for duplicate assets in rules
+    let mut seen_assets = Vec::with_capacity(spec.rules.len());
+    for rule in &spec.rules {
+        if seen_assets.contains(&rule.asset) {
+            return Err(ERR_INVALID_INPUT); // No duplicate asset rules
         }
-        seen_assets.push(perm.asset.clone());
+        seen_assets.push(rule.asset.clone());
 
         // Validate recipients
-        if let Recipients::Only(ref accounts) = perm.recipients {
-            if accounts.is_empty() || accounts.len() > MAX_RECIPIENTS_PER_PERMISSION {
+        if let Recipients::Only(ref accounts) = rule.recipients {
+            if accounts.is_empty() || accounts.len() > MAX_RECIPIENTS_PER_RULE {
                 return Err(ERR_INVALID_INPUT); // Only([]) is rejected
             }
             // Check duplicate recipients
@@ -53,17 +53,17 @@ pub fn validate_grant_spec(spec: &GrantSpec) -> Result<(), &'static str> {
         }
 
         // Validate min/max per action
-        if let (Some(min), Some(max)) = (perm.min_per_action, perm.max_per_action) {
+        if let (Some(min), Some(max)) = (rule.min_per_action, rule.max_per_action) {
             if min.0 == 0 || max.0 == 0 || max.0 < min.0 {
                 return Err(ERR_INVALID_INPUT);
             }
         } else {
-            if let Some(min) = perm.min_per_action {
+            if let Some(min) = rule.min_per_action {
                 if min.0 == 0 {
                     return Err(ERR_INVALID_INPUT);
                 }
             }
-            if let Some(max) = perm.max_per_action {
+            if let Some(max) = rule.max_per_action {
                 if max.0 == 0 {
                     return Err(ERR_INVALID_INPUT);
                 }
@@ -71,21 +71,21 @@ pub fn validate_grant_spec(spec: &GrantSpec) -> Result<(), &'static str> {
         }
 
         // Validate lifetime limit
-        if let Some(lifetime) = perm.lifetime_limit {
+        if let Some(lifetime) = rule.lifetime_limit {
             if lifetime.0 == 0 {
                 return Err(ERR_INVALID_INPUT);
             }
         }
 
         // Validate fixed window
-        if let Some(ref window) = perm.fixed_window {
+        if let Some(ref window) = rule.fixed_window {
             if window.limit.0 == 0 || window.duration_ms.0 == 0 {
                 return Err(ERR_INVALID_INPUT);
             }
         }
 
         // Validate streaming limit
-        if let Some(ref stream) = perm.streaming {
+        if let Some(ref stream) = rule.streaming {
             if stream.rate_per_second.0 == 0 {
                 return Err(ERR_INVALID_INPUT);
             }
@@ -97,7 +97,7 @@ pub fn validate_grant_spec(spec: &GrantSpec) -> Result<(), &'static str> {
         }
 
         // Validate approval rule
-        if let Some(ref approval) = perm.approval {
+        if let Some(ref approval) = rule.approval {
             if approval.above_amount.0 == 0 {
                 return Err(ERR_INVALID_INPUT);
             }
@@ -105,8 +105,8 @@ pub fn validate_grant_spec(spec: &GrantSpec) -> Result<(), &'static str> {
 
         // Validate unbounded budget acknowledgment requirement
         let has_cumulative_limit =
-            perm.lifetime_limit.is_some() || perm.fixed_window.is_some() || perm.streaming.is_some();
-        if !has_cumulative_limit && !perm.acknowledge_unbounded_budget {
+            rule.lifetime_limit.is_some() || rule.fixed_window.is_some() || rule.streaming.is_some();
+        if !has_cumulative_limit && !rule.acknowledge_unbounded_budget {
             return Err(ERR_INVALID_INPUT);
         }
     }
@@ -114,9 +114,9 @@ pub fn validate_grant_spec(spec: &GrantSpec) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Validates child grant creation against parent terms (strictly narrowing or equal).
-pub fn validate_child_narrowing(parent: &Grant, child_spec: &GrantSpec) -> Result<(), &'static str> {
-    validate_grant_spec(child_spec)?;
+/// Validates child permission creation against parent terms (strictly narrowing or equal).
+pub fn validate_child_narrowing(parent: &Permission, child_spec: &PermissionSpec) -> Result<(), &'static str> {
+    validate_permission_spec(child_spec)?;
 
     if parent.redelegation_depth == 0 {
         return Err(ERR_REDELEGATION_DISABLED);
@@ -159,17 +159,17 @@ pub fn validate_child_narrowing(parent: &Grant, child_spec: &GrantSpec) -> Resul
         }
     }
 
-    // Every child asset permission must have a parent permission that is equal or wider
-    for child_perm in &child_spec.permissions {
-        let parent_perm = parent
-            .permissions
+    // Every child asset rule must have a parent rule that is equal or wider
+    for child_rule in &child_spec.rules {
+        let parent_rule = parent
+            .rules
             .iter()
-            .find(|p| p.asset == child_perm.asset)
+            .find(|p| p.asset == child_rule.asset)
             .ok_or(ERR_ASSET_NOT_ALLOWED)?;
 
         // Recipients check: if parent has Only, child must also have Only and be a subset
-        if let Recipients::Only(ref parent_allowed) = parent_perm.recipients {
-            match child_perm.recipients {
+        if let Recipients::Only(ref parent_allowed) = parent_rule.recipients {
+            match child_rule.recipients {
                 Recipients::Only(ref child_allowed) => {
                     for r in child_allowed {
                         if !parent_allowed.contains(r) {
@@ -182,8 +182,8 @@ pub fn validate_child_narrowing(parent: &Grant, child_spec: &GrantSpec) -> Resul
         }
 
         // Max per action: child cap <= parent cap
-        if let Some(parent_max) = parent_perm.max_per_action {
-            match child_perm.max_per_action {
+        if let Some(parent_max) = parent_rule.max_per_action {
+            match child_rule.max_per_action {
                 Some(child_max) => {
                     if child_max.0 > parent_max.0 {
                         return Err(ERR_CHILD_PERMISSION_EXPANSION);
@@ -194,8 +194,8 @@ pub fn validate_child_narrowing(parent: &Grant, child_spec: &GrantSpec) -> Resul
         }
 
         // Min per action: child min >= parent min
-        if let Some(parent_min) = parent_perm.min_per_action {
-            match child_perm.min_per_action {
+        if let Some(parent_min) = parent_rule.min_per_action {
+            match child_rule.min_per_action {
                 Some(child_min) => {
                     if child_min.0 < parent_min.0 {
                         return Err(ERR_CHILD_PERMISSION_EXPANSION);
@@ -206,8 +206,8 @@ pub fn validate_child_narrowing(parent: &Grant, child_spec: &GrantSpec) -> Resul
         }
 
         // Lifetime limit: child cap <= parent cap
-        if let Some(parent_lifetime) = parent_perm.lifetime_limit {
-            match child_perm.lifetime_limit {
+        if let Some(parent_lifetime) = parent_rule.lifetime_limit {
+            match child_rule.lifetime_limit {
                 Some(child_lifetime) => {
                     if child_lifetime.0 > parent_lifetime.0 {
                         return Err(ERR_CHILD_PERMISSION_EXPANSION);
@@ -252,27 +252,27 @@ pub struct PathEvaluationContext<'a> {
     pub current_epoch: u64,
     pub action: &'a Action,
     pub leaf_actor: &'a AccountId,
-    pub path: &'a [Grant], // from leaf (index 0) to root (last index)
+    pub path: &'a [Permission], // from leaf (index 0) to root (last index)
 }
 
 /// Policy evaluation outcome containing reservations to lock and required approvals.
 pub struct EvaluationOutcome {
     pub reservations: Vec<Reservation>,
-    pub required_approvals: Vec<(GrantId, AccountId)>, // (grant_id, approver)
+    pub required_approvals: Vec<(PermissionId, AccountId)>, // (permission_id, approver)
 }
 
-/// Pure policy evaluator checking grant ancestry, permissions, limits, and approvals without mutating state.
-pub fn evaluate_path_pure<FUsage, FGrantUsage>(
+/// Pure policy evaluator checking permission ancestry, rules, limits, and approvals without mutating state.
+pub fn evaluate_path_pure<FUsage, FPermissionUsage>(
     ctx: &PathEvaluationContext,
     get_usage: FUsage,
-    get_grant_usage: FGrantUsage,
+    get_permission_usage: FPermissionUsage,
 ) -> Result<EvaluationOutcome, &'static str>
 where
     FUsage: Fn(&BudgetKey) -> Usage,
-    FGrantUsage: Fn(GrantId) -> GrantUsage,
+    FPermissionUsage: Fn(PermissionId) -> PermissionUsage,
 {
     if ctx.path.is_empty() {
-        return Err(ERR_GRANT_NOT_FOUND);
+        return Err(ERR_PERMISSION_NOT_FOUND);
     }
     if ctx.path.len() > MAX_DEPTH as usize {
         return Err(ERR_MAX_DEPTH);
@@ -295,30 +295,30 @@ where
     let mut required_approvals = Vec::new();
 
     // Verify ancestry continuity from leaf up to root
-    for (i, grant) in ctx.path.iter().enumerate() {
+    for (i, perm) in ctx.path.iter().enumerate() {
         // Epoch check
-        if grant.epoch.0 != ctx.current_epoch {
+        if perm.epoch.0 != ctx.current_epoch {
             return Err(ERR_STALE_EPOCH);
         }
 
         // Revocation check
-        if grant.revoked {
-            return Err(ERR_GRANT_REVOKED);
+        if perm.revoked {
+            return Err(ERR_PERMISSION_REVOKED);
         }
 
         // Time window check
-        if ctx.now_ms < grant.valid_from_ms.0 {
-            return Err(ERR_GRANT_NOT_STARTED);
+        if ctx.now_ms < perm.valid_from_ms.0 {
+            return Err(ERR_PERMISSION_NOT_STARTED);
         }
-        if let Some(expiry) = grant.expires_at_ms {
+        if let Some(expiry) = perm.expires_at_ms {
             if ctx.now_ms >= expiry.0 {
-                return Err(ERR_GRANT_EXPIRED);
+                return Err(ERR_PERMISSION_EXPIRED);
             }
         }
 
         // Max executions check
-        if let Some(max_exec) = grant.max_executions {
-            let usage = get_grant_usage(grant.id.0);
+        if let Some(max_exec) = perm.max_executions {
+            let usage = get_permission_usage(perm.id.0);
             if usage.executions_count >= max_exec {
                 return Err(ERR_EXECUTION_COUNT_EXCEEDED);
             }
@@ -327,52 +327,52 @@ where
         // Continuity link to parent
         if i + 1 < ctx.path.len() {
             let parent = &ctx.path[i + 1];
-            if grant.parent_id != Some(parent.id) {
+            if perm.parent_id != Some(parent.id) {
                 return Err(ERR_INVALID_ANCESTRY);
             }
-            if grant.depth != parent.depth + 1 {
+            if perm.depth != parent.depth + 1 {
                 return Err(ERR_INVALID_ANCESTRY);
             }
-            if grant.issuer != parent.delegate {
+            if perm.issuer != parent.delegate {
                 return Err(ERR_INVALID_ANCESTRY);
             }
         } else {
-            // Root grant must have parent_id == None and depth == 0
-            if grant.parent_id.is_some() || grant.depth != 0 {
+            // Root permission must have parent_id == None and depth == 0
+            if perm.parent_id.is_some() || perm.depth != 0 {
                 return Err(ERR_INVALID_ANCESTRY);
             }
         }
 
-        // Match asset permission on this grant
-        let perm = grant
-            .permissions
+        // Match asset rule on this permission
+        let rule = perm
+            .rules
             .iter()
             .find(|p| &p.asset == asset)
             .ok_or(ERR_ASSET_NOT_ALLOWED)?;
 
         // Check recipient allowlist
-        if let Recipients::Only(ref allowed) = perm.recipients {
+        if let Recipients::Only(ref allowed) = rule.recipients {
             if !allowed.contains(receiver) {
                 return Err(ERR_RECIPIENT_NOT_ALLOWED);
             }
         }
 
         // Check per-action limits
-        if let Some(max_action) = perm.max_per_action {
+        if let Some(max_action) = rule.max_per_action {
             if amount > max_action.0 {
                 return Err(ERR_PER_ACTION_LIMIT);
             }
         }
-        if let Some(min_action) = perm.min_per_action {
+        if let Some(min_action) = rule.min_per_action {
             if amount < min_action.0 {
                 return Err(ERR_PER_ACTION_LIMIT);
             }
         }
 
         // Check lifetime budget
-        if let Some(lifetime) = perm.lifetime_limit {
+        if let Some(lifetime) = rule.lifetime_limit {
             let budget_key = BudgetKey {
-                grant_id: grant.id.0,
+                permission_id: perm.id.0,
                 asset: asset.clone(),
                 scope: BudgetScope::Lifetime,
             };
@@ -393,10 +393,10 @@ where
         }
 
         // Check recurring fixed window budget
-        if let Some(ref window) = perm.fixed_window {
+        if let Some(ref window) = rule.fixed_window {
             let window_idx = calculate_window_index(ctx.now_ms, window.anchor_ms.0, window.duration_ms.0)?;
             let budget_key = BudgetKey {
-                grant_id: grant.id.0,
+                permission_id: perm.id.0,
                 asset: asset.clone(),
                 scope: BudgetScope::FixedWindow(window_idx),
             };
@@ -417,10 +417,10 @@ where
         }
 
         // Check continuous streaming budget
-        if let Some(ref stream) = perm.streaming {
+        if let Some(ref stream) = rule.streaming {
             let accrued = calculate_streaming_accrued(ctx.now_ms, stream);
             let budget_key = BudgetKey {
-                grant_id: grant.id.0,
+                permission_id: perm.id.0,
                 asset: asset.clone(),
                 scope: BudgetScope::Streaming,
             };
@@ -441,9 +441,9 @@ where
         }
 
         // Check approval requirements: triggers when amount > above_amount
-        if let Some(ref approval) = perm.approval {
+        if let Some(ref approval) = rule.approval {
             if amount > approval.above_amount.0 {
-                required_approvals.push((grant.id.0, approval.approver.clone()));
+                required_approvals.push((perm.id.0, approval.approver.clone()));
             }
         }
     }
@@ -457,7 +457,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{AssetId, AssetPermission};
+    use crate::types::{AssetId, AssetRule};
     use near_sdk::json_types::{U128, U64};
 
     fn test_account(name: &str) -> AccountId {
@@ -506,7 +506,7 @@ mod tests {
 
     #[test]
     fn test_validate_child_narrowing_success() {
-        let parent = Grant {
+        let parent = Permission {
             id: U64(1),
             parent_id: None,
             issuer: test_account("company.near"),
@@ -516,7 +516,7 @@ mod tests {
             valid_from_ms: U64(1_000_000),
             expires_at_ms: Some(U64(2_000_000)),
             max_executions: Some(10),
-            permissions: vec![AssetPermission {
+            rules: vec![AssetRule {
                 asset: AssetId::NativeNear,
                 recipients: Recipients::Any,
                 min_per_action: Some(U128(10)),
@@ -532,12 +532,12 @@ mod tests {
             metadata_hash: None,
         };
 
-        let child_spec = GrantSpec {
+        let child_spec = PermissionSpec {
             delegate: test_account("employee.near"),
             valid_from_ms: U64(1_100_000),
             expires_at_ms: Some(U64(1_900_000)),
             max_executions: Some(5),
-            permissions: vec![AssetPermission {
+            rules: vec![AssetRule {
                 asset: AssetId::NativeNear,
                 recipients: Recipients::Only(vec![test_account("vendor.near")]),
                 min_per_action: Some(U128(15)), // >= parent min (10)
@@ -557,7 +557,7 @@ mod tests {
 
     #[test]
     fn test_validate_child_expansion_rejected() {
-        let parent = Grant {
+        let parent = Permission {
             id: U64(1),
             parent_id: None,
             issuer: test_account("company.near"),
@@ -567,7 +567,7 @@ mod tests {
             valid_from_ms: U64(1_000_000),
             expires_at_ms: Some(U64(2_000_000)),
             max_executions: Some(5),
-            permissions: vec![AssetPermission {
+            rules: vec![AssetRule {
                 asset: AssetId::NativeNear,
                 recipients: Recipients::Only(vec![test_account("vendor1.near")]),
                 min_per_action: Some(U128(10)),
@@ -584,12 +584,12 @@ mod tests {
         };
 
         // Child attempts to expand recipients to Any -> rejected
-        let child_expand_recipients = GrantSpec {
+        let child_expand_recipients = PermissionSpec {
             delegate: test_account("employee.near"),
             valid_from_ms: U64(1_100_000),
             expires_at_ms: Some(U64(1_900_000)),
             max_executions: Some(3),
-            permissions: vec![AssetPermission {
+            rules: vec![AssetRule {
                 asset: AssetId::NativeNear,
                 recipients: Recipients::Any,
                 min_per_action: Some(U128(10)),
@@ -609,12 +609,12 @@ mod tests {
         );
 
         // Child attempts to exceed parent's max_per_action -> rejected
-        let child_expand_max_action = GrantSpec {
+        let child_expand_max_action = PermissionSpec {
             delegate: test_account("employee.near"),
             valid_from_ms: U64(1_100_000),
             expires_at_ms: Some(U64(1_900_000)),
             max_executions: Some(3),
-            permissions: vec![AssetPermission {
+            rules: vec![AssetRule {
                 asset: AssetId::NativeNear,
                 recipients: Recipients::Only(vec![test_account("vendor1.near")]),
                 min_per_action: Some(U128(10)),
@@ -636,7 +636,7 @@ mod tests {
 
     #[test]
     fn test_evaluate_path_pure_full_flow() {
-        let root = Grant {
+        let root = Permission {
             id: U64(1),
             parent_id: None,
             issuer: test_account("company.near"),
@@ -646,7 +646,7 @@ mod tests {
             valid_from_ms: U64(1_000_000),
             expires_at_ms: Some(U64(2_000_000)),
             max_executions: None,
-            permissions: vec![crate::types::AssetPermission {
+            rules: vec![AssetRule {
                 asset: AssetId::NativeNear,
                 recipients: Recipients::Any,
                 min_per_action: Some(U128(10)),
@@ -665,7 +665,7 @@ mod tests {
             metadata_hash: None,
         };
 
-        let leaf = Grant {
+        let leaf = Permission {
             id: U64(2),
             parent_id: Some(U64(1)),
             issuer: test_account("manager.near"),
@@ -675,7 +675,7 @@ mod tests {
             valid_from_ms: U64(1_100_000),
             expires_at_ms: Some(U64(1_900_000)),
             max_executions: Some(3),
-            permissions: vec![crate::types::AssetPermission {
+            rules: vec![AssetRule {
                 asset: AssetId::NativeNear,
                 recipients: Recipients::Only(vec![test_account("vendor.near")]),
                 min_per_action: Some(U128(10)),
@@ -712,7 +712,7 @@ mod tests {
                 settled: U128(0),
                 pending: U128(0),
             },
-            |_grant_id| GrantUsage {
+            |_permission_id| PermissionUsage {
                 executions_count: 1, // < max_executions (3)
             },
         )
@@ -720,7 +720,7 @@ mod tests {
 
         // Outcome must include reservations for both leaf and root lifetime budgets
         assert_eq!(outcome.reservations.len(), 2);
-        // And required approval from ceo.near because 350 > 300 on root grant
+        // And required approval from ceo.near because 350 > 300 on root permission
         assert_eq!(outcome.required_approvals.len(), 1);
         assert_eq!(outcome.required_approvals[0], (1, test_account("ceo.near")));
     }

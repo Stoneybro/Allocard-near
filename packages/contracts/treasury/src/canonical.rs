@@ -3,7 +3,7 @@ use near_sdk::AccountId;
 use sha2::{Digest, Sha256};
 
 use crate::errors::*;
-use crate::types::{Action, ExecuteRequest, GrantId, OwnerWithdrawRequest};
+use crate::types::{Action, ExecuteRequest, OwnerWithdrawRequest, PermissionId};
 
 pub const EXECUTE_DOMAIN: &str = "ALLOCARD_EXECUTE_V1";
 pub const OWNER_WITHDRAW_DOMAIN: &str = "ALLOCARD_OWNER_WITHDRAW_V1";
@@ -18,7 +18,7 @@ pub struct ExecuteEnvelope {
     pub actor: AccountId,
     pub api_version: u16,
     pub request_id: [u8; 32],
-    pub grant_id: GrantId,
+    pub permission_id: PermissionId,
     pub action: Action,
     pub deadline_ms: u64,
 }
@@ -69,7 +69,7 @@ pub fn compute_execute_hash(
         actor: actor.clone(),
         api_version: request.api_version,
         request_id: request_id_bytes,
-        grant_id: request.grant_id.0,
+        permission_id: request.permission_id.0,
         action: request.action.clone(),
         deadline_ms: request.deadline_ms.0,
     };
@@ -138,7 +138,7 @@ mod tests {
         let request = ExecuteRequest {
             api_version: 1,
             request_id: "a000000000000000000000000000000000000000000000000000000000000001".to_string(),
-            grant_id: U64(42),
+            permission_id: U64(42),
             action: Action::Transfer {
                 asset: AssetId::NativeNear,
                 receiver,

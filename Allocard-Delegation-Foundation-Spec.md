@@ -7,7 +7,7 @@ Status: implementation contract for an AI coding agent; not implemented or audit
 
 ## 1. Purpose and binding decisions
 
-Build a reusable permission system that lets an asset-owning treasury authorize other principals to perform bounded actions without transferring unused allowances to them. Principals may create narrower child grants when permitted. The foundation must support company → manager → employee → agent authority paths without containing employee, company-department, vendor-category or AI-specific logic.
+Build a reusable permission system that lets an asset-owning treasury authorize other principals to perform bounded actions without transferring unused allowances to them. Principals may create narrower child permissions when permitted. The foundation must support company → manager → employee → agent authority paths without containing employee, company-department, vendor-category or AI-specific logic.
 
 MUST and MUST NOT are acceptance requirements. SHOULD permits a documented engineering choice.
 
@@ -16,10 +16,10 @@ Binding decisions:
 - One treasury contract per organization; authority, policy evaluation, reservations and dispatch preparation execute in that same contract.
 - One authenticated owner account initially. No mandatory multisig, DAO, TEE, external signing service, oracle or cross-chain intermediary.
 - Native NEAR account IDs are the initial principals. Email is an application identifier, not contract authority.
-- Grants are stored onchain and their terms are immutable. Revoke and create replacements instead of editing permissions.
-- A grant has one parent or is a root grant. Multiple roots and multiple grants per principal are allowed.
-- Every execution selects one leaf grant. It must satisfy every ancestor independently. Authority from different branches cannot be combined.
-- Child grants draw from shared ancestor capacity; grant creation does not reserve cash or budget.
+- Permissions are stored onchain and their terms are immutable. Revoke and create replacements instead of editing permissions.
+- A permission has one parent or is a root permission. Multiple roots and multiple permissions per principal are allowed.
+- Every execution selects one leaf permission. It must satisfy every ancestor independently. Authority from different branches cannot be combined.
+- Child permissions draw from shared ancestor capacity; permission creation does not reserve cash or budget.
 - Direct NEAR and allowlisted NEP-141 token transfers are the first executors. Extensibility is through explicit action/executor interfaces, not arbitrary contract calls.
 - All amounts are integers in an asset's smallest unit; no floating-point arithmetic or implicit exchange rates.
 - Onchain spending remains usable without sponsor APIs. Login or RPC availability may still affect a particular client.
@@ -72,7 +72,7 @@ Scripts must use actual manifest paths and the correct Rust target directory; do
 
 ### 2.2 Next.js / SDK boundary
 
-Next.js owns pages, invitation UX, policy previews, login integration and payment status display. The Rust contract owns every authoritative grant, budget and execution decision.
+Next.js owns pages, invitation UX, policy previews, login integration and payment status display. The Rust contract owns every authoritative permission, budget and execution decision.
 
 The local SDK owns contract DTOs, exact request serialization, canonical hashes, RPC calls, events/error decoding and signer interfaces. Its core must be usable from a browser or Node process without importing Next.js. Separate optional browser signing bindings from server-only utilities. Represent large integer values as decimal strings at JSON boundaries and bigint/validated integer helpers internally; do not let JavaScript Number silently round amounts.
 
@@ -86,7 +86,7 @@ CI must check the Rust workspace, SDK and its Next.js integration as separate jo
 
 Required foundation capabilities:
 
-1. Root grants, child grants and bounded ancestry validation.
+1. Root permissions, child permissions and bounded ancestry validation.
 2. Explicit asset permissions, recipient rules, time rules, per-action limits, lifetime limits and recurring fixed-window limits.
 3. Optional single-account approval requirements attached to policies.
 4. Strict shared budget reservations under concurrent requests.
@@ -95,7 +95,7 @@ Required foundation capabilities:
 7. Previews, stable error codes, versioned events and SDK examples.
 8. Ownership handover and a documented deployment/recovery trust model.
 
-Not implemented in v1: reserved employee allocations, arbitrary function calls, token transfer_call execution, swaps, cross-chain settlement, yield, external policy contracts, rolling windows, monthly calendar rules, USD-valued multiasset limits, private onchain accounting, offchain signed grants, custom wallet-signature verification, agent hosting, self-service upgrades or mandatory multisig. These are extension areas, not fake enum variants advertised as working.
+Not implemented in v1: reserved employee allocations, arbitrary function calls, token transfer_call execution, swaps, cross-chain settlement, yield, external policy contracts, rolling windows, monthly calendar rules, USD-valued multiasset limits, private onchain accounting, offchain signed permissions, custom wallet-signature verification, agent hosting, self-service upgrades or mandatory multisig. These are extension areas, not fake enum variants advertised as working.
 
 ## 3. System boundaries
 
@@ -104,8 +104,8 @@ Not implemented in v1: reserved employee allocations, arbitrary function calls, 
 | Client and application backend | Invitations, labels, policy builder, AI suggestions, reporting | Permission to bypass contract validation |
 | Authentication provider / wallet | User login, credential management and signing | Budget or ancestry decisions |
 | Relayer | Submission and gas sponsorship of authenticated transactions | Choosing a different actor or action |
-| Treasury contract | Assets, grants, budgets, replay protection, execution and settlement | Email verification, natural-language interpretation |
-| External token contract | NEP-141 balance and transfer implementation | Allocard grant authority |
+| Treasury contract | Assets, permissions, budgets, replay protection, execution and settlement | Email verification, natural-language interpretation |
+| External token contract | NEP-141 balance and transfer implementation | Allocard permission authority |
 | Indexer | Searchable derived history | Authoritative balances or limits |
 
 Use modules within one initial Rust contract: types, authority, policy, accounting, assets, execution, admin, events, errors and views. Extract crates only when stable interfaces justify it.
@@ -116,7 +116,7 @@ NEAR external calls are asynchronous and independent. A successful originating r
 
 Authenticate account-based calls with predecessor_account_id. Do not authorize using signer_account_id alone, a caller-supplied actor, an email or a backend assertion. An ordinary forwarding contract is the caller and must have its own authority. NEP-366 protocol-relayed calls may preserve the originating account at the target; prove this behavior with a test rather than special-casing an arbitrary relayer account.
 
-Native function-call keys can improve sessions, but cannot replace the grant model. Their allowance concerns gas and they cannot attach NEAR. The public execute endpoint therefore accepts zero deposit; treasury operating funds pay required token-transfer marker deposits. See S3–S4.
+Native function-call keys can improve sessions, but cannot replace the permission model. Their allowance concerns gas and they cannot attach NEAR. The public execute endpoint therefore accepts zero deposit; treasury operating funds pay required token-transfer marker deposits. See S3–S4.
 
 Token integration assumes audited/accepted, standards-compliant token contracts. An owner can allowlist a malicious token, but must not thereby gain an ability to corrupt other assets' accounting. Never interpret a token symbol as an asset identity.
 
@@ -133,9 +133,9 @@ The following are semantic schemas. The agent must supply complete near-sdk seri
       pending_owner: Option<AccountId>,
       authority_epoch: u64,
       paused: bool,
-      next_grant_id: u64,
+      next_permission_id: u64,
       next_execution_id: u64,
-      max_total_grants: u32,           // initial default 1,024; no silent auto-growth
+      max_total_permissions: u32,           // initial default 1,024; no silent auto-growth
       max_pending_executions: u32,     // initial default 64
       min_operating_reserve: u128,
       callback_gas: Gas,
@@ -145,7 +145,7 @@ The following are semantic schemas. The agent must supply complete near-sdk seri
       pending_execution_count: u32
     }
 
-Hard schema bounds: maximum 8 grants in a path (root depth 0, leaf depth <= 7); 16 asset permissions per grant; 64 recipients per permission; 8 KiB serialized execute/create-grant inputs. Reject oversized inputs before expensive processing. Gas allocations and the pending limit require sandbox validation at maximum path length. Do not claim throughput from these defaults.
+Hard schema bounds: maximum 8 permissions in a path (root depth 0, leaf depth <= 7); 16 asset permissions per permission; 64 recipients per permission; 8 KiB serialized execute/create-permission inputs. Reject oversized inputs before expensive processing. Gas allocations and the pending limit require sandbox validation at maximum path length. Do not claim throughput from these defaults.
 
 ### 5.2 Assets and action permissions
 
@@ -182,7 +182,7 @@ Hard schema bounds: maximum 8 grants in a path (root depth 0, leaf depth <= 7); 
 
 Every permission represents a direct transfer of that asset in v1. No permission means no authority for that asset. Duplicate asset entries and duplicate recipient entries are rejected. Only([]) is rejected rather than ambiguously interpreted.
 
-Amounts, caps, floors and window duration must be positive. When min_per_action and max_per_action are both set, max_per_action >= min_per_action. A grant must have at least one permission. Finite expires_at must exceed valid_from. Root redelegation_depth must fit the hard path bound. If lifetime_limit, fixed_window and streaming are all absent, acknowledge_unbounded_budget MUST be true. This is an explicit unbounded cumulative allowance, possibly still restricted by per-action/recipient/ancestor rules; the SDK must display it. A per-action cap alone does not bound cumulative spending.
+Amounts, caps, floors and window duration must be positive. When min_per_action and max_per_action are both set, max_per_action >= min_per_action. A permission must have at least one permission. Finite expires_at must exceed valid_from. Root redelegation_depth must fit the hard path bound. If lifetime_limit, fixed_window and streaming are all absent, acknowledge_unbounded_budget MUST be true. This is an explicit unbounded cumulative allowance, possibly still restricted by per-action/recipient/ancestor rules; the SDK must display it. A per-action cap alone does not bound cumulative spending.
 
 Budget windows are half-open intervals. For t >= anchor:
 
@@ -192,11 +192,11 @@ Before anchor the permission is unavailable. A 30-day window is not a calendar m
 
 For streaming limits at time t >= start_ms, accrued allowance is min(rate_per_second * (t - start_ms) / 1000, max_cap) (or uncapped by max_cap if None). Before start_ms the available streaming allowance is zero.
 
-### 5.3 Grant
+### 5.3 Permission
 
-    Grant {
-      id: GrantId,
-      parent_id: Option<GrantId>,
+    Permission {
+      id: PermissionId,
+      parent_id: Option<PermissionId>,
       issuer: AccountId,
       delegate: AccountId,
       epoch: u64,
@@ -210,7 +210,7 @@ For streaming limits at time t >= start_ms, accrued allowance is min(rate_per_se
       metadata_hash: Option<[u8;32]>
     }
 
-IDs are monotonically allocated and never reused. Reject self-delegation (issuer == delegate). No employee names, email addresses or plaintext invoice content in grants. Onchain recipients, values and usage are public.
+IDs are monotonically allocated and never reused. Reject self-delegation (issuer == delegate). No employee names, email addresses or plaintext invoice content in permissions. Onchain recipients, values and usage are public.
 
 Roots have parent None, depth 0 and issuer == current owner. They capture the current epoch. Children are issued only by the parent delegate, are in the same epoch, and have depth parent.depth + 1. The immutable parent link and monotonically allocated IDs prevent graph cycles.
 
@@ -235,30 +235,30 @@ These checks improve configuration clarity. Full path evaluation at execution re
 ### 5.4 Usage
 
     BudgetKey {
-      grant_id: GrantId,
+      permission_id: PermissionId,
       asset: AssetId,
       scope: Lifetime | FixedWindow { window_index: u64 } | Streaming
     }
 
     Usage { settled: u128, pending: u128 }
 
-    GrantUsage {
+    PermissionUsage {
       executions_count: u32
     }
 
-Each applicable lifetime/window/streaming counter is separate. A grant can have multiple; all must pass. All checks use checked arithmetic:
+Each applicable lifetime/window/streaming counter is separate. A permission can have multiple; all must pass. All checks use checked arithmetic:
 
     settled + pending + amount <= limit
 
-For streaming, limit is dynamically computed at evaluation timestamp. If grant has max_executions, executions_count + 1 <= max_executions is required.
+For streaming, limit is dynamically computed at evaluation timestamp. If permission has max_executions, executions_count + 1 <= max_executions is required.
 
-A limit belongs to a particular grant, not to a principal or child wallet. Siblings share their parent's counters. Multiple roots have separate counters but share treasury liquidity. No historical grant/counter/request deletion in v1; state growth is funded and observable.
+A limit belongs to a particular permission, not to a principal or child wallet. Siblings share their parent's counters. Multiple roots have separate counters but share treasury liquidity. No historical permission/counter/request deletion in v1; state growth is funded and observable.
 
 ### 5.5 Treasury accounting
 
     AssetLedger { available: u128, pending_outgoing: u128 }
 
-Available is credited only by authenticated deposit flows or confirmed restoration after a failed outgoing transfer. Grant creation never changes it. Outgoing dispatch subtracts available and adds pending_outgoing. Success subtracts pending_outgoing. Proven transfer failure subtracts pending_outgoing and restores available.
+Available is credited only by authenticated deposit flows or confirmed restoration after a failed outgoing transfer. Permission creation never changes it. Outgoing dispatch subtracts available and adds pending_outgoing. Success subtracts pending_outgoing. Proven transfer failure subtracts pending_outgoing and restores available.
 
 Do not credit arbitrary direct FT transfers, a client balance assertion or an unauthenticated balance-sync request. Unsupported direct deposits are not automatically recoverable in v1.
 
@@ -275,7 +275,7 @@ Resource bookkeeping is explicit: top_up_storage increases storage_funding_remai
     ExecuteRequest {
       api_version: u16,
       request_id: [u8;32],
-      grant_id: GrantId,
+      permission_id: PermissionId,
       action: Action,
       deadline_ms: u64
     }
@@ -286,7 +286,7 @@ Resource bookkeeping is explicit: top_up_storage increases storage_funding_remai
       request_id: [u8;32],
       request_hash: [u8;32],
       authority_mode: Delegated | OwnerWithdrawal,
-      grant_id: Option<GrantId>,    // Some for delegated execution; None for owner withdrawal
+      permission_id: Option<PermissionId>,    // Some for delegated execution; None for owner withdrawal
       epoch: u64,
       action: Action,
       created_at_ms: u64,
@@ -302,27 +302,27 @@ Persist the exact reservation keys, including original window indexes. Settlemen
 
 Hash a versioned Borsh request envelope containing a fixed Allocard domain, network_domain, current_account_id, actor and the complete request. Never hash ad hoc JSON. Include an SDK/contract shared test vector.
 
-The immutable grant_id identifies its captured epoch. For owner-withdrawal envelopes, include an explicit authority_epoch supplied by the caller and checked against current config for new dispatch. Do not derive replay hashes from mutable configuration on a retry; the exact originally submitted envelope must remain hashable after an ownership change.
+The immutable permission_id identifies its captured epoch. For owner-withdrawal envelopes, include an explicit authority_epoch supplied by the caller and checked against current config for new dispatch. Do not derive replay hashes from mutable configuration on a retry; the exact originally submitted envelope must remain hashable after an ownership change.
 
 Repeated execute with identical actor/request_id/hash returns the existing execution ID and never redispatches. The same actor/request_id with another hash is rejected. A failed execution requires a new request ID for a deliberate retry. The request_id format at the JSON boundary is exactly 64 lowercase hex characters.
 
 ## 6. Administration and authority lifecycle
 
-Owner operations: create roots, revoke any grant, block/unblock principals, pause/unpause, invalidate all grants, enable/disable new transfers for an asset, top up storage/operating funds, withdraw available treasury capital, and initiate ownership handover.
+Owner operations: create roots, revoke any permission, block/unblock principals, pause/unpause, invalidate all permissions, enable/disable new transfers for an asset, top up storage/operating funds, withdraw available treasury capital, and initiate ownership handover.
 
-The owner cannot impersonate a delegate to execute through that delegate's grant. Owner withdrawals use a separate authenticated action and the same execution/reservation machinery for treasury liquidity; they do not consume employee counters.
+The owner cannot impersonate a delegate to execute through that delegate's permission. Owner withdrawals use a separate authenticated action and the same execution/reservation machinery for treasury liquidity; they do not consume employee counters.
 
-Revocation: owner, a grant's issuer, or a strict ancestor delegate can revoke that grant. A delegate may surrender its own grant. Check the stored ancestry to determine that relationship; a sibling is never an ancestor. Revocation is idempotent. It is allowed while paused or expired. Blocking a principal does not prevent that principal surrendering its own grant.
+Revocation: owner, a permission's issuer, or a strict ancestor delegate can revoke that permission. A delegate may surrender its own permission. Check the stored ancestry to determine that relationship; a sibling is never an ancestor. Revocation is idempotent. It is allowed while paused or expired. Blocking a principal does not prevent that principal surrendering its own permission.
 
-Every active-path check rejects revoked grants, old epochs, blocked delegates and blocked issuers. Blocking an ancestor thereby disables descendants. Check the current owner against the blocklist as well, so blocking the owner is rejected; ownership transfer to a blocked account is rejected.
+Every active-path check rejects revoked permissions, old epochs, blocked delegates and blocked issuers. Blocking an ancestor thereby disables descendants. Check the current owner against the blocklist as well, so blocking the owner is rejected; ownership transfer to a blocked account is rejected.
 
 invalidate_all increments authority_epoch in O(1). Pending executions remain accounted under their saved reservations.
 
 pause blocks new roots, child creation, delegate execution and owner withdrawals. It permits deposits, revocation, blocking, ownership handover, global invalidation and callbacks. Approvals may be recorded while paused but cannot cause execution.
 
-Ownership handover is two-step: current owner nominates, nominee accepts; owner may cancel. Accepting increments authority_epoch, invalidates outstanding approval authority, and changes owner. All old grants are disabled; new owner explicitly creates replacements. Pending transfers settle normally. An external multisig contract may later be the owner if it can call these methods; no multisig SDK is required.
+Ownership handover is two-step: current owner nominates, nominee accepts; owner may cancel. Accepting increments authority_epoch, invalidates outstanding approval authority, and changes owner. All old permissions are disabled; new owner explicitly creates replacements. Pending transfers settle normally. An external multisig contract may later be the owner if it can call these methods; no multisig SDK is required.
 
-Revocation/expiry/blocking/pause only prevent new dispatches once processed. They do not promise to cancel external actions already dispatched. Callback settlement must succeed regardless of later grant state.
+Revocation/expiry/blocking/pause only prevent new dispatches once processed. They do not promise to cancel external actions already dispatched. Callback settlement must succeed regardless of later permission state.
 
 ## 7. Authorization algorithm
 
@@ -333,7 +333,7 @@ execute MUST perform the following within one originating receipt:
 3. For a NEW request validate amount > 0, deadline (now < deadline), and treasury != recipient. Reject unsupported action/asset types.
 4. Require treasury unpaused, actor unblocked, and leaf.delegate == actor.
 5. Load leaf-to-root ancestry within maximum depth; verify stored links, issuer/delegate continuity, depth, current epoch, valid_from <= now < expiry (where finite), and all block/revocation states. Any corrupted path fails closed.
-6. For each grant, find the matching asset permission; reject absent assets, disallowed recipients, per-action excess or unavailable window.
+6. For each permission, find the matching asset permission; reject absent assets, disallowed recipients, per-action excess or unavailable window.
 7. Build all applicable lifetime/window BudgetKeys. Check every counter using settled + pending + amount.
 8. Verify required approvals from each applicable ancestor policy, bound to the exact request hash.
 9. Check asset is enabled and trusted for new dispatch. Check available treasury funds, operating/storage capacity, maximum pending count and sufficient prepaid gas for transfer plus callback.
@@ -352,9 +352,9 @@ v1 supports one approver account per asset permission, not a multisig voting mod
 
 An authenticated approver calls approve_request(actor, request). Contract computes the same hash, validates that the proposed actor is the leaf delegate and the authority path is live, and records an approval only for approval rules naming the caller. Approver must be unblocked. No funds or budgets are reserved yet.
 
-Store each approval against (request_hash, grant_id, asset). Its expiry is the request deadline. Reject excessively long approval request deadlines (maximum 7 days). The actor, exact action, grant, treasury, epoch and network are bound by the hash/path.
+Store each approval against (request_hash, permission_id, asset). Its expiry is the request deadline. Reject excessively long approval request deadlines (maximum 7 days). The actor, exact action, permission, treasury, epoch and network are bound by the hash/path.
 
-Approvers may withdraw unconsumed approvals. The contract does not execute automatically when approvals arrive. The delegate subsequently calls execute; all authority and limits are rechecked. Approval cannot override a cap or a revoked grant.
+Approvers may withdraw unconsumed approvals. The contract does not execute automatically when approvals arrive. The delegate subsequently calls execute; all authority and limits are rechecked. Approval cannot override a cap or a revoked permission.
 
 Consumed approvals are never restored on transfer failure. An identical request returns the existing failed execution; a retry uses a new ID and new approvals. No approval needed when amount == above_amount. Multiple rules naming the same approver still need distinct stored rule bindings, but SDK may record them in one call.
 
@@ -388,7 +388,7 @@ If execution is already terminal, return its result with no accounting mutation.
 - Proven external transfer failure: subtract pending on every saved counter without adding settled. Restore principal to asset.available and subtract asset pending_outgoing. Set Failed.
 - Decrement pending-execution count exactly once, finalize existing fixed-size fields and emit a terminal event.
 
-Reserve callback gas and required storage at dispatch. Settlement must not allocate unbounded data or depend on an owner, indexer, token price, current window, current grant state or a sponsor API.
+Reserve callback gas and required storage at dispatch. Settlement must not allocate unbounded data or depend on an owner, indexer, token price, current window, current permission state or a sponsor API.
 
 Pending can remain unresolved if a callback cannot run. Anyone may flag an old Pending record after 10 minutes as needs_reconciliation; this flag DOES NOT release money or budget and a later callback still settles it. No timeout-based refund, retry transfer or owner-declared success/failure method in v1.
 
@@ -398,12 +398,12 @@ An RPC observer may identify the external outcome for operator diagnosis, but co
 
 Use near_sdk::store collections with distinct versioned storage prefixes, bounded records and checked counters. Use no whole-treasury iteration in mutations. Owner-funded storage is acceptable initially but must be capped:
 
-- Reject new grants at configured maximum; bound pending work and request sizes.
+- Reject new permissions at configured maximum; bound pending work and request sizes.
 - Estimate and charge/reserve all new storage before dispatch, including callbacks' maximum final representation.
 - Reject requests before dispatch when free storage/operating funds are inadequate.
 - Require a top-up rather than borrow storage collateral from employee-spendable native capital.
 - Rate-limit relayer submissions offchain; onchain financial rules remain authoritative.
-- Preserve replay tombstones and grant ancestry. No pruning implementation in v1.
+- Preserve replay tombstones and permission ancestry. No pruning implementation in v1.
 - Expose storage bytes, operating health and pending counts in views.
 
 Gas values must be measured in sandbox tests for max-depth/max-policy paths. Include exact tested values and SDK version in README. Reject insufficient prepaid gas before scheduling transfers.
@@ -417,12 +417,12 @@ Use typed argument objects and a versioned JSON schema. Mutations either return 
 | Method | Caller | Deposit / behavior |
 |---|---|---|
 | new(config) | Deployment path | Initialize exactly once; explicit owner/domain |
-| create_root_grant(spec) | Owner | Zero; returns GrantId |
-| create_child_grant(parent_id, spec) | Parent delegate | Zero; returns GrantId |
-| revoke_grant(id) | Authorized revoker | Zero; idempotent |
+| create_root_permission(spec) | Owner | Zero; returns PermissionId |
+| create_child_permission(parent_id, spec) | Parent delegate | Zero; returns PermissionId |
+| revoke_permission(id) | Authorized revoker | Zero; idempotent |
 | set_principal_blocked(account, blocked) | Owner | Zero |
 | set_paused(paused) | Owner | Zero |
-| invalidate_all_grants() | Owner | Zero; advances epoch |
+| invalidate_all_permissions() | Owner | Zero; advances epoch |
 | nominate_owner(account), cancel_owner_nomination() | Owner | Zero |
 | accept_ownership() | Nominee | Zero; advances epoch |
 | register_asset(asset), set_asset_enabled(asset, enabled) | Owner | Zero; NativeNear exists at init |
@@ -432,18 +432,18 @@ Use typed argument objects and a versioned JSON schema. Mutations either return 
 | approve_request(actor, request) | Required approver | Zero |
 | revoke_approval(actor, request) | Original approver | Zero; only unconsumed |
 | execute(request) | Leaf delegate | Zero; idempotent ExecutionId |
-| owner_withdraw(request) | Owner | Zero; versioned withdrawal envelope, same pending accounting, no grant |
+| owner_withdraw(request) | Owner | Zero; versioned withdrawal envelope, same pending accounting, no permission |
 | on_transfer_result(execution_id) | Self only | Private callback |
 | flag_unresolved(execution_id) | Anyone | Zero; informational flag only |
 | get_config(), get_asset_ledger(asset) | View | Include pending and enabled status |
-| get_grant(id), get_grant_path(id) | View | Bounded |
-| get_usage(grant_id, asset, window_index?) | View | Exact buckets |
+| get_permission(id), get_permission_path(id) | View | Bounded |
+| get_usage(permission_id, asset, window_index?) | View | Exact buckets |
 | get_execution(id), get_execution_by_request(actor, request_id) | View | Authoritative execution state |
 | preview_execute(actor, request) | View | Structured errors / requirements |
 
 For owner_withdraw, use a separate hash domain/mode so a delegate request cannot be replayed as an owner withdrawal. Share the (actor, request_id) replay namespace and reject cross-mode collisions. Owner liquidity withdrawals respect pause and physical solvency. They may leave unused employee allowances unfunded; SDK must explain that.
 
-The owner-withdraw request object includes api_version, request_id, authority_epoch, action and deadline_ms. All zero-deposit methods MUST explicitly reject attached deposits; implementing that behavior must not introduce a mandatory 1-yocto check on execute or create_child_grant, which would break ordinary function-call-key sessions.
+The owner-withdraw request object includes api_version, request_id, authority_epoch, action and deadline_ms. All zero-deposit methods MUST explicitly reject attached deposits; implementing that behavior must not introduce a mandatory 1-yocto check on execute or create_child_permission, which would break ordinary function-call-key sessions.
 
 Views must never expose an unbounded get_all method. Lists/search come from events/indexing; optional onchain pagination must have a hard page limit.
 
@@ -451,13 +451,13 @@ Views must never expose an unbounded get_all method. Lists/search come from even
 
 Emit NEP-297-style EVENT_JSON logs with standard allocard, version 1.0.0, event name and data array. Include contract/domain, IDs and actor as appropriate; use decimal strings for amounts.
 
-Events: treasury_initialized, grant_created, grant_revoked, principal_block_changed, pause_changed, authority_epoch_changed, owner_nominated, owner_changed, asset_registered, asset_status_changed, treasury_deposit, approval_recorded, approval_revoked, execution_dispatched, execution_succeeded, execution_failed, execution_flagged.
+Events: treasury_initialized, permission_created, permission_revoked, principal_block_changed, pause_changed, authority_epoch_changed, owner_nominated, owner_changed, asset_registered, asset_status_changed, treasury_deposit, approval_recorded, approval_revoked, execution_dispatched, execution_succeeded, execution_failed, execution_flagged.
 
 Stable error codes at minimum:
 
     UNAUTHORIZED, PAUSED, PRINCIPAL_BLOCKED, INVALID_INPUT, INPUT_TOO_LARGE,
-    GRANT_NOT_FOUND, GRANT_REVOKED, STALE_EPOCH, GRANT_NOT_STARTED,
-    GRANT_EXPIRED, INVALID_ANCESTRY, MAX_DEPTH, REDELEGATION_DISABLED,
+    PERMISSION_NOT_FOUND, PERMISSION_REVOKED, STALE_EPOCH, PERMISSION_NOT_STARTED,
+    PERMISSION_EXPIRED, INVALID_ANCESTRY, MAX_DEPTH, REDELEGATION_DISABLED,
     CHILD_PERMISSION_EXPANSION, ASSET_NOT_ALLOWED, ASSET_DISABLED,
     RECIPIENT_NOT_ALLOWED, PER_ACTION_LIMIT, LIFETIME_LIMIT, WINDOW_LIMIT,
     STREAMING_LIMIT, EXECUTION_COUNT_EXCEEDED,
@@ -466,7 +466,7 @@ Stable error codes at minimum:
     STORAGE_RESERVE_LOW, INSUFFICIENT_GAS, PENDING_LIMIT,
     INVALID_CALLBACK, EXECUTION_NOT_FOUND, TOO_EARLY_TO_FLAG
 
-Preview errors include offending grant ID, rule, requested amount and relevant available capacity without exposing private offchain identity data. A terminal external failure is a stored execution outcome and event, not a retroactive failure of execute.
+Preview errors include offending permission ID, rule, requested amount and relevant available capacity without exposing private offchain identity data. A terminal external failure is a stored execution outcome and event, not a retroactive failure of execute.
 
 ## 14. Invariants and acceptance tests
 
@@ -481,7 +481,7 @@ Required cases:
 5. Leaf, intermediate and root failures each deny execution; a sibling's allowance cannot be borrowed.
 6. Every supported recipient, asset, time, per-action, lifetime and window rule is tested at its boundary.
 7. Different ancestor window durations are independently enforced. Settlement after a reset mutates the original bucket, not the current one.
-8. Grants cannot exceed depth or local narrowing bounds; no cycles, missing links or duplicate assets are accepted.
+8. Permissions cannot exceed depth or local narrowing bounds; no cycles, missing links or duplicate assets are accepted.
 9. Revoking a parent, blocking an ancestor, advancing epoch and ownership acceptance block descendant dispatch without enumerating descendants.
 10. Revocation/pause/expiry after dispatch do not prevent settlement or restore already spent funds.
 11. Successful transfer moves all relevant pending counters to settled exactly once.
@@ -489,13 +489,13 @@ Required cases:
 13. Public callback invocation, malicious callback forwarding and arbitrary caller-supplied result flags fail.
 14. Identical replay returns the existing execution, including after deadline, revocation, pause or epoch change; altered payload, mode or deadline with same ID fails; new ID is required for retry.
 15. Missing callback leaves reservations locked; flagging does not refund; late callback still works.
-16. Approval is exact-action/actor/grant/epoch/domain bound, threshold equality does not trigger it, and approvals never override budgets.
+16. Approval is exact-action/actor/permission/epoch/domain bound, threshold equality does not trigger it, and approvals never override budgets.
 17. Paused treasury still accepts valid deposits and callbacks but rejects new spending.
 18. FT receiver rejects unknown/disabled token contracts. Direct transfers do not create internal credits.
 19. Unregistered FT recipient fails safely; no invented refund or duplicated principal.
 20. Native principal cannot consume storage collateral/operating floor; marker deposits cannot drain committed principal.
 21. Owner withdrawals cannot consume pending liquidity. Multiple roots share the same physical treasury balance.
-22. Owner nomination requires nominee acceptance. Old grants fail after acceptance; pending executions settle.
+22. Owner nomination requires nominee acceptance. Old permissions fail after acceptance; pending executions settle.
 23. Max-depth/max-policy requests and callback branches fit the documented gas/storage limits; insufficient resources fail before dispatch.
 24. No sponsor API, database, UI or AI output is consulted to authorize a native action.
 25. Sponsored execution works with the selected NEP-366 relayer and preserves the expected actor; an ordinary proxy does not gain this privilege.
@@ -503,7 +503,7 @@ Required cases:
 
 Monorepo integration acceptance: the existing Next.js app imports the local SDK through the repository's actual workspace setup; root scripts build/test the actual Cargo manifest and SDK; relevant app type/build checks pass; no legacy repository or external sponsor credentials are required for sandbox tests; private keys/provider secrets are absent from browser imports and NEXT_PUBLIC_* variables.
 
-Property-test arithmetic near u128/u64 limits and random grant trees within bounds. Model failure interleavings and verify total dispatched amounts cannot exceed available funds or any applicable settled+pending budget.
+Property-test arithmetic near u128/u64 limits and random permission trees within bounds. Model failure interleavings and verify total dispatched amounts cannot exceed available funds or any applicable settled+pending budget.
 
 ## 15. Deployment, recovery and upgrades
 
@@ -534,9 +534,9 @@ Any later executor must define maximum asset debit, fees, success evidence, part
 Sponsor posture:
 
 - Aurora/HOT: optional connection or funding clients; never authority roots.
-- Intents/1Click: optional settlement adapter; not required for native grants/transfers.
+- Intents/1Click: optional settlement adapter; not required for native permissions/transfers.
 - NEAR AI: structured policy suggestions; human confirms exact policy.
-- OutLayer: optional agent credential/execution service; child grant still checked onchain.
+- OutLayer: optional agent credential/execution service; child permission still checked onchain.
 - Trezu/SputnikDAO: optional owner/governance account.
 - Rhea/yield: separate reviewed investment executor if later requested.
 
@@ -551,7 +551,7 @@ No sponsor outage may weaken onchain restrictions. Availability of an optional r
 5. Implement deposits, treasury ledger, reservations and native/FT execution with private callbacks.
 6. Add approval policies, replay handling, ownership handover and resource guards.
 7. Complete adversarial sandbox tests, max-bound gas measurements and events/views.
-8. Add the LOCAL TypeScript workspace SDK: createRootGrant, createChildGrant, preview, approve, execute, getExecution and revoke. Connect it to the existing Next.js app through an injected signer and network configuration, without rewriting unrelated pages. SDK waits for actual execution status rather than equating dispatch with payment.
+8. Add the LOCAL TypeScript workspace SDK: createRootPermission, createChildPermission, preview, approve, execute, getExecution and revoke. Connect it to the existing Next.js app through an injected signer and network configuration, without rewriting unrelated pages. SDK waits for actual execution status rather than equating dispatch with payment.
 9. Add deployment scripts and a minimal command-line/testnet demonstration independent of product UI. Use mock tokens in sandbox; identify testnet token provenance explicitly.
 10. Integrate one auth/relayer implementation behind an SDK interface; document exactly what it signs and how actor identity reaches the treasury.
 
@@ -561,15 +561,15 @@ If an implementation detail conflicts with a security invariant, stop that part 
 
 ## 18. Example proving the foundation
 
-Company deposits 10,000 USDC. Owner grants manager 5,000 per seven-day fixed window. Manager grants employee 1,000 per the same window. Employee grants agent 200, with two approved recipients and no further redelegation.
+Company deposits 10,000 USDC. Owner permissions manager 5,000 per seven-day fixed window. Manager permissions employee 1,000 per the same window. Employee permissions agent 200, with two approved recipients and no further redelegation.
 
-Agent requests 50 USDC. Engine checks all three grants, reserves 50 in each applicable budget and 50 from available treasury funds, then dispatches. Success turns those reservations into settled usage. Failure releases them. Employee spending separately shares the employee's 1,000 cap and manager's 5,000 cap. Revoking the employee blocks the agent's next request without moving funds or updating the agent grant.
+Agent requests 50 USDC. Engine checks all three permissions, reserves 50 in each applicable budget and 50 from available treasury funds, then dispatches. Success turns those reservations into settled usage. Failure releases them. Employee spending separately shares the employee's 1,000 cap and manager's 5,000 cap. Revoking the employee blocks the agent's next request without moving funds or updating the agent permission.
 
-No money was allocated to an employee wallet merely by creating a grant. The 10,000 deposit is reduced only by actual outgoing payments or explicit owner withdrawals. Native operating/storage funds remain separate.
+No money was allocated to an employee wallet merely by creating a permission. The 10,000 deposit is reduced only by actual outgoing payments or explicit owner withdrawals. Native operating/storage funds remain separate.
 
 ## 19. Official references
 
-These support platform behavior; the grant schema and architecture above are Allocard design decisions.
+These support platform behavior; the permission schema and architecture above are Allocard design decisions.
 
 - S1: NEAR asynchronous cross-contract execution: https://docs.near.org/smart-contracts/anatomy/crosscontract
 - S2: Private callbacks: https://docs.near.org/smart-contracts/security/cross-contract-calls/callbacks
@@ -619,51 +619,51 @@ One authenticated owner controls the treasury initially. This avoids requiring a
 
 The cost is concentrated authority: compromise or loss of that account matters. Recovery depends on the account solution chosen; the engine does not magically recover a lost owner.
 
-Ownership transfer needs the recipient to accept, reducing accidental handover to an unusable destination. Acceptance invalidates all old grants so the new owner does not silently inherit permissions issued under the previous administration. That is deliberately conservative and disruptive; a future transfer mode could preserve grants only if explicitly designed.
+Ownership transfer needs the recipient to accept, reducing accidental handover to an unusable destination. Acceptance invalidates all old permissions so the new owner does not silently inherit permissions issued under the previous administration. That is deliberately conservative and disruptive; a future transfer mode could preserve permissions only if explicitly designed.
 
 The owner may later be a multisig contract. Employee permissions do not need to change for that to happen.
 
-### 20.5 A grant is permission, not a separate balance
+### 20.5 A permission is permission, not a separate balance
 
-A grant records who issued authority, who received it, what it permits, when it is active and whether it can be passed on.
+A permission records who issued authority, who received it, what it permits, when it is active and whether it can be passed on.
 
-Creating a 500-USDC grant does not send or lock 500 USDC. The company still controls its funds. This supports your goal of keeping capital together.
+Creating a 500-USDC permission does not send or lock 500 USDC. The company still controls its funds. This supports your goal of keeping capital together.
 
 It also means an allowance is not a payment guarantee. Ten people can each have a 500-USDC ceiling while sharing a smaller treasury. The app must distinguish permission from available money.
 
-### 20.6 Immutable grants and the reason for replacement
+### 20.6 Immutable permissions and the reason for replacement
 
-We do not edit an existing grant's terms. To change them, revoke the old grant and create a new one.
+We do not edit an existing permission's terms. To change them, revoke the old permission and create a new one.
 
 This avoids a child suddenly acquiring broader authority because its parent was edited, and makes it clear which rules an execution used.
 
-The drawback is administrative work: children of a replaced grant remain disabled and must be recreated beneath the replacement. A polished UI can assist, but cannot silently reactivate them. Historical grants also occupy storage.
+The drawback is administrative work: children of a replaced permission remain disabled and must be recreated beneath the replacement. A polished UI can assist, but cannot silently reactivate them. Historical permissions also occupy storage.
 
-Self-delegation is excluded in this version because direct use of an existing grant is sufficient for the current model. This is a simplifying restriction, not a NEAR limitation.
+Self-delegation is excluded in this version because direct use of an existing permission is sufficient for the current model. This is a simplifying restriction, not a NEAR limitation.
 
-### 20.7 One parent per grant and one selected grant per payment
+### 20.7 One parent per permission and one selected permission per payment
 
-A child derives authority from exactly one parent. A principal may hold several grants, but a payment chooses one chain of authority.
+A child derives authority from exactly one parent. A principal may hold several permissions, but a payment chooses one chain of authority.
 
-This makes it possible to answer who authorized a payment and which budgets it consumed. We do not combine two 100-USDC grants to authorize a 200-USDC payment.
+This makes it possible to answer who authorized a payment and which budgets it consumed. We do not combine two 100-USDC permissions to authorize a 200-USDC payment.
 
-Combining grants or having multiple parents is possible in a different design, but requires rules for distributing costs, approvals and revocation. We are leaving that complexity out.
+Combining permissions or having multiple parents is possible in a different design, but requires rules for distributing costs, approvals and revocation. We are leaving that complexity out.
 
 ### 20.8 Redelegation is controlled at each level
 
-A manager may create children only if their own grant allows it. Each child must have less remaining redelegation depth.
+A manager may create children only if their own permission allows it. Each child must have less remaining redelegation depth.
 
 Child creation rejects obvious expansions, such as adding an asset or recipient the parent does not permit. More importantly, every later payment still checks the whole chain. Child configuration can never remove an ancestor's restriction.
 
-The chain is limited to eight grants so checking a request has a bounded cost. This number is an initial engineering limit to test, not a claim that eight is universally ideal.
+The chain is limited to eight permissions so checking a request has a bounded cost. This number is an initial engineering limit to test, not a claim that eight is universally ideal.
 
 ### 20.9 Parent budgets include descendant spending
 
-Suppose a manager has 1,000 USDC and creates two employee grants of 800 USDC each. Those children do not create 1,600 USDC of usable manager allowance. All direct and descendant spending still shares the manager's 1,000.
+Suppose a manager has 1,000 USDC and creates two employee permissions of 800 USDC each. Those children do not create 1,600 USDC of usable manager allowance. All direct and descendant spending still shares the manager's 1,000.
 
 If the manager spends 300, descendants have at most 700 of parent capacity left. Each child's own cap can restrict it further.
 
-Separate root grants do not share a permission counter unless there is a real common ancestor. They do still share the company's actual treasury liquidity.
+Separate root permissions do not share a permission counter unless there is a real common ancestor. They do still share the company's actual treasury liquidity.
 
 ### 20.10 Explicit assets, recipients and budget policies
 
@@ -671,7 +671,7 @@ Each asset must be named explicitly by its contract identity (or native NEAR), n
 
 Recipient rules either permit any recipient or name an explicit set. A label such as software vendors is not something a contract can infer from an address; the application must turn it into supported concrete rules.
 
-A per-payment cap limits one transaction. A lifetime cap limits all spending under that grant. A recurring cap limits one defined time bucket. These can apply together.
+A per-payment cap limits one transaction. A lifetime cap limits all spending under that permission. A recurring cap limits one defined time bucket. These can apply together.
 
 An unlimited cumulative allowance requires explicit acknowledgment. Otherwise, someone could accidentally believe that a 100-per-payment restriction also limits the month's total.
 
@@ -693,9 +693,9 @@ We also do not treat 1 USDC, 1 USDT and 1 NEAR as interchangeable budget units. 
 
 ### 20.13 Approval is optional and does not replace a budget
 
-A grant may require a named person to approve payments above a threshold. That is a policy option, not mandatory treasury multisig.
+A permission may require a named person to approve payments above a threshold. That is a policy option, not mandatory treasury multisig.
 
-The approval is for this actor's exact payment using this grant, before its deadline. It cannot be reused for a different recipient or amount.
+The approval is for this actor's exact payment using this permission, before its deadline. It cannot be reused for a different recipient or amount.
 
 Approval does not reserve funds or force payment. When the employee executes, the engine checks the budget and treasury again. An approval cannot authorize 600 when the budget permits only 500.
 
@@ -707,7 +707,7 @@ The contract trusts the authenticated immediate caller, not an actor field sent 
 
 A login provider helps a user obtain a signing identity. Restricted account keys can make repeated interactions smoother. Neither decides the user's remaining spending allowance.
 
-An agent needs its own principal and child grant if it must have narrower access than an employee. Giving it an employee credential could let it exercise all authority accessible through that credential.
+An agent needs its own principal and child permission if it must have narrower access than an employee. Giving it an employee credential could let it exercise all authority accessible through that credential.
 
 A relayer submits signed transactions and sponsors gas. Its submission must not change who actually authorized the request.
 
@@ -725,7 +725,7 @@ Before dispatch, the engine subtracts the amount from available treasury funds a
 
 These local changes and scheduling the external transfer happen in the same originating receipt. Failure before dispatch must not leave half-updated budgets.
 
-This temporary commitment differs from reserving an employee's entire allowance when creating a grant. We reserve only actual authorized payment attempts.
+This temporary commitment differs from reserving an employee's entire allowance when creating a permission. We reserve only actual authorized payment attempts.
 
 ### 20.17 Dispatch and settlement are different facts
 
@@ -757,7 +757,7 @@ Fingerprint encoding must match between Rust and TypeScript. Shared test vectors
 
 ### 20.20 Revocation, blocking, pause and global invalidation
 
-Revocation disables one grant and therefore all children that rely on it. An account block disables that account wherever it appears in an authority path. Pause stops new treasury spending. Global invalidation disables all grants from an old authority generation.
+Revocation disables one permission and therefore all children that rely on it. An account block disables that account wherever it appears in an authority path. Pause stops new treasury spending. Global invalidation disables all permissions from an old authority generation.
 
 These are different controls for different incidents. The generation number lets the owner invalidate a large permission tree without updating every record.
 
@@ -767,7 +767,7 @@ They affect future dispatch, not already-sent payments. Callbacks must continue 
 
 Budget counters answer whether a principal has permission left. The treasury ledger answers whether funds are available.
 
-Both must pass. Having a large balance does not bypass a grant limit, and having a large grant does not invent a balance.
+Both must pass. Having a large balance does not bypass a permission limit, and having a large permission does not invent a balance.
 
 Owner withdrawals use the same pending-money accounting so they cannot take funds already committed to another payment. They do not consume employee budgets because the owner is exercising owner authority.
 
@@ -793,11 +793,11 @@ This adds accounting work but prevents a treasury from promising money that is r
 
 ### 20.24 Bounded work and persistent history
 
-The draft proposes caps of eight grants per authority path, sixteen assets per grant, sixty-four listed recipients per permission, sixty-four pending executions, 1,024 total grants and 8 KiB request bodies. Approvals have a seven-day maximum lifetime.
+The draft proposes caps of eight permissions per authority path, sixteen assets per permission, sixty-four listed recipients per permission, sixty-four pending executions, 1,024 total permissions and 8 KiB request bodies. Approvals have a seven-day maximum lifetime.
 
 These bounds keep costs predictable and limit abuse. They are initial values, not measured NEAR throughput guarantees. Some are hard schema bounds and others initialization configuration; the current spec does not promise live changes to every cap.
 
-We retain grants, request identities and budget history instead of deleting records casually. That protects ancestry checks and duplicate-payment prevention but increases storage usage and eventually reaches configured capacity. Safe pruning and expansion/migration are later engineering needs, not solved scalability.
+We retain permissions, request identities and budget history instead of deleting records casually. That protects ancestry checks and duplicate-payment prevention but increases storage usage and eventually reaches configured capacity. Safe pruning and expansion/migration are later engineering needs, not solved scalability.
 
 ### 20.25 Events, errors and the database
 
@@ -819,7 +819,7 @@ This makes adding features more work, but preserves a meaning for spending restr
 
 ### 20.27 Sponsor integrations stay replaceable
 
-Aurora/HOT can assist with connection or funding, Intents with external payment routes, NEAR AI with drafting policies, and OutLayer with agent signing. None is required to evaluate a native grant.
+Aurora/HOT can assist with connection or funding, Intents with external payment routes, NEAR AI with drafting policies, and OutLayer with agent signing. None is required to evaluate a native permission.
 
 A service outage can make its route unavailable. It cannot make a restricted payment become allowed. One selected login provider still has its own availability/recovery dependencies; independence of the engine does not make every user magically independent of their credentials.
 
