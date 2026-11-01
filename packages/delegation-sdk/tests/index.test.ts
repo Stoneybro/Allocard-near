@@ -6,3 +6,4 @@ describe("Delegation SDK", () => {
     expect(SDK_VERSION).toBe("0.1.0");
   });
 });
+
