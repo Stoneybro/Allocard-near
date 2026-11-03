@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import Web3Providers from "@/components/Web3Providers";
 import { AuthProvider } from "@/components/AuthProvider";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -37,11 +36,9 @@ export default function RootLayout({
     <html lang="en" className="light" suppressHydrationWarning>
       <body className={`${geistSans.variable} ${geistMono.variable} min-h-dvh antialiased`}>
         <TooltipProvider>
-          <Web3Providers>
-            <AuthProvider>
-              {children}
-            </AuthProvider>
-          </Web3Providers>
+          <AuthProvider>
+            {children}
+          </AuthProvider>
         </TooltipProvider>
         <Toaster position="top-center" />
       </body>

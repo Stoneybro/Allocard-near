@@ -137,7 +137,7 @@ export function ReimbursementDrawer({
       if (!res.ok) throw new Error(parseUserOpError(data.error) || "Extraction failed");
       setExtraction(data.extraction);
       setReviewPurpose(data.extraction.suggestedPurpose);
-      setReviewAmountEth(TOKEN_SYMBOL === "AUSD" ? data.extraction.totalUsd : "");
+      setReviewAmountEth(data.extraction.totalUsd || "");
       setStep("review");
     } catch (err: unknown) {
       setErrorMessage(parseUserOpError(err));

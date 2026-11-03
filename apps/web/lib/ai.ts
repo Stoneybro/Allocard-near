@@ -703,7 +703,7 @@ export async function researchDevOpsProcurement(input: {
     })),
   }));
 
-  const userReq = input.prompt.trim() || "Dedicated Monad RPC endpoint with high throughput";
+  const userReq = input.prompt.trim() || "Dedicated NEAR RPC endpoint with high throughput";
   const effectiveMax = input.targetBudgetAusd && input.targetBudgetAusd > 0
     ? Math.min(input.targetBudgetAusd, input.budgetAusd)
     : input.budgetAusd;
@@ -713,8 +713,8 @@ export async function researchDevOpsProcurement(input: {
     const lower = userReq.toLowerCase();
     let bestMerchantId = "chainstack";
     let bestPlanId = "chainstack-dev";
-    let headline = "Recommended: Chainstack Developer Monad Node";
-    let reasoning = "Matches your Monad RPC requirements with WebSocket streaming and high reliability within your budget allowance.";
+    let headline = "Recommended: Chainstack Developer NEAR Node";
+    let reasoning = "Matches your NEAR RPC requirements with WebSocket streaming and high reliability within your budget allowance.";
     const alternatives: Array<{ merchantName: string; planName: string; priceAusd: number; reasonNotChosen: string }> = [];
 
     if (lower.includes("security") || lower.includes("audit") || lower.includes("reentrancy") || lower.includes("vulnerability") || lower.includes("scan")) {
@@ -745,10 +745,10 @@ export async function researchDevOpsProcurement(input: {
       bestMerchantId = "envio";
       bestPlanId = "envio-hypersync";
       headline = "Recommended: Envio HyperSync Starter Cluster";
-      reasoning = "Indexes Monad blocks and contract events up to 1000x faster than standard RPCs with a dedicated GraphQL endpoint.";
+      reasoning = "Indexes NEAR blocks and contract events up to 1000x faster than standard RPCs with a dedicated GraphQL endpoint.";
       alternatives.push({
         merchantName: "Chainstack",
-        planName: "Developer Monad Node",
+        planName: "Developer NEAR Node",
         priceAusd: 50,
         reasonNotChosen: "Standard RPC node does not provide automated event schema querying or custom GraphQL APIs.",
       });
@@ -760,14 +760,14 @@ export async function researchDevOpsProcurement(input: {
         reasoning = "Direct P2P peering and sub-50ms latency stream designed specifically for automated trading pipelines and high-volume requests.";
         alternatives.push({
           merchantName: "Chainstack",
-          planName: "Developer Monad Node",
+          planName: "Developer NEAR Node",
           priceAusd: 50,
           reasonNotChosen: "Standard node has a 50 RPS burst cap, which may bottleneck high-frequency streaming.",
         });
       } else {
         bestMerchantId = "chainstack";
         bestPlanId = "chainstack-dev";
-        headline = "Recommended: Chainstack Developer Monad Node";
+        headline = "Recommended: Chainstack Developer NEAR Node";
         reasoning = "Solid entrypoint with 500K daily requests and WebSocket support fitting cleanly under your budget limit.";
       }
     } else {
@@ -775,17 +775,17 @@ export async function researchDevOpsProcurement(input: {
         bestMerchantId = "chainstack";
         bestPlanId = "chainstack-pro";
         headline = "Recommended: Chainstack Pro Dedicated RPC";
-        reasoning = "Dedicated compute unit with zero rate limits and priority Monad mempool routing.";
+        reasoning = "Dedicated compute unit with zero rate limits and priority NEAR routing.";
         alternatives.push({
           merchantName: "Chainstack",
-          planName: "Developer Monad Node",
+          planName: "Developer NEAR Node",
           priceAusd: 50,
           reasonNotChosen: "Shared burst cap limits potential production scale.",
         });
       } else {
         bestMerchantId = "chainstack";
         bestPlanId = "chainstack-dev";
-        headline = "Recommended: Chainstack Developer Monad Node";
+        headline = "Recommended: Chainstack Developer NEAR Node";
         reasoning = "Best value option offering 500K daily requests, WebSocket streaming, and sub-second block streaming.";
         alternatives.push({
           merchantName: "Crouton Digital",
@@ -815,21 +815,21 @@ export async function researchDevOpsProcurement(input: {
     return fallback();
   }
 
-  const systemPrompt = `You are the Allocard Autonomous Cloud & Tooling Agent on Monad.
-Your task is to analyze an engineering team's cloud infrastructure, RPC, security, or developer tooling requirements and scour the available Monad ecosystem sponsors (Chainstack, Crouton Digital, Ack3 AI, Envio) to recommend the best plan for their technical needs and budget.
+  const systemPrompt = `You are the Allocard Autonomous Cloud & Tooling Agent on NEAR.
+Your task is to analyze an engineering team's cloud infrastructure, RPC, security, or developer tooling requirements and scour the available NEAR ecosystem partners (Chainstack, Crouton Digital, Ack3 AI, Envio) to recommend the best plan for their technical needs and budget.
 
 Available Sponsor Catalog:
 ${JSON.stringify(catalogSummary, null, 2)}
 
 Budget Constraints:
-- Remaining Delegated Allowance: ${input.budgetAusd} AUSD
-- Target Price: ${input.targetBudgetAusd ? `${input.targetBudgetAusd} AUSD` : "Flexible within allowance"}
+- Remaining Delegated Allowance: ${input.budgetAusd} ${TOKEN_SYMBOL}
+- Target Price: ${input.targetBudgetAusd ? `${input.targetBudgetAusd} ${TOKEN_SYMBOL}` : "Flexible within allowance"}
 
 Rules:
-1. The selected plan's priceAusd MUST NOT exceed the remaining delegated allowance (${input.budgetAusd} AUSD).
+1. The selected plan's priceAusd MUST NOT exceed the remaining delegated allowance (${input.budgetAusd} ${TOKEN_SYMBOL}).
 2. If target price is specified, prioritize options closest to or below target price while fulfilling requirements.
 3. Select the best matching merchant and plan.
-4. Give a concise headline (e.g. "Recommended: Chainstack Developer Monad Node ($50 AUSD)").
+4. Give a concise headline (e.g. "Recommended: Chainstack Developer NEAR Node ($50 NEAR)").
 5. Provide detailed technical reasoning explaining why this plan satisfies the user's requirements.
 6. Compare 1-2 alternatives that were considered and explain why they were not selected (alternativesCompared).
 7. Return ONLY valid JSON matching this schema:

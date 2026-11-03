@@ -12,6 +12,14 @@ import { DEFAULT_TREASURY_CONTRACT, NEAR_RPC_URL } from "./chain";
 
 export { formatTokenAmount, parseTokenAmount };
 
+export type NearAuthContext = {
+  status: string;
+  accountId?: string;
+  authMethod?: "privy" | "fast-auth" | "wallet-selector";
+  caller?: NearCaller;
+  selector?: WalletSelector | null;
+};
+
 /**
  * Creates a read-only NearCaller that executes queries against NEAR JSON-RPC.
  */
@@ -31,7 +39,7 @@ export function createNearRpcCaller(accountId?: string): NearCaller {
             finality: "final",
             account_id: contractId,
             method_name: methodName,
-            args_base64: Buffer.from(JSON.stringify(args || {})).toString("base64"),
+            args_base64: btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(args || {})))),
           },
         }),
       });
@@ -61,24 +69,47 @@ export function createNearWalletCaller(
     accountId,
     viewFunction: rpc.viewFunction,
     async functionCall({ contractId, methodName, args, gas, attachedDeposit }) {
+      const { actionCreators } = await import("@near-wallet-selector/core");
       const wallet = await selector.wallet();
       const outcome = await wallet.signAndSendTransaction({
+        signerId: accountId,
         receiverId: contractId,
         actions: [
-          {
-            type: "FunctionCall",
-            params: {
-              methodName,
-              args: args || {},
-              gas: gas ? gas.toString() : "80000000000000",
-              deposit: attachedDeposit ? attachedDeposit.toString() : "0",
-            },
-          },
+          actionCreators.functionCall(
+            methodName,
+            args || {},
+            BigInt(gas ? gas.toString() : "80000000000000"),
+            BigInt(attachedDeposit ? attachedDeposit.toString() : "0"),
+          ),
         ],
       });
-      return outcome;
+      if (!outcome || typeof outcome.status !== "object" || !("SuccessValue" in outcome.status)) {
+        throw new Error("Transaction was cancelled, failed, or has no confirmed outcome. Check your wallet before retrying.");
+      }
+      return confirmNearOutcome(outcome);
     },
   };
+}
+
+/**
+ * Creates a unified NearCaller supporting both FastAuth and NEAR Wallet Selector.
+ */
+export async function getUnifiedNearCaller(auth: NearAuthContext): Promise<NearCaller> {
+  if (auth.status !== "authenticated" || !auth.accountId) {
+    return createNearRpcCaller();
+  }
+
+  if (auth.authMethod === "privy" && auth.caller) return auth.caller;
+
+  if (auth.authMethod === "wallet-selector" && auth.selector) {
+    return createNearWalletCaller(auth.selector, auth.accountId);
+  }
+
+  if (auth.authMethod === "fast-auth") {
+    throw new Error("Email/social transaction signing is not configured. Connect a NEAR wallet.");
+  }
+
+  return createNearRpcCaller(auth.accountId);
 }
 
 /**
@@ -136,4 +167,31 @@ export async function getNearAccountBalance(accountId: string): Promise<{
     console.error("Failed to fetch NEAR balance for account", accountId, err);
     return { totalNear: "0", availableNear: "0" };
   }
+}
+
+/** All three pools are funded in one action batch; failure rolls the batch back. */
+export async function fundTreasury(selector: WalletSelector, signerId: string, contractId: string) {
+  const { actionCreators } = await import("@near-wallet-selector/core");
+  const wallet = await selector.wallet();
+  const outcome = await wallet.signAndSendTransaction({ signerId, receiverId: contractId, actions: [
+    actionCreators.functionCall("top_up_storage", {}, BigInt("40000000000000"), BigInt(parseTokenAmount("0.5", 24))),
+    actionCreators.functionCall("top_up_operating", {}, BigInt("40000000000000"), BigInt(parseTokenAmount("0.2", 24))),
+    actionCreators.functionCall("deposit_native", {}, BigInt("40000000000000"), BigInt(parseTokenAmount("1", 24))),
+  ] });
+  if (!outcome || typeof outcome.status !== "object" || !("SuccessValue" in outcome.status)) throw new Error("Funding was not confirmed. Check the transaction before retrying.");
+  return confirmNearOutcome(outcome);
+}
+
+/** Wallets may return optimistic outcomes. Resolve the actual transaction to FINAL. */
+export async function confirmNearOutcome(outcome: any) {
+  const txHash = outcome?.transaction?.hash || outcome?.transaction_outcome?.id;
+  const signerId = outcome?.transaction?.signer_id;
+  if (typeof txHash !== "string" || typeof signerId !== "string") throw new Error("Wallet did not return a transaction reference. Check its activity before retrying.");
+  const response = await fetch(NEAR_RPC_URL, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: "confirm-transaction", method: "tx", params: { tx_hash: txHash, sender_account_id: signerId, wait_until: "FINAL" } }), signal: AbortSignal.timeout(45000) });
+  const payload = await response.json();
+  if (!response.ok || payload.error || !payload.result || typeof payload.result.status !== "object" || !("SuccessValue" in payload.result.status)) {
+    throw new Error(`Transaction ${txHash} was not confirmed successful. Check it before retrying.`);
+  }
+  return payload.result;
 }

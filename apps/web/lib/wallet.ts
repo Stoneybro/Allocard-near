@@ -67,3 +67,7 @@ export function validateCompanyName(name: string) {
 
   return formatted;
 }
+
+export function isNativeNearAccount(value: unknown): value is string {
+  return typeof value === "string" && value.length >= 2 && value.length <= 64 && !value.startsWith("0x") && nearAccountPattern.test(value);
+}

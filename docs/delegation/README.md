@@ -12,4 +12,4 @@ This directory contains technical notes, trust models, and architectural guides 
 
 ## Current implementation status
 
-See the root README for schema-2 deployment requirements, separate resource pools, SDK JSON formats, and validation commands. The web app is a local simulation. The contract/SDK fixes do not establish completion of all foundation acceptance categories; maximum-bound sandbox measurements and relayer/FT adversarial coverage remain outstanding.
+See the root README for schema-2 deployment requirements, separate resource pools, SDK JSON formats, and validation commands. The separate delegation-demo page is a simulation; the main company/employee app now uses wallet signatures and confirmed contract reads. See TODAY.md for the live acceptance run. The contract/SDK fixes do not establish completion of all foundation acceptance categories; maximum-bound sandbox measurements and relayer/FT adversarial coverage remain outstanding.

@@ -1,7 +1,7 @@
 "use server";
 
 import { and, eq, inArray, or, sql } from "drizzle-orm";
-import { formatEther, isAddress, parseEther } from "viem";
+import { formatTokenAmount, parseTokenAmount } from "@allocard/delegation-sdk";
 import { db } from "@/lib/db";
 import {
   agentBookings,
@@ -19,6 +19,7 @@ import {
 } from "@/lib/db/schema";
 import {
   isValidWalletAddress,
+  isNativeNearAccount,
   normalizeWalletAddress,
   validateCompanyName,
 } from "@/lib/wallet";
@@ -30,6 +31,8 @@ import { isReimbursementAgent, type ReimbursementProgram } from "@/lib/reimburse
 import { loadAgoraProgram } from "@/lib/agora/server";
 import { isAgoraAgent, type AgoraProgram } from "@/lib/agora/shared";
 export { isAgoraAgent, type AgoraProgram };
+import { nativeSpendingCapacity } from "@/lib/spending-capacity";
+import { verifyTreasuryOwner, treasuryReader, assertEmployeePermission } from "@/lib/near-server";
 import { TOKEN_SYMBOL } from "@/lib/chain";
 
 
@@ -227,14 +230,14 @@ export async function activateSmartAccount(input: {
       throw new Error("Create a company before activating the company account");
     }
 
-    if (
-      profile.company.smartAccountAddress &&
-      profile.company.smartAccountAddress.toLowerCase() !==
-        smartAccountAddress.toLowerCase()
-    ) {
-      throw new Error("This company already has a different smart account");
+    if (profile.company.smartAccountAddress && profile.company.smartAccountAddress !== smartAccountAddress) {
+      const [active] = await db.select({ id: delegations.id }).from(delegations).where(and(
+        eq(delegations.delegatorType, "company"), eq(delegations.delegatorId, profile.company.id), eq(delegations.status, "active")
+      )).limit(1);
+      if (active) throw new Error("Revoke existing company permissions before changing its treasury");
     }
 
+    await verifyTreasuryOwner(smartAccountAddress, walletAddress);
     const [company] = await db
       .update(companies)
       .set({ smartAccountAddress })
@@ -247,13 +250,7 @@ export async function activateSmartAccount(input: {
     };
   }
 
-  if (
-    profile.user.smartAccountAddress &&
-    profile.user.smartAccountAddress.toLowerCase() !==
-      smartAccountAddress.toLowerCase()
-  ) {
-    throw new Error("This employee already has a different smart account");
-  }
+  if (smartAccountAddress !== walletAddress) throw new Error("Employees spend using their own signing account, not the company treasury");
 
   if (!profile.user.companyId) throw new Error("Select an employee company before activating its account");
   const [user] = await db
@@ -285,7 +282,7 @@ function toProfileUser(
   return {
     id: user.id,
     role,
-    walletAddress: user.embeddedWalletAddress,
+    walletAddress: user.nearAccountId ?? user.embeddedWalletAddress,
     smartAccountAddress,
     companyId,
   };
@@ -367,7 +364,7 @@ function extractNativeAllowanceWei(value: unknown): bigint {
 }
 
 function formatEthAllowance(wei: bigint) {
-  const formatted = formatEther(wei);
+  const formatted = formatTokenAmount(wei.toString(), 24);
 
   if (!formatted.includes(".")) {
     return formatted;
@@ -386,14 +383,7 @@ const periodDurations = {
 function parsePositiveEthToWei(value: string, fieldName: string) {
   const trimmed = value.trim();
 
-  if (!/^\d+(\.\d{1,18})?$/.test(trimmed)) {
-    throw new Error(`${fieldName} must be a positive ${TOKEN_SYMBOL} amount`);
-  }
-
-  const [whole, fractional = ""] = trimmed.split(".");
-  const wei =
-    BigInt(whole) * 1_000_000_000_000_000_000n +
-    BigInt((fractional + "0".repeat(18)).slice(0, 18));
+  const wei = BigInt(parseTokenAmount(trimmed, 24));
 
   if (wei <= 0n) {
     throw new Error(`${fieldName} must be greater than 0`);
@@ -592,6 +582,7 @@ export async function getWalletProfile(address: string): Promise<WalletProfile> 
   let [user] = await withRetry(() => db.select().from(users)
     .where(
       or(
+        eq(users.nearAccountId, walletAddress),
         eq(users.embeddedWalletAddress, walletAddress),
         eq(users.privyUserId, identity.providerUserId)
       )
@@ -604,7 +595,7 @@ export async function getWalletProfile(address: string): Promise<WalletProfile> 
     }).where(eq(users.id, user.id)).returning();
   }
 
-  if (user && user.embeddedWalletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+  if (user && (user.nearAccountId ?? user.embeddedWalletAddress).toLowerCase() !== walletAddress.toLowerCase()) {
     throw new Error("This account is linked to a different signing wallet. Complete verified account linking before continuing.");
   }
 
@@ -688,7 +679,8 @@ export async function createEmployerAccount(input: { walletAddress: string; comp
 
   let [user] = await db.select().from(users).where(
     or(
-      eq(users.embeddedWalletAddress, walletAddress),
+      eq(users.nearAccountId, walletAddress),
+        eq(users.embeddedWalletAddress, walletAddress),
       eq(users.privyUserId, identity.providerUserId)
     )
   ).limit(1);
@@ -698,6 +690,7 @@ export async function createEmployerAccount(input: { walletAddress: string; comp
       privyUserId: identity.providerUserId,
       verifiedEmail: identity.email,
       embeddedWalletAddress: walletAddress,
+      nearAccountId: walletAddress,
       role: "employer",
     }).returning();
   } else if (!user.privyUserId) {
@@ -731,7 +724,7 @@ function normalizeVerifiedEmail(email?: string | null) {
 export async function getPendingCompanyMemberships() {
   const identity = await getSessionIdentity();
   if (!identity) throw new Error("Sign in again to continue");
-  const normalizedEmail = normalizeVerifiedEmail(identity.email);
+  const normalizedEmail = identity.email.endsWith("@near") ? identity.email : normalizeVerifiedEmail(identity.email);
   const rows = await db.select({
     id: pendingEmployees.id,
     companyId: companies.id,
@@ -739,7 +732,7 @@ export async function getPendingCompanyMemberships() {
     createdAt: pendingEmployees.createdAt,
   }).from(pendingEmployees).innerJoin(companies, eq(pendingEmployees.companyId, companies.id))
     .where(and(
-      eq(pendingEmployees.normalizedEmail, normalizedEmail),
+      inArray(pendingEmployees.normalizedEmail, [normalizedEmail, `${identity.walletAddress}@near`]),
       eq(pendingEmployees.status, "pending"),
     ));
   return rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() }));
@@ -750,9 +743,10 @@ export async function addEmployeeByEmail(input: { walletAddress: string; email: 
   await validateSessionWallet(normalizedAddress);
   const profile = await getWalletProfile(normalizedAddress);
   if (profile.status !== "employer" || !profile.company) throw new Error("Employer access is required");
-  const email = normalizeVerifiedEmail(input.email);
+  const inviteInput = input.email.trim().toLowerCase();
+  const email = isNativeNearAccount(inviteInput) ? `${inviteInput}@near` : normalizeVerifiedEmail(inviteInput);
   const identity = await getSessionIdentity();
-  if (identity && email === normalizeVerifiedEmail(identity.email)) {
+  if (identity && email === identity.email.toLowerCase()) {
     throw new Error("You cannot add your own employer account as an employee. To test delegation and card access, enter a colleague or secondary email address.");
   }
 
@@ -779,10 +773,10 @@ export async function acceptEmployeeMembership(input: { walletAddress: string; c
   await validateSessionWallet(normalizedAddress);
   const identity = await getSessionIdentity();
   if (!identity) throw new Error("Sign in again to continue");
-  const normalizedEmail = normalizeVerifiedEmail(identity.email);
+  const normalizedEmail = identity.email.endsWith("@near") ? identity.email : normalizeVerifiedEmail(identity.email);
   const [pending] = await db.select().from(pendingEmployees).where(and(
     eq(pendingEmployees.companyId, input.companyId),
-    eq(pendingEmployees.normalizedEmail, normalizedEmail),
+    inArray(pendingEmployees.normalizedEmail, [normalizedEmail, `${identity.walletAddress}@near`]),
   )).limit(1);
   if (!pending || (pending.status !== "pending" && pending.status !== "accepted")) {
     throw new Error("No pending company access was found for this verified email");
@@ -797,13 +791,14 @@ export async function acceptEmployeeMembership(input: { walletAddress: string; c
       privyUserId: identity.providerUserId,
       verifiedEmail: normalizedEmail,
       embeddedWalletAddress: normalizedAddress,
+      nearAccountId: normalizedAddress,
       role: "employee",
       companyId: pending.companyId,
     }).onConflictDoNothing().returning();
     user = created ?? (await db.select().from(users).where(eq(users.privyUserId, identity.providerUserId)).limit(1))[0];
   }
   if (!user) throw new Error("Could not create your Allocard profile. Please retry");
-  if (user.embeddedWalletAddress.toLowerCase() !== normalizedAddress) {
+  if ((user.nearAccountId ?? user.embeddedWalletAddress).toLowerCase() !== normalizedAddress) {
     throw new Error("This account is linked to a different signing wallet. Complete verified account linking before continuing.");
   }
   if (user.privyUserId && user.privyUserId !== identity.providerUserId) {
@@ -837,7 +832,7 @@ export async function acceptEmployeeMembership(input: { walletAddress: string; c
       target: [companyMemberships.companyId, companyMemberships.userId],
       set: { canEmployee: true, status: "active", removedAt: null },
     });
-  await db.insert(employeeProfiles).values({ companyId: pending.companyId, userId: user.id })
+  await db.insert(employeeProfiles).values({ companyId: pending.companyId, userId: user.id, smartAccountAddress: normalizedAddress })
     .onConflictDoNothing({ target: [employeeProfiles.companyId, employeeProfiles.userId] });
   await db.insert(workspacePreferences).values({ userId: user.id, companyId: pending.companyId, role: "employee" })
     .onConflictDoUpdate({ target: workspacePreferences.userId, set: { companyId: pending.companyId, role: "employee", updatedAt: new Date() } });
@@ -889,7 +884,7 @@ export async function getCompanyEmployees(walletAddress: string) {
 
   const employees = await db.select({
     id: users.id,
-    walletAddress: users.embeddedWalletAddress,
+    walletAddress: sql<string>`COALESCE(${users.nearAccountId}, ${users.embeddedWalletAddress})`,
     smartAccountAddress: employeeProfiles.smartAccountAddress,
     createdAt: employeeProfiles.createdAt,
   }).from(companyMemberships)
@@ -944,7 +939,7 @@ export async function createEmployeeDelegation(input: {
   const [employee] = await db
     .select({
       id: users.id,
-      embeddedWalletAddress: users.embeddedWalletAddress,
+      embeddedWalletAddress: sql<string>`COALESCE(${users.nearAccountId}, ${users.embeddedWalletAddress})`,
       smartAccountAddress: employeeProfiles.smartAccountAddress,
     })
     .from(companyMemberships)
@@ -1233,6 +1228,10 @@ export async function activateDelegation(input: {
     throw new Error("Activate the company smart account first");
   }
 
+  if (delegation.status === "active" && delegation.delegationHash !== input.delegationHash) {
+    throw new Error("Revoke the current on-chain permission before replacing its immutable terms");
+  }
+
   if (delegation.status === "revoked") {
     throw new Error("Revoked delegations cannot be activated");
   }
@@ -1254,7 +1253,7 @@ export async function activateDelegation(input: {
     const [employee] = await db
       .select({
         smartAccountAddress: employeeProfiles.smartAccountAddress,
-        embeddedWalletAddress: users.embeddedWalletAddress,
+        embeddedWalletAddress: sql<string>`COALESCE(${users.nearAccountId}, ${users.embeddedWalletAddress})`,
       })
       .from(companyMemberships)
       .innerJoin(users, eq(companyMemberships.userId, users.id))
@@ -1300,11 +1299,22 @@ export async function activateDelegation(input: {
     }
   }
 
+  if (!/^[0-9]+$/.test(input.delegationHash)) throw new Error("A confirmed permission ID is required");
+  const config = await verifyTreasuryOwner(profile.company.smartAccountAddress, input.walletAddress);
+  const permission = await treasuryReader(profile.company.smartAccountAddress).getPermission(input.delegationHash);
+  if (delegation.delegateeType === "user") {
+    const [employee] = await db.select({ account: sql<string>`COALESCE(${users.nearAccountId}, ${users.embeddedWalletAddress})` }).from(users).where(eq(users.id, delegation.delegateeId!)).limit(1);
+    if (!employee) throw new Error("Employee not found");
+    assertEmployeePermission(permission, employee.account, input.walletAddress, config.authority_epoch);
+  } else {
+    throw new Error("Agent activation requires a separate verified agent signing integration");
+  }
+
   await db
     .update(delegations)
     .set({
       delegationHash: input.delegationHash,
-      signedDelegation: input.signedDelegation,
+      signedDelegation: permission,
       status: "active",
       activatedAt: new Date(),
       revokedAt: null,
@@ -1340,7 +1350,12 @@ export async function revokeDelegation(input: {
   delegationId: string;
 }) {
   await validateSessionWallet(input.walletAddress);
-  await getEmployerDelegationOrThrow(input.walletAddress, input.delegationId);
+  const { profile, delegation } = await getEmployerDelegationOrThrow(input.walletAddress, input.delegationId);
+  if (delegation.status === "active") {
+    if (!profile.company.smartAccountAddress || !delegation.delegationHash) throw new Error("Missing treasury permission mapping");
+    const permission = await treasuryReader(profile.company.smartAccountAddress).getPermission(delegation.delegationHash);
+    if (!permission?.revoked) throw new Error("Revoke the permission on-chain before marking it revoked");
+  }
 
   const descendantIds = await getDescendantDelegationIds([input.delegationId]);
   const idsToRevoke = [input.delegationId, ...descendantIds];
@@ -1422,7 +1437,7 @@ export async function getCompanyDashboardState(
           db
             .select({
               id: users.id,
-              walletAddress: users.embeddedWalletAddress,
+              walletAddress: sql<string>`COALESCE(${users.nearAccountId}, ${users.embeddedWalletAddress})`,
               smartAccountAddress: employeeProfiles.smartAccountAddress,
               createdAt: employeeProfiles.createdAt,
             })
@@ -1558,7 +1573,7 @@ export async function getCompanyDashboardState(
     );
     const bookingSpentWei = (() => {
       try {
-        return bookingResult?.total ? parseEther(bookingResult.total) : 0n;
+        return bookingResult?.total ? BigInt(parseTokenAmount(bookingResult.total, 24)) : 0n;
       } catch {
         return 0n;
       }
@@ -1583,7 +1598,7 @@ export async function getCompanyDashboardState(
     );
     const claimSpentWei = (() => {
       try {
-        return claimResult?.total ? parseEther(claimResult.total) : 0n;
+        return claimResult?.total ? BigInt(parseTokenAmount(claimResult.total, 24)) : 0n;
       } catch {
         return 0n;
       }
@@ -1647,6 +1662,8 @@ export type EmployeeDashboardState = {
     activeAgentCount: number;
     /** Total ETH already spent via direct delegate spends. */
     spentEth: string;
+    remainingEth: string;
+    capacityError?: string;
   };
   /** List of agent IDs that the company has activated (delegated to). */
   activeCompanyAgentIds: string[];
@@ -1771,7 +1788,7 @@ export async function getEmployeeDashboardState(
     );
     const bookingSpentWei = (() => {
       try {
-        return bookingResult?.total ? parseEther(bookingResult.total) : 0n;
+        return bookingResult?.total ? BigInt(parseTokenAmount(bookingResult.total, 24)) : 0n;
       } catch {
         return 0n;
       }
@@ -1795,7 +1812,7 @@ export async function getEmployeeDashboardState(
     );
     const claimSpentWei = (() => {
       try {
-        return claimResult?.total ? parseEther(claimResult.total) : 0n;
+        return claimResult?.total ? BigInt(parseTokenAmount(claimResult.total, 24)) : 0n;
       } catch {
         return 0n;
       }
@@ -1846,7 +1863,7 @@ export async function getEmployeeDashboardState(
         "getEmployeeDashboardState:spent"
       )).reduce((sum, tx) => {
         try {
-          return sum + parseEther(tx.amountEth);
+          return sum + BigInt(parseTokenAmount(tx.amountEth, 24));
         } catch {
           return sum;
         }
@@ -1879,6 +1896,28 @@ export async function getEmployeeDashboardState(
     setCachedAgents(platformAgents);
   }
 
+  let remainingEth = "0";
+  let liveApprovedEth = "0";
+  let liveSpentEth = "0";
+  let capacityError: string | undefined;
+  if (company.smartAccountAddress && inboundRow?.delegationHash) {
+    try {
+      const reader = treasuryReader(company.smartAccountAddress);
+      const [path, config, ledger] = await Promise.all([reader.getPermissionPath(inboundRow.delegationHash), reader.getConfig(), reader.getAssetLedger({ type: "NativeNear" })]);
+      const remaining = await nativeSpendingCapacity({ actor: user.walletAddress, path, config,
+        available: ledger?.enabled ? ledger.available : "0", now: BigInt(Date.now()),
+        usage: (id, scope) => reader.getUsage(id, { type: "NativeNear" }, scope),
+        executionCount: async id => (await reader.caller.viewFunction({ contractId: reader.contractId, methodName: "get_permission_usage", args: { permission_id: id } })).executions_count,
+        blocked: account => reader.caller.viewFunction({ contractId: reader.contractId, methodName: "is_principal_blocked", args: { account } }),
+      });
+      remainingEth = formatTokenAmount(remaining, 24);
+      const rule = path[0]?.rules.find(rule => rule.asset.type === "NativeNear");
+      liveApprovedEth = formatTokenAmount(rule?.lifetime_limit ?? "0", 24);
+      const usage = await reader.getUsage(inboundRow.delegationHash, { type: "NativeNear" }, { type: "Lifetime" });
+      liveSpentEth = formatTokenAmount(usage.settled, 24);
+    } catch { capacityError = "Live spending capacity could not be verified. Payments remain disabled until the treasury can be read."; }
+  }
+
   return {
     employee: {
       id: user.id,
@@ -1894,9 +1933,11 @@ export async function getEmployeeDashboardState(
     reimbursement: (await loadReimbursementProgram(company.id)).program,
     agora: (await loadAgoraProgram(company.id)).program,
     summary: {
-      approvedLimitEth: formatEthAllowance(approvedLimitWei),
+      approvedLimitEth: liveApprovedEth,
       redelegatedEth: formatEthAllowance(redelegatedWei),
-      spentEth: formatEthAllowance(totalEmployeeSpentWei),
+      spentEth: liveSpentEth,
+      remainingEth,
+      capacityError,
       activeAgentCount,
     },
   };
@@ -2270,6 +2311,12 @@ export async function activateEmployeeDelegation(input: {
   if (savedCaveats.length === 0) {
     throw new Error("Configure caveats before activation");
   }
+
+  const treasury = profile.company?.smartAccountAddress;
+  if (!treasury || !/^[0-9]+$/.test(input.delegationHash)) throw new Error("A confirmed child permission is required");
+  const reader = treasuryReader(treasury);
+  const permission = await reader.getPermission(input.delegationHash);
+  if (!permission || permission.issuer !== input.walletAddress || permission.revoked || permission.parent_id == null) throw new Error("On-chain child permission does not match the signing employee");
 
   await db
     .update(delegations)

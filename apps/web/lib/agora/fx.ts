@@ -1,6 +1,6 @@
 /**
  * lib/agora/fx.ts — Live Exchange Rates & Remittance Cost Calculator
- * 1 AUSD = 1.00 USD (Agora Digital Dollar on Monad)
+ * 1 NEAR = benchmark conversion rate for cross-border contractor payouts
  */
 
 export type SupportedCurrency = "EUR" | "GBP" | "JPY" | "CAD" | "BRL" | "AUD" | "CHF" | "USD";
@@ -26,7 +26,7 @@ export type ConversionResult = {
   traditionalWireFeeUsd: number;
   traditionalFxSpreadUsd: number;
   totalSavedUsd: number;
-  monadGasCostUsd: number;
+  nearGasCostUsd: number;
 };
 
 export function convertToAusd(amount: number, currency: SupportedCurrency): ConversionResult {
@@ -40,7 +40,7 @@ export function convertToAusd(amount: number, currency: SupportedCurrency): Conv
   const traditionalWireFeeUsd = 45.0;
   const traditionalFxSpreadUsd = Number((rawAusd * 0.032).toFixed(2));
   const totalSavedUsd = Number((traditionalWireFeeUsd + traditionalFxSpreadUsd).toFixed(2));
-  const monadGasCostUsd = 0.0002;
+  const nearGasCostUsd = 0.0001;
 
   return {
     originalAmount: amount,
@@ -50,6 +50,6 @@ export function convertToAusd(amount: number, currency: SupportedCurrency): Conv
     traditionalWireFeeUsd,
     traditionalFxSpreadUsd,
     totalSavedUsd,
-    monadGasCostUsd,
+    nearGasCostUsd,
   };
 }

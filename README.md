@@ -2,14 +2,14 @@
 
 Allocard lets principals spend from one company treasury within contract-enforced permissions, without prefunding employee wallets. Each payment selects a permission and satisfies every ancestor's policy and shared budget.
 
-This repository contains a Rust treasury contract, a local TypeScript SDK, deployment tooling, and a **local UI simulation**. The UI does not connect a wallet, read live balances, or submit payments. Its sample outcomes do not demonstrate contract execution.
+This repository contains a Rust treasury contract, a local TypeScript SDK, and a wallet-based NEAR testnet application. The company/employee flow verifies login signatures, treasury ownership/code, spending permissions, and settled payments. The separate delegation-demo page remains a local simulation. See [today’s acceptance run](docs/delegation/TODAY.md) for setup and the live checks still required.
 
 ## Layout and checks
 
 - `packages/contracts/treasury`: Rust contract and sandbox tests.
 - `packages/delegation-sdk`: wallet-independent client, canonical hashes, exact token amounts, and optional `@allocard/delegation-sdk/near-api` binding for near-api-js v7.
 - `packages/scripts`: build, test, deployment, and offline envelope demo commands.
-- `apps/web`: Next.js simulation importing the SDK.
+- `apps/web`: Next.js company/employee application, with a separate simulation page.
 - `docs/delegation/fixtures`: shared contract/SDK JSON fixtures.
 
 Run from the repository root:
@@ -61,3 +61,7 @@ After initialization, fund `top_up_storage` and `top_up_operating` separately fr
 This is not an audited or production-ready treasury. Full-access deployment keys can replace its code or bypass contract controls. Locked deployments have no built-in upgrade/recovery path. Missing callbacks may lock reservations indefinitely. Retained history consumes storage. Fixed-duration windows are not calendar months.
 
 The sandbox tests currently cover selected native-transfer scenarios, not all acceptance categories in the foundation spec. Adversarial FT contracts, maximum-policy gas measurements, and NEP-366 relayer integration remain required before declaring the full foundation complete. Prior gas measurements predate the accounting changes and must be rerun; no updated throughput or maximum-bound claim is made here.
+
+## Main application setup
+
+Follow [TODAY.md](docs/delegation/TODAY.md). Existing wallets are the supported login/signing path for this build. Email invitations require verified email identity and are not equivalent to a wallet login. Run the new database migration before signing in. Legacy sessions are invalidated; legacy database-only permissions are not accepted as on-chain authorization. No live end-to-end success is claimed from unit tests alone.

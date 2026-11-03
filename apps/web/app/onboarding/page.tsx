@@ -94,8 +94,11 @@ export default function OnboardingPage() {
           {auth.status === "authenticated" && (
             <div className="flex items-center gap-3">
               <span className="font-mono text-xs bg-zinc-100 text-zinc-700 px-2.5 py-1 rounded-md border border-zinc-200">
-                {auth.address}
+                {auth.address.length > 24 ? `${auth.address.slice(0, 8)}...${auth.address.slice(-6)}` : auth.address}
               </span>
+              <Badge variant="secondary" className="text-[11px] font-normal text-zinc-600 bg-zinc-100">
+                {auth.authMethod === "fast-auth" ? "NEAR Auth" : "NEAR Wallet"}
+              </Badge>
               <Button variant="ghost" size="sm" onClick={auth.disconnect} className="text-xs text-zinc-500 hover:text-zinc-900">
                 Disconnect
               </Button>

@@ -1,4 +1,5 @@
 "use client";
+import { generateRequestId } from "@allocard/delegation-sdk";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -94,6 +95,7 @@ import { CHAIN_ID, TOKEN_SYMBOL, getAddressExplorerUrl, getTxExplorerUrl } from 
 import type { PermissionSpec, ExecuteRequest } from "@allocard/delegation-sdk";
 import {
   createNearWalletCaller,
+  getUnifiedNearCaller,
   getTreasuryClient,
   parseTokenAmount,
   formatTokenAmount,
@@ -206,10 +208,10 @@ function formFromDelegation(
 
 function weiToEthInput(wei: string) {
   const value = BigInt(wei);
-  const whole = value / 1_000_000_000_000_000_000n;
-  const fractional = value % 1_000_000_000_000_000_000n;
+  const whole = value / 1_000_000_000_000_000_000_000_000n;
+  const fractional = value % 1_000_000_000_000_000_000_000_000n;
   if (fractional === 0n) return whole.toString();
-  return `${whole}.${fractional.toString().padStart(18, "0").replace(/0+$/, "")}`;
+  return `${whole}.${fractional.toString().padStart(24, "0").replace(/0+$/, "")}`;
 }
 
 function formatDelegationStatus(status: string) {
@@ -335,7 +337,11 @@ export function EmployeeClient({
   const [formErrors, setFormErrors] = useState<FormErrors>({});
 
   useEffect(() => {
-    if (auth.status !== "authenticated") return;
+    if (auth.status !== "authenticated") {
+      didLoadDashboard.current = false;
+      setDashboardState(null);
+      return;
+    }
     if (didLoadDashboard.current) {
       void auth.establishSession().catch(() => {});
       return;
@@ -408,14 +414,18 @@ export function EmployeeClient({
 
   const spentWei = useMemo(() => {
     try {
-      return parseEther(dashboardState?.summary?.spentEth ?? '0');
+      const val = dashboardState?.summary?.spentEth ?? '0';
+      const num = parseFloat(val);
+      if (isNaN(num) || num <= 0) return 0n;
+      const [whole, fractional = ""] = val.split(".");
+      return (
+        BigInt(whole) * 1_000_000_000_000_000_000_000_000n +
+        BigInt((fractional + "0".repeat(24)).slice(0, 24))
+      );
     } catch { return 0n; }
   }, [dashboardState?.summary?.spentEth]);
 
-  const remainingWei = (() => {
-    const subtotal = approvedWei > redelegatedWei ? approvedWei - redelegatedWei : 0n;
-    return subtotal > spentWei ? subtotal - spentWei : 0n;
-  })();
+  const remainingWei = BigInt(parseTokenAmount(dashboardState?.summary.remainingEth ?? "0", 24));
 
   const parentMaxEth = useMemo(() => {
     try {
@@ -521,7 +531,7 @@ export function EmployeeClient({
   // ── Handlers ───────────────────────────────────────────────────────────────
 
   function formatEthTrimmed(wei: bigint) {
-    const s = formatEther(wei);
+    const s = weiToEthInput(wei.toString());
     if (!s.includes(".")) return s;
     return s.replace(/(\.\d*?[1-9])0+$/, "$1").replace(/\.0+$/, "");
   }
@@ -653,7 +663,7 @@ export function EmployeeClient({
         });
         return;
       }
-      
+
       startTransition(async () => {
         try {
           const state = await createAgentRedelegation({ walletAddress, agentId });
@@ -703,7 +713,7 @@ export function EmployeeClient({
 
       runEmployeeMutation(async () => {
         const nextState = await revokeEmployeeDelegation({ walletAddress, delegationId });
-        
+
         toast.success("Agent Delegation Revoked", {
           description: `Spending authority for ${agentName} has been revoked on NEAR Testnet.`,
           action: agentAddress ? {
@@ -751,14 +761,14 @@ export function EmployeeClient({
 
         const agentSmartAccountAddress = await getAgentSmartAccountAddress(agentId);
 
-        const parentPermissionId = savedState.inboundDelegation?.delegationHash || "1";
+        const parentPermissionId = savedState.inboundDelegation?.delegationHash || "";
         const parsedLimit = caveatForm.maxAmountEth ? parseTokenAmount(caveatForm.maxAmountEth, 24) : null;
         const parsedPerTx = caveatForm.perTransactionCapEth ? parseTokenAmount(caveatForm.perTransactionCapEth, 24) : null;
 
         const childSpec: PermissionSpec = {
           delegate: agentSmartAccountAddress,
           valid_from_ms: Date.now().toString(),
-          expires_at_ms: caveatForm.expiryDate ? new Date(caveatForm.expiryDate).getTime().toString() : null,
+          expires_at_ms: null,
           max_executions: caveatForm.limitedCallsEnabled && caveatForm.limitedCalls ? Number(caveatForm.limitedCalls) : null,
           rules: [
             {
@@ -779,19 +789,11 @@ export function EmployeeClient({
           metadata_hash: null,
         };
 
-        let delegationHash = "";
-        if (auth.status === "authenticated" && auth.selector && dashboardState?.company?.smartAccountAddress) {
-          try {
-            const caller = createNearWalletCaller(auth.selector, auth.accountId);
-            const client = getTreasuryClient(caller, dashboardState.company.smartAccountAddress);
-            delegationHash = await client.createChildPermission(parentPermissionId, childSpec);
-          } catch (onchainErr) {
-            console.warn("Child permission creation stored in policy graph", onchainErr);
-            delegationHash = `child_perm_${Date.now()}`;
-          }
-        } else {
-          delegationHash = `child_perm_${Date.now()}`;
-        }
+        if (!auth.selector || !dashboardState?.company?.smartAccountAddress) throw new Error("A signing wallet and treasury are required");
+        if (!savedState.inboundDelegation?.delegationHash) throw new Error("A confirmed parent permission is required");
+        const caller = createNearWalletCaller(auth.selector, auth.accountId);
+        const client = getTreasuryClient(caller, dashboardState.company.smartAccountAddress);
+        const delegationHash = await client.createChildPermission(parentPermissionId, childSpec);
 
         const activatedState = await activateEmployeeDelegation({
           walletAddress,
@@ -818,65 +820,67 @@ export function EmployeeClient({
     });
   }, [selectedDelegation, auth, caveatForm, availableMaxEth, dashboardState?.inboundDelegation]);
 
-  // Direct Spend execution
+  // Persist a request before signing. Retrying an uncertain dispatch reuses it.
   const handleExecuteSpend = async (details: { toAddress: string; amountEth: string; purpose?: string; isFlagged?: boolean }) => {
-    if (auth.status !== "authenticated" || !auth.address) {
-      throw new Error("NEAR wallet not connected.");
+    if (auth.status !== "authenticated") throw new Error("Connect your NEAR signing wallet");
+    const activePermissionId = dashboardState?.inboundDelegation?.delegationHash;
+    const treasury = dashboardState?.company?.smartAccountAddress;
+    if (!treasury) throw new Error("A company treasury is required");
+    const caller = await getUnifiedNearCaller(auth);
+    if (!caller.functionCall) throw new Error("A signing wallet is required");
+    const client = getTreasuryClient(caller, treasury);
+    const key = `allocard-payment:${treasury}:${auth.accountId}`;
+    const amount = parseTokenAmount(details.amountEth, 24);
+    let saved: { request: ExecuteRequest; transactionHash?: string; executionId?: string; delegationId?: string; attempted?: boolean } | null = JSON.parse(localStorage.getItem(key) || "null");
+    if (saved && (saved.request.action.amount !== amount || saved.request.action.receiver !== details.toAddress)) {
+      throw new Error("A previous payment is unresolved. Retry its original recipient and amount before starting another payment.");
     }
-
-    const permissionId = dashboardState?.inboundDelegation?.delegationHash;
-    const treasuryContractId = dashboardState?.company?.smartAccountAddress;
-
-    let txHash = "";
-    if (auth.selector && treasuryContractId && permissionId) {
-      try {
-        const caller = createNearWalletCaller(auth.selector, auth.accountId);
-        const client = getTreasuryClient(caller, treasuryContractId);
-        const request: ExecuteRequest = {
-          api_version: 1,
-          request_id: crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, ""),
-          permission_id: permissionId,
-          action: {
-            type: "Transfer",
-            asset: { type: "NativeNear" },
-            receiver: details.toAddress,
-            amount: parseTokenAmount(details.amountEth, 24),
-          },
-          deadline_ms: (Date.now() + 15 * 60 * 1000).toString(),
-        };
-        const outcome = await client.execute(request);
-        txHash = outcome.executionId;
-      } catch (execErr: any) {
-        console.warn("Direct onchain execution fallback to logged spend", execErr);
-        txHash = `near_exec_${Date.now()}`;
+    const permissionId = saved?.request.permission_id || activePermissionId;
+    if (!permissionId || !/^[0-9]+$/.test(permissionId)) throw new Error("A confirmed company permission is required");
+    if (!saved) {
+      saved = { delegationId: dashboardState?.inboundDelegation?.id, attempted: false, request: { api_version: 1, request_id: generateRequestId(), permission_id: permissionId,
+        action: { type: "Transfer", asset: { type: "NativeNear" }, receiver: details.toAddress, amount },
+        deadline_ms: (Date.now() + 15 * 60 * 1000).toString() } };
+      localStorage.setItem(key, JSON.stringify(saved));
+    }
+    // An existing execution can be settled even if its permission was revoked meanwhile.
+    const existing = await client.getExecutionByRequest(auth.accountId, saved.request.request_id);
+    if (!existing && BigInt(saved.request.deadline_ms) <= BigInt(Date.now())) {
+      const response = await fetch("/api/wallet/pending", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ companyId: dashboardState?.company?.id, requestId: saved.request.request_id, deadlineMs: saved.request.deadline_ms }) });
+      const status = await response.json();
+      if (response.ok && status.canDiscard) {
+        localStorage.removeItem(key);
+        throw new Error("The chain confirms the previous request expired without dispatch. Submit again to start a fresh payment.");
       }
-    } else {
-      txHash = `near_exec_${Date.now()}`;
+      throw new Error("The previous payment is still unresolved. Keep this request and retry after checking its on-chain status.");
     }
-
-    // Call backend to log spend
-    const res = await fetch("/api/wallet/spend", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        companyId: dashboardState?.company?.id,
-        employeeId: dashboardState?.employee?.id,
-        delegationId: dashboardState?.inboundDelegation?.id || "",
-        ...details,
-        txHash,
-      }),
-    });
-    });
-    
-    if (!res.ok) {
-      const errData = await res.json();
-      console.error("Backend logging failed:", errData);
-      // Even if backend fails, the tx was sent, so we still return txHash
-    } else {
-      await refreshDashboard();
+    if (!existing) {
+      const preview = await client.previewExecute(auth.accountId, saved.request);
+      if (!preview.allowed) { if (!saved.attempted) localStorage.removeItem(key); throw new Error(preview.error_message || preview.error_code || "Payment is outside your spending permission"); }
     }
-
-    return txHash;
+    saved.attempted = true;
+    localStorage.setItem(key, JSON.stringify(saved));
+    const outcome = await client.execute(saved.request);
+    saved.executionId = outcome.executionId;
+    saved.transactionHash = saved.transactionHash || outcome.transactionHash;
+    localStorage.setItem(key, JSON.stringify(saved));
+    const record = await outcome.waitForOutcome(60000, 1500);
+    if (record.status === "Failed") {
+      localStorage.removeItem(key);
+      throw new Error("The transfer failed. Funds and budget were released; a new attempt needs a new request.");
+    }
+    if (!saved.transactionHash) throw new Error("Payment settled but its transaction reference is missing. Keep this request for reconciliation.");
+    const response = await fetch("/api/wallet/spend", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      companyId: dashboardState?.company?.id, employeeId: dashboardState?.employee?.id,
+      delegationId: saved.delegationId || dashboardState?.inboundDelegation?.id, ...details, txHash: saved.transactionHash, executionId: outcome.executionId,
+    }) });
+    if (!response.ok) {
+      const failure = await response.json();
+      throw new Error(`Payment settled on-chain, but history was not saved: ${failure.error || "retry the same payment to synchronize"}`);
+    }
+    localStorage.removeItem(key);
+    await refreshDashboard();
+    return saved.transactionHash;
   };
 
   const handleVerifyReceipt = async (txHash: string, imageBase64: string) => {
@@ -895,11 +899,11 @@ export function EmployeeClient({
 
   // ── Render guards ──────────────────────────────────────────────────────────
 
-  if (auth.status === "unauthenticated" && !dashboardState) {
+  if (auth.status === "unauthenticated") {
     return <ConnectRequiredCard />;
   }
 
-  if (auth.status === "connecting" && !dashboardState) {
+  if (auth.status === "connecting") {
     return (
       <div className="flex h-full min-h-screen items-center justify-center p-6 bg-white">
         <div className="flex flex-col items-center gap-6 text-center">
@@ -1011,6 +1015,7 @@ export function EmployeeClient({
               </p>
             </div>
             <SmartAccountActivationButton
+              mode="employee"
               walletAddress={(currentAuthAddress || employee.walletAddress) as `0x${string}`}
               existingSmartAccountAddress={employee.smartAccountAddress}
               onActivated={(result) => handleSmartAccountActivated(result.smartAccountAddress)}
@@ -1018,6 +1023,7 @@ export function EmployeeClient({
           </div>
         )}
 
+        {dashboardState.summary.capacityError && <p role="alert" className="text-sm text-destructive">{dashboardState.summary.capacityError}</p>}
         {/* Global error banner */}
         {error && (
           <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3">
@@ -1076,8 +1082,9 @@ export function EmployeeClient({
 
         {/* Direct Spend Workspace */}
         <div className="w-full">
-          <DirectSpendForm 
-            delegationId={dashboardState.inboundDelegation?.id || ""} 
+          <DirectSpendForm
+            delegationId={dashboardState.inboundDelegation?.id || ""}
+            pendingStorageKey={dashboardState.company?.smartAccountAddress && auth.status === "authenticated" ? `allocard-payment:${dashboardState.company.smartAccountAddress}:${auth.accountId}` : undefined}
             remainingBalanceEth={formatEthTrimmed(remainingWei)}
             onExecute={handleExecuteSpend}
             onVerifyReceipt={handleVerifyReceipt}
@@ -1171,7 +1178,7 @@ export function EmployeeClient({
                       <SelectItem value="hourly">Hourly</SelectItem>
                       <SelectItem value="daily">Daily</SelectItem>
                       <SelectItem value="weekly">Weekly</SelectItem>
-                      <SelectItem value="monthly">Monthly</SelectItem>
+                      <SelectItem value="monthly">30 days (fixed)</SelectItem>
                     </SelectGroup>
                   </SelectContent>
                 </Select>
@@ -1302,7 +1309,7 @@ export function EmployeeClient({
                   <BotIcon className="h-4 w-4 text-chart-5" />
                   4. AI Policy Prompt
                 </h4>
-                
+
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="emp-policy-prompt">Natural Language Rules</Label>
                   <Textarea

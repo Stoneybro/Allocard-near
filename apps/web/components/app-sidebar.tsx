@@ -232,18 +232,18 @@ function AddEmployeeDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit} className="flex flex-col gap-4 py-2">
           <div className="space-y-1.5">
-            <Label htmlFor="invite-employee-email">Employee email address</Label>
+            <Label htmlFor="invite-employee-email">Employee NEAR account</Label>
             <Input
               id="invite-employee-email"
-              type="email"
-              placeholder="name@company.com"
-              autoComplete="email"
+              type="text"
+              placeholder="employee.testnet"
+              autoComplete="off"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               disabled={isSubmitting}
             />
             <p className="text-xs text-muted-foreground">
-              Tip for testing: Invite a second email (e.g. personal email) and open an incognito window to view their employee card.
+              For this wallet build, enter the employee’s NEAR account. They accept in a separate browser profile after signing in. Email invitations require verified email login.
             </p>
           </div>
 
@@ -252,7 +252,7 @@ function AddEmployeeDialog({
               type="submit"
               disabled={isSubmitting || !email.trim() || !onInviteEmployeeByEmail}
             >
-              {isSubmitting ? "Adding..." : "Add by email"}
+              {isSubmitting ? "Adding..." : "Invite employee"}
             </Button>
           </div>
 

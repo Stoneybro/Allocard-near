@@ -1,6 +1,4 @@
-import type { Hex } from "viem";
-
-export type SponsorMerchantCategory = "rpc" | "security" | "indexing";
+export type SponsorCategory = "rpc" | "security" | "indexing";
 
 export type SponsorPlan = {
   id: string;
@@ -16,9 +14,9 @@ export type SponsorMerchant = {
   id: string;
   name: string;
   tagline: string;
-  category: SponsorMerchantCategory;
+  category: SponsorCategory;
   categoryLabel: string;
-  merchantAddress: Hex;
+  merchantAddress: string;
   website: string;
   bountyTrack: string;
   plans: SponsorPlan[];
@@ -28,21 +26,21 @@ export const SPONSOR_MERCHANTS: SponsorMerchant[] = [
   {
     id: "chainstack",
     name: "Chainstack",
-    tagline: "Enterprise Monad RPC & Node Infrastructure",
+    tagline: "Enterprise NEAR RPC & Node Infrastructure",
     category: "rpc",
     categoryLabel: "Dedicated Node & RPC",
-    merchantAddress: "0x1010101010101010101010101010101010101011",
+    merchantAddress: "chainstack.testnet",
     website: "https://chainstack.com",
     bountyTrack: "Track 01 & Ecosystem Winner Sponsor",
     plans: [
       {
         id: "chainstack-dev",
-        name: "Developer Monad Node",
+        name: "Developer NEAR Node",
         priceAusd: 50,
         cadence: "monthly",
         description: "500K daily requests, WebSocket support, 50 RPS burst cap.",
-        features: ["Monad Testnet RPC", "Sub-second block streaming", "Basic SLA"],
-        sampleCredential: "https://monad-testnet.chainstack.com/rpc/v1/allocard_dev_8f293b",
+        features: ["NEAR Testnet RPC", "Sub-second block streaming", "Basic SLA"],
+        sampleCredential: "https://near-testnet.chainstack.com/rpc/v1/allocard_dev_8f293b",
       },
       {
         id: "chainstack-pro",
@@ -51,7 +49,7 @@ export const SPONSOR_MERCHANTS: SponsorMerchant[] = [
         cadence: "monthly",
         description: "Unlimited requests, high-throughput dedicated endpoint, 99.9% uptime.",
         features: ["Dedicated compute unit", "Zero rate limits", "Priority mempool access"],
-        sampleCredential: "https://monad-testnet.chainstack.com/rpc/v1/allocard_pro_4a810c",
+        sampleCredential: "https://near-testnet.chainstack.com/rpc/v1/allocard_pro_4a810c",
       },
     ],
   },
@@ -61,7 +59,7 @@ export const SPONSOR_MERCHANTS: SponsorMerchant[] = [
     tagline: "High-Throughput Unlimited RPC for Teams",
     category: "rpc",
     categoryLabel: "Dedicated Node & RPC",
-    merchantAddress: "0x2020202020202020202020202020202020202022",
+    merchantAddress: "crouton.testnet",
     website: "https://crouton.digital",
     bountyTrack: "Unlimited RPC Sponsor",
     plans: [
@@ -72,7 +70,7 @@ export const SPONSOR_MERCHANTS: SponsorMerchant[] = [
         cadence: "monthly",
         description: "Optimized for automated bot pipelines and fast indexing feeds.",
         features: ["Direct P2P peering", "Sub-50ms latency", "Dual endpoint failover"],
-        sampleCredential: "https://monad.crouton.digital/ws/v2/live_feed_88291a",
+        sampleCredential: "https://near.crouton.digital/ws/v2/live_feed_88291a",
       },
     ],
   },
@@ -82,7 +80,7 @@ export const SPONSOR_MERCHANTS: SponsorMerchant[] = [
     tagline: "Smart Contract Automated Security Audits & Scans",
     category: "security",
     categoryLabel: "Security & Auditing",
-    merchantAddress: "0x3030303030303030303030303030303030303033",
+    merchantAddress: "ack3.testnet",
     website: "https://ack3.ai",
     bountyTrack: "$15,000 Security Scan Sponsor",
     plans: [
@@ -102,17 +100,17 @@ export const SPONSOR_MERCHANTS: SponsorMerchant[] = [
         cadence: "per_scan",
         description: "Deep static analysis, fuzzing, and compliance policy verification.",
         features: ["Full repository audit", "Automated bug bounty scanner", "Security Badge"],
-        sampleCredential: "ACK3-CERT-SEC-MONAD-77401-VERIFIED",
+        sampleCredential: "ACK3-CERT-SEC-NEAR-77401-VERIFIED",
       },
     ],
   },
   {
     id: "envio",
     name: "Envio",
-    tagline: "HyperSync Real-Time Indexing for Monad",
+    tagline: "HyperSync Real-Time Indexing for NEAR",
     category: "indexing",
     categoryLabel: "Data & Indexing",
-    merchantAddress: "0x4040404040404040404040404040404040404044",
+    merchantAddress: "envio.testnet",
     website: "https://envio.dev",
     bountyTrack: "Best Use of Envio ($1,000 + $5,000 Cloud Hosting)",
     plans: [
@@ -121,9 +119,9 @@ export const SPONSOR_MERCHANTS: SponsorMerchant[] = [
         name: "HyperSync Starter Cluster",
         priceAusd: 60,
         cadence: "monthly",
-        description: "Index Monad transactions up to 1000x faster with GraphQL endpoint.",
+        description: "Index NEAR transactions up to 1000x faster with GraphQL endpoint.",
         features: ["GraphQL API endpoint", "Custom event schemas", "Auto-reorg handling"],
-        sampleCredential: "https://indexer.envio.dev/allocard_hypersync_monad_v1/graphql",
+        sampleCredential: "https://indexer.envio.dev/allocard_hypersync_near_v1/graphql",
       },
     ],
   },

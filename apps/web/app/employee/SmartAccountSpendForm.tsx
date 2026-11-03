@@ -7,7 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertTriangle, CheckCircle2, Loader2, Send, ExternalLink } from "lucide-react";
-import { parseEther } from "viem";
+import { parseTokenAmount } from "@allocard/delegation-sdk";
+import { isNativeNearAccount } from "@/lib/wallet";
 import { getTxExplorerUrl, TOKEN_SYMBOL } from "@/lib/chain";
 import { toast } from "sonner";
 
@@ -26,39 +27,40 @@ export function SmartAccountSpendForm({ availableBalanceEth, onExecute }: Props)
 
   const handleExecute = async () => {
     const trimmedToAddress = toAddress.trim();
-    
+
     if (!trimmedToAddress || !amountEth) {
       setError("Please fill in all fields.");
       return;
     }
-    
-    if (!/^0x[a-fA-F0-9]{40}$/.test(trimmedToAddress)) {
+
+    if (!isNativeNearAccount(trimmedToAddress)) {
       setError("Invalid recipient address.");
       return;
     }
-    
+
     let parsedAmount;
     try {
-      parsedAmount = parseEther(amountEth);
+      parsedAmount = BigInt(parseTokenAmount(amountEth, 24));
     } catch {
       setError(`Invalid ${TOKEN_SYMBOL} amount`);
       return;
     }
 
     try {
-      const available = parseEther(availableBalanceEth);
-      if (parsedAmount > available) {
+      const available = BigInt(parseTokenAmount(availableBalanceEth, 24));
+      if (parsedAmount <= BigInt(0) || parsedAmount > available) {
         setError("Insufficient smart account balance.");
         return;
       }
     } catch {
-      // If availableBalanceEth fails to parse, we'll just let it pass or show an error
+      setError("Available spending capacity could not be verified");
+      return;
     }
 
     setError(null);
     setIsExecuting(true);
     try {
-      const hash = await onExecute({ toAddress, amountEth });
+      const hash = await onExecute({ toAddress: trimmedToAddress, amountEth });
       setTxHash(hash);
       setStep("done");
       toast.success("Transaction Sent Successfully", {
@@ -85,7 +87,7 @@ export function SmartAccountSpendForm({ availableBalanceEth, onExecute }: Props)
       <CardHeader>
         <CardTitle>Direct Smart Account Spend</CardTitle>
         <CardDescription>
-          Send funds directly from your smart account. This action is unrestricted and executes entirely on-chain.
+          Pay from the company treasury within your on-chain spending permissions. A payment is successful only after settlement is confirmed.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -102,7 +104,7 @@ export function SmartAccountSpendForm({ availableBalanceEth, onExecute }: Props)
               <Label htmlFor="sa-to">To Address</Label>
               <Input
                 id="sa-to"
-                placeholder="0x..."
+                placeholder="vendor.testnet"
                 value={toAddress}
                 onChange={(e) => setToAddress(e.target.value)}
                 className="font-mono text-sm"
@@ -141,7 +143,7 @@ export function SmartAccountSpendForm({ availableBalanceEth, onExecute }: Props)
               <h2 className="text-xl font-semibold text-foreground">Transaction Sent</h2>
               <p className="text-sm text-muted-foreground">Your transaction has been successfully executed.</p>
             </div>
-            
+
             <Alert className="text-left border-border">
               <CheckCircle2 className="h-4 w-4 text-foreground" />
               <AlertTitle>Transaction Hash</AlertTitle>

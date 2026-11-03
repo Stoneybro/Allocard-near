@@ -140,8 +140,8 @@ export async function POST(req: NextRequest) {
       amountAusd,
       description,
       settledAt: new Date().toISOString(),
-      network: "Monad Testnet",
-      token: "Agora AUSD",
+      network: "NEAR Testnet",
+      token: "NEAR",
     };
 
     await db.insert(agentBookings).values({
@@ -152,8 +152,8 @@ export async function POST(req: NextRequest) {
       bookingDetails,
       amountEth: amountAusd,
       txHash: txHash || "pending",
-      venicePrompt: `Remittance to ${contractorName}: ${originalAmount} ${originalCurrency} -> ${amountAusd} AUSD`,
-      veniceReasoning: `Approved under Agora Cross-Border Remittance Policy. Instant settlement on Monad.`,
+      venicePrompt: `Remittance to ${contractorName}: ${originalAmount} ${originalCurrency} -> ${amountAusd} NEAR`,
+      veniceReasoning: `Approved under Agora Cross-Border Remittance Policy. Instant settlement on NEAR.`,
       veniceConfidence: 1.0,
     });
 

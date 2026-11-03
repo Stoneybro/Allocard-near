@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -8,8 +8,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { parseUserOpError } from "@/lib/error-parser";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertTriangle, CheckCircle2, Loader2, UploadCloud, ShieldAlert, ShieldCheck } from "lucide-react";
-import { isValidWalletAddress, formatWalletAddress } from "@/lib/wallet";
+import { isNativeNearAccount, formatWalletAddress } from "@/lib/wallet";
 import { getTxExplorerUrl, TOKEN_SYMBOL } from "@/lib/chain";
+import { formatTokenAmount, parseTokenAmount } from "@allocard/delegation-sdk";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -24,12 +25,13 @@ import {
 
 type Props = {
   delegationId: string;
+  pendingStorageKey?: string;
   remainingBalanceEth: string;
   onExecute: (details: { toAddress: string; amountEth: string; purpose?: string; isFlagged?: boolean }) => Promise<string>;
   onVerifyReceipt: (txHash: string, imageBase64: string) => Promise<any>;
 };
 
-export function DirectSpendForm({ delegationId, remainingBalanceEth, onExecute, onVerifyReceipt }: Props) {
+export function DirectSpendForm({ delegationId, pendingStorageKey, remainingBalanceEth, onExecute, onVerifyReceipt }: Props) {
   const [step, setStep] = useState<"input" | "receipt" | "done">("input");
   
   const [toAddress, setToAddress] = useState("");
@@ -44,6 +46,19 @@ export function DirectSpendForm({ delegationId, remainingBalanceEth, onExecute, 
   const [isSubmittingReceipt, setIsSubmittingReceipt] = useState(false);
   const [verificationResult, setVerificationResult] = useState<any>(null);
 
+  const [hasPendingRequest, setHasPendingRequest] = useState(false);
+  useEffect(() => {
+    if (!pendingStorageKey) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem(pendingStorageKey) || "null");
+      if (saved?.request?.action) {
+        setToAddress(saved.request.action.receiver);
+        setAmountEth(formatTokenAmount(saved.request.action.amount, 24));
+        setHasPendingRequest(true);
+      }
+    } catch { setError("Saved payment data could not be read. Check your account's execution history before starting another payment."); }
+  }, [pendingStorageKey]);
+
   const validateInputs = (): boolean => {
     const trimmedTo = toAddress.trim();
     if (!trimmedTo || !amountEth) {
@@ -51,20 +66,17 @@ export function DirectSpendForm({ delegationId, remainingBalanceEth, onExecute, 
       return false;
     }
 
-    if (!isValidWalletAddress(trimmedTo)) {
+    if (!isNativeNearAccount(trimmedTo)) {
       setError("Please enter a valid NEAR recipient account (e.g. vendor.testnet).");
       return false;
     }
 
-    const parsed = parseFloat(amountEth);
-    if (isNaN(parsed) || parsed <= 0) {
-      setError(`Amount must be greater than 0 ${TOKEN_SYMBOL}.`);
-      return false;
-    }
-
-    const remaining = parseFloat(remainingBalanceEth);
-    if (!isNaN(remaining) && parsed > remaining) {
-      setError(`Amount exceeds your remaining delegated balance (${remainingBalanceEth} ${TOKEN_SYMBOL}).`);
+    try {
+      const amount = BigInt(parseTokenAmount(amountEth.trim(), 24));
+      const remaining = BigInt(parseTokenAmount(remainingBalanceEth, 24));
+      if (amount <= BigInt(0) || (!hasPendingRequest && amount > remaining)) throw new Error(`Enter an amount within your available ${remainingBalanceEth} NEAR`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Invalid amount");
       return false;
     }
 
@@ -87,6 +99,7 @@ export function DirectSpendForm({ delegationId, remainingBalanceEth, onExecute, 
         amountEth: amountEth.trim(),
       });
       setTxHash(hash);
+      setHasPendingRequest(false);
       setStep("receipt");
       setIsConfirmOpen(false);
       toast.success("Expense Executed Successfully", {
@@ -97,6 +110,7 @@ export function DirectSpendForm({ delegationId, remainingBalanceEth, onExecute, 
         },
       });
     } catch (err: any) {
+      if (pendingStorageKey) setHasPendingRequest(Boolean(localStorage.getItem(pendingStorageKey)));
       console.error(err);
       const parsed = parseUserOpError(err);
       setError(parsed);
@@ -170,6 +184,7 @@ export function DirectSpendForm({ delegationId, remainingBalanceEth, onExecute, 
               </Alert>
             )}
 
+            {hasPendingRequest && <p role="status" className="text-xs text-muted-foreground">A saved payment request needs reconciliation. Retry its original recipient and amount; the same request cannot send a second payment.</p>}
             {/* Onchain Caveat Enforcement & Compliance Note */}
             <Alert className="border-border/80 bg-muted/40 py-2.5">
               <ShieldCheck className="h-4 w-4 text-foreground" />
@@ -200,8 +215,8 @@ export function DirectSpendForm({ delegationId, remainingBalanceEth, onExecute, 
               </div>
               <Input
                 id="ds-amount"
-                type="number"
-                step="0.0001"
+                type="text"
+                inputMode="decimal"
                 placeholder="0.00"
                 value={amountEth}
                 onChange={(e) => setAmountEth(e.target.value)}
@@ -213,7 +228,7 @@ export function DirectSpendForm({ delegationId, remainingBalanceEth, onExecute, 
             <AlertDialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
               <Button
                 onClick={handleStartExecute}
-                disabled={!toAddress || !amountEth || isExecuting}
+                disabled={(!delegationId && !hasPendingRequest) || !toAddress || !amountEth || isExecuting}
                 className="w-full mt-2 text-xs"
               >
                 {isExecuting ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
@@ -343,7 +358,7 @@ export function DirectSpendForm({ delegationId, remainingBalanceEth, onExecute, 
             </div>
             <div className="space-y-1">
               <h2 className="text-sm font-semibold text-foreground">Spend Logged Successfully</h2>
-              <p className="text-xs text-muted-foreground">The transaction has been broadcast and added to your company's ledger.</p>
+              <p className="text-xs text-muted-foreground">The payment has settled on-chain and been added to your company’s ledger.</p>
             </div>
             <Button
               variant="outline"

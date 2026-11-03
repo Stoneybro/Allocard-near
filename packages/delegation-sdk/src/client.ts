@@ -227,12 +227,35 @@ export class AllocardTreasuryClient {
     });
   }
 
+  async topUpStorage(amountYocto: string): Promise<void> {
+    this.assertSigner();
+    await this.caller.functionCall!({
+      contractId: this.contractId,
+      methodName: "top_up_storage",
+      args: {},
+      gas: DEFAULT_MUTATION_GAS,
+      attachedDeposit: amountYocto,
+    });
+  }
+
+  async topUpOperating(amountYocto: string): Promise<void> {
+    this.assertSigner();
+    await this.caller.functionCall!({
+      contractId: this.contractId,
+      methodName: "top_up_operating",
+      args: {},
+      gas: DEFAULT_MUTATION_GAS,
+      attachedDeposit: amountYocto,
+    });
+  }
+
   /**
    * Dispatches execution. Returns executionId and a `waitForOutcome` function
    * that polls until terminal status (Succeeded or Failed) is reached.
    */
   async execute(request: ExecuteRequest): Promise<{
     executionId: string;
+    transactionHash?: string;
     waitForOutcome: (timeoutMs?: number, intervalMs?: number) => Promise<Execution>;
   }> {
     this.assertSigner();
@@ -260,12 +283,14 @@ export class AllocardTreasuryClient {
 
     return {
       executionId,
+      transactionHash: res?.transaction?.hash || res?.transaction_outcome?.id,
       waitForOutcome,
     };
   }
 
   async ownerWithdraw(request: OwnerWithdrawRequest): Promise<{
     executionId: string;
+    transactionHash?: string;
     waitForOutcome: (timeoutMs?: number, intervalMs?: number) => Promise<Execution>;
   }> {
     this.assertSigner();
@@ -293,6 +318,7 @@ export class AllocardTreasuryClient {
 
     return {
       executionId,
+      transactionHash: res?.transaction?.hash || res?.transaction_outcome?.id,
       waitForOutcome,
     };
   }

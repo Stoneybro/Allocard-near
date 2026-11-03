@@ -138,7 +138,7 @@ export async function POST(req: Request) {
         data: encodeFunctionData({
           abi: ERC20_ABI,
           functionName: "transfer",
-          args: [merchant.merchantAddress, planUnits],
+          args: [merchant.merchantAddress as `0x${string}`, planUnits],
         }),
         permissionContext,
         delegationManager: env.DelegationManager as Hex,
@@ -160,9 +160,9 @@ export async function POST(req: Request) {
     const randomSuffix = crypto.randomBytes(4).toString("hex");
     let provisionedCredential = plan.sampleCredential;
     if (merchant.id === "chainstack") {
-      provisionedCredential = `https://monad-testnet.chainstack.com/rpc/v1/allocard_live_${randomSuffix}`;
+      provisionedCredential = `https://near-testnet.chainstack.com/rpc/v1/allocard_live_${randomSuffix}`;
     } else if (merchant.id === "crouton") {
-      provisionedCredential = `https://monad.crouton.digital/ws/v2/live_feed_${randomSuffix}`;
+      provisionedCredential = `https://near.crouton.digital/ws/v2/live_feed_${randomSuffix}`;
     } else if (merchant.id === "ack3") {
       provisionedCredential = `ACK3-AUDIT-JOB-2026-${randomSuffix.toUpperCase()}-VERIFIED`;
     } else if (merchant.id === "envio") {
@@ -179,8 +179,8 @@ export async function POST(req: Request) {
       priceAusd: plan.priceAusd,
       notes,
       provisionedCredential,
-      network: "Monad Testnet",
-      token: "Agora AUSD",
+      network: "NEAR Testnet",
+      token: "NEAR",
       timestamp: new Date().toISOString(),
     };
 

@@ -72,7 +72,7 @@ export function SectionCards({
                 ) : (
                   <PlusCircleIcon className="h-3 w-3" />
                 )}
-                <span>+10k {TOKEN_SYMBOL}</span>
+                <span>Top Up {TOKEN_SYMBOL}</span>
               </Button>
             ) : (
               <Badge variant="outline" className="px-1 py-0">

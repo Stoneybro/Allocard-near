@@ -34,8 +34,8 @@ export function parseUserOpError(err: any): string {
   if (lowerMsg.includes("aa23") || lowerMsg.includes("execution reverted") || lowerMsg.includes("policy enforcer")) {
     return "Card declined: The transaction was rejected by on-chain company expense policy.";
   }
-  if (lowerMsg.includes("chainid mismatch")) {
-    return "Network configuration mismatch: Bundler/Paymaster RPC endpoint does not match Monad Testnet (10143).";
+  if (lowerMsg.includes("chainid mismatch") || lowerMsg.includes("network mismatch")) {
+    return "Network configuration mismatch: Active RPC endpoint does not match NEAR Testnet.";
   }
 
   // Clean fallback

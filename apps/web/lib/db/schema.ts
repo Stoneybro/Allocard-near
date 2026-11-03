@@ -58,6 +58,7 @@ export const users = pgTable(
     privyUserId: text("privy_user_id"),
     verifiedEmail: text("verified_email"),
     embeddedWalletAddress: text("embedded_wallet_address").notNull(),
+    nearAccountId: text("near_account_id"),
     smartAccountAddress: text("smart_account_address"),
     role: userRoleEnum("role").notNull(),
     companyId: uuid("company_id").references((): AnyPgColumn => companies.id, {
@@ -72,6 +73,7 @@ export const users = pgTable(
       table.embeddedWalletAddress,
     ),
     uniqueIndex("users_privy_user_id_unique").on(table.privyUserId),
+    uniqueIndex("users_near_account_id_unique").on(table.nearAccountId),
     index("users_company_id_idx").on(table.companyId),
     index("users_role_idx").on(table.role),
   ],
@@ -324,12 +326,21 @@ export const manualTransactions = pgTable(
     purpose: text("purpose").notNull(),
     isFlagged: boolean("is_flagged").notNull().default(false),
     txHash: text("tx_hash"),
+    treasuryContractId: text("treasury_contract_id"),
+    executionId: text("execution_id"),
     receiptSummary: text("receipt_summary"), // AI summary of the uploaded receipt
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    uniqueIndex("manual_transactions_treasury_execution_unique").on(table.treasuryContractId, table.executionId),
     index("manual_transactions_delegation_id_idx").on(table.delegationId),
     index("manual_transactions_employee_id_idx").on(table.employeeId),
     index("manual_transactions_company_id_idx").on(table.companyId),
   ]
 );
+
+/** Single-use NEP-413 login challenges; expire old rows during maintenance. */
+export const consumedLoginNonces = pgTable("consumed_login_nonces", {
+  nonceHash: text("nonce_hash").primaryKey(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, table => [index("consumed_login_nonces_expiry_idx").on(table.expiresAt)]);

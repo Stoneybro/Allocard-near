@@ -27,6 +27,7 @@ export async function requireSessionUser() {
     .from(users)
     .where(
       or(
+        eq(users.nearAccountId, identity.walletAddress.toLowerCase()),
         eq(users.embeddedWalletAddress, identity.walletAddress.toLowerCase()),
         eq(users.privyUserId, identity.providerUserId)
       )
@@ -34,10 +35,10 @@ export async function requireSessionUser() {
     .limit(1);
 
   if (!user) throw new Error("Forbidden: create an Allocard profile before continuing.");
-  if (user.embeddedWalletAddress.toLowerCase() !== identity.walletAddress.toLowerCase()) {
+  if ((user.nearAccountId ?? user.embeddedWalletAddress).toLowerCase() !== identity.walletAddress.toLowerCase()) {
     throw new Error("Forbidden: session wallet does not match the Allocard profile.");
   }
-  return user;
+  return { ...user, embeddedWalletAddress: user.nearAccountId ?? user.embeddedWalletAddress };
 }
 
 /** Ensure the signed-in user has an active employee workspace in the company. */
