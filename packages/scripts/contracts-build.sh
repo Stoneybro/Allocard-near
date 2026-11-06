@@ -12,9 +12,14 @@ fi
 
 echo "Building Allocard treasury contract to Wasm..."
 cd "${CONTRACTS_DIR}"
-cargo build --target wasm32-unknown-unknown --release -p allocard-treasury
+cargo build --target wasm32-unknown-unknown --release -p allocard-treasury -p allocard-factory
 
 mkdir -p "${WORKSPACE_ROOT}/packages/contracts/res"
 cp "${CONTRACTS_DIR}/target/wasm32-unknown-unknown/release/allocard_treasury.wasm" "${WORKSPACE_ROOT}/packages/contracts/res/"
 echo "Wasm artifact created at packages/contracts/res/allocard_treasury.wasm"
 
+
+cp "${CONTRACTS_DIR}/target/wasm32-unknown-unknown/release/allocard_factory.wasm" "${WORKSPACE_ROOT}/packages/contracts/res/"
+
+cargo build --target wasm32-unknown-unknown --release -p allocard-shared
+cp "${CONTRACTS_DIR}/target/wasm32-unknown-unknown/release/allocard_shared.wasm" "${WORKSPACE_ROOT}/packages/contracts/res/"

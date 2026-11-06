@@ -3,7 +3,7 @@ import { assertSettledPayment, assertEmployeePermission, verifyPaymentTransactio
 import type { Execution, Permission } from "@allocard/delegation-sdk";
 const expected = { actor: "employee.testnet", permissionId: "7", receiver: "vendor.testnet", amount: "1000000000000000000000000" };
 const record = { id: "1", actor: expected.actor, authority_mode: "Delegated", permission_id: "7", status: "Succeeded", request_id: "a".repeat(64), action: { type: "Transfer", asset: { type: "NativeNear" }, receiver: expected.receiver, amount: expected.amount } } as Execution;
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 describe("authoritative payment verification", () => {
   it("requires exact actor, permission, recipient, amount, asset and settlement", () => {
     expect(() => assertSettledPayment(record, expected)).not.toThrow();
@@ -21,6 +21,17 @@ describe("authoritative payment verification", () => {
     await expect(verifyPaymentTransaction(hash, expected.actor, "treasury.testnet", record.request_id)).resolves.toBeUndefined();
     await expect(verifyPaymentTransaction(hash, "other.testnet", "treasury.testnet", record.request_id)).rejects.toThrow();
     await expect(verifyPaymentTransaction(hash, expected.actor, "treasury.testnet", "b".repeat(64))).rejects.toThrow();
+  });
+  it("looks up relayed transactions under the outer signer and verifies the inner employee", async () => {
+    vi.stubEnv("NEAR_RELAYER_ACCOUNT_ID", "sponsor.testnet");
+    const hash = "A".repeat(44);
+    const transaction = { hash, signer_id: "sponsor.testnet", receiver_id: expected.actor, actions: [{ Delegate: { delegate_action: {
+      sender_id: expected.actor, receiver_id: "treasury.testnet", actions: [{ FunctionCall: { method_name: "execute", args: Buffer.from(JSON.stringify({ request: { request_id: record.request_id } })).toString("base64") } }],
+    } } }] };
+    const rpc = vi.fn().mockRejectedValueOnce(new Error("wrong shard")).mockResolvedValueOnce(Response.json({ result: { status: { SuccessValue: "IjEi" }, transaction } }));
+    vi.stubGlobal("fetch", rpc);
+    await expect(verifyPaymentTransaction(hash, expected.actor, "treasury.testnet", record.request_id)).resolves.toBeUndefined();
+    expect(JSON.parse(rpc.mock.calls[1][1].body).params.sender_account_id).toBe("sponsor.testnet");
   });
   it("requires a root permission from this company's owner in the current epoch", () => {
     const permission = { delegate: expected.actor, issuer: "owner.testnet", parent_id: null, revoked: false, epoch: "2" } as Permission;

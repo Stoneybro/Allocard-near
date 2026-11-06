@@ -9,12 +9,13 @@ import {
   ExternalLink,
   BanIcon,
   ShieldAlertIcon,
+  LayoutGridIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { CHAIN_ID, TOKEN_SYMBOL, getAddressExplorerUrl, getTxExplorerUrl } from "@/lib/chain";
 import { isValidWalletAddress, formatWalletAddress } from "@/lib/wallet";
-import type { PermissionSpec } from "@allocard/delegation-sdk";
+import { parseTreasuryReference, type PermissionSpec } from "@allocard/delegation-sdk";
 import {
   createNearWalletCaller,
   getUnifiedNearCaller,
@@ -48,10 +49,10 @@ import {
 } from "@/components/auth-state";
 import { useAuth } from "@/components/AuthProvider";
 import { DashboardFlowCanvas } from "@/components/dashboard-flow-canvas";
+import { DelegationCardsView } from "@/components/delegation-cards-view";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { DashboardShell } from "@/components/dashboard-shell";
-import { ReimbursementsCard } from "@/components/reimbursements-card";
 import { isReimbursementAgent } from "@/lib/reimbursements/shared";
-import { AgoraCrossBorderCard } from "@/components/agora-card";
 import { isAgoraAgent } from "@/lib/agora/shared";
 import { SectionCards } from "@/components/section-cards";
 import { SmartAccountActivationButton } from "@/components/smart-account-activation-button";
@@ -400,10 +401,10 @@ export function EmployerClient({
     ? formatWalletAddress(company.smartAccountAddress)
     : "Smart account pending";
 
+  const isMobile = useIsMobile();
+  const [viewMode, setViewMode] = useState<"cards" | "canvas">("cards");
   const [ethBalance, setEthBalance] = useState<string | undefined>(undefined);
   const [isToppingUp, setIsToppingUp] = useState(false);
-  const [isRefreshingReimbursements, setIsRefreshingReimbursements] = useState(false);
-  const [isRefreshingAgora, setIsRefreshingAgora] = useState(false);
 
   const fetchBalance = useCallback(async () => {
     if (!company?.smartAccountAddress) return;
@@ -438,10 +439,12 @@ export function EmployerClient({
           if (auth.selector) await fundTreasury(auth.selector, auth.accountId, company.smartAccountAddress);
           else if (auth.sendActions) {
             const { functionCall } = await import("near-api-js/lib/transaction");
-            await auth.sendActions({ receiverId: company.smartAccountAddress, actions: [
-              functionCall("top_up_storage", {}, BigInt("40000000000000"), BigInt(parseTokenAmount("0.5", 24))),
-              functionCall("top_up_operating", {}, BigInt("40000000000000"), BigInt(parseTokenAmount("0.2", 24))),
-              functionCall("deposit_native", {}, BigInt("40000000000000"), BigInt(parseTokenAmount("1", 24))),
+            const scope = parseTreasuryReference(company.smartAccountAddress);
+            const args = scope.companyId ? { company_id: scope.companyId } : {};
+            await auth.sendActions({ receiverId: scope.contractId, actions: [
+              functionCall("top_up_storage", args, BigInt("40000000000000"), BigInt(parseTokenAmount("0.5", 24))),
+              functionCall("top_up_operating", args, BigInt("40000000000000"), BigInt(parseTokenAmount("0.2", 24))),
+              functionCall("deposit_native", args, BigInt("40000000000000"), BigInt(parseTokenAmount("1", 24))),
             ] });
           } else throw new Error("A signing wallet is required");
           toast.success("Treasury Pools Funded", {
@@ -544,65 +547,9 @@ export function EmployerClient({
     agent => agent.id === selectedDelegation.delegateeId && isReimbursementAgent(agent),
   ));
 
-  const handleOpenReimbursementBudget = () => {
-    if (!currentAuthAddress || !dashboardState) return;
-    const current = dashboardState.delegations.find(d => d.id === dashboardState.reimbursement.delegationId);
-    if (current && current.status !== "revoked") {
-      handleConfigureDelegation(current.id);
-      return;
-    }
-    startTransition(async () => {
-      try {
-        const { delegation, reimbursement } = await prepareReimbursementBudget(currentAuthAddress);
-        setDashboardState(prev => {
-          if (!prev) return prev;
-          const other = prev.delegations.filter(d => d.id !== delegation.id);
-          return {
-            ...prev,
-            delegations: [...other, delegation],
-            reimbursement,
-          };
-        });
-        setSelectedDelegationId(delegation.id);
-        setCaveatForm(formFromDelegation(delegation));
-        setFormErrors({});
-      } catch (caught) {
-        toast.error(caught instanceof Error ? caught.message : "Could not prepare reimbursement setup");
-      }
-    });
-  };
-
   const isAgoraBudget = Boolean(selectedDelegation && dashboardState?.agents.some(
     agent => agent.id === selectedDelegation.delegateeId && isAgoraAgent(agent),
   ));
-
-  const handleOpenAgoraBudget = () => {
-    if (!currentAuthAddress || !dashboardState) return;
-    const current = dashboardState.delegations.find(d => d.id === dashboardState.agora?.delegationId);
-    if (current && current.status !== "revoked") {
-      handleConfigureDelegation(current.id);
-      return;
-    }
-    startTransition(async () => {
-      try {
-        const { delegation, agora } = await prepareAgoraRemittanceBudget(currentAuthAddress);
-        setDashboardState(prev => {
-          if (!prev) return prev;
-          const other = prev.delegations.filter(d => d.id !== delegation.id);
-          return {
-            ...prev,
-            delegations: [...other, delegation],
-            agora,
-          };
-        });
-        setSelectedDelegationId(delegation.id);
-        setCaveatForm(formFromDelegation(delegation));
-        setFormErrors({});
-      } catch (caught) {
-        toast.error(caught instanceof Error ? caught.message : "Could not prepare Agora remittance setup");
-      }
-    });
-  };
 
   const handleDropEmployee = useCallback(
     (input: {
@@ -617,6 +564,40 @@ export function EmployerClient({
         });
         toast.info("Employee Added to Canvas", {
           description: "Click Configure to set spending rules and caveats.",
+        });
+        return nextState;
+      }),
+    [runDashboardMutation, currentAuthAddress],
+  );
+
+  const handleAddEmployee = useCallback(
+    (employeeId: string) =>
+      runDashboardMutation(async () => {
+        const nextState = await createEmployeeDelegation({
+          walletAddress: currentAuthAddress as string,
+          employeeId,
+          canvasPositionX: 420,
+          canvasPositionY: 220,
+        });
+        toast.info("Employee Delegation Created", {
+          description: "Click Configure to set spending rules and caveats.",
+        });
+        return nextState;
+      }),
+    [runDashboardMutation, currentAuthAddress],
+  );
+
+  const handleAddAgent = useCallback(
+    (agentId: string) =>
+      runDashboardMutation(async () => {
+        const nextState = await createAgentDelegation({
+          walletAddress: currentAuthAddress as string,
+          agentId,
+          canvasPositionX: 420,
+          canvasPositionY: 220,
+        });
+        toast.info("AI Agent Added", {
+          description: "Click Configure to set spending rules and caveats for this agent.",
         });
         return nextState;
       }),
@@ -1020,24 +1001,17 @@ export function EmployerClient({
       title="Company dashboard"
     >
       <div className="flex min-h-full flex-col gap-4">
-        {/* Smart account activation banner */}
-        {(company && (
-          <div className="flex items-center justify-between rounded-lg border border-border bg-muted/50 px-4 py-3">
-            <div>
-              <p className="text-sm font-medium text-foreground">
-                Company smart account not yet activated
-              </p>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Activate the company smart account to start delegating spending authority to employees and agents.
-              </p>
-            </div>
+        {/* Smart account activation panel */}
+        {company && !company.smartAccountAddress && (
+          <div className="flex items-center justify-center rounded-lg border border-border bg-muted/40 p-4">
             <SmartAccountActivationButton
+              companyKey={company.id}
               walletAddress={currentAuthAddress as `0x${string}`}
               existingSmartAccountAddress={company.smartAccountAddress}
               onActivated={(result) => handleSmartAccountActivated(result.smartAccountAddress)}
             />
           </div>
-        ))}
+        )}
 
         <SectionCards
           employeeCount={dashboardState.summary.employeeCount}
@@ -1050,95 +1024,107 @@ export function EmployerClient({
           isToppingUp={isToppingUp}
         />
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <ReimbursementsCard
-            role="employer"
-            program={dashboardState.reimbursement}
-            accountReady={Boolean(company.smartAccountAddress)}
-            busy={isRefreshingReimbursements}
-            onOpen={handleOpenReimbursementBudget}
-            onRefresh={async () => {
-              setIsRefreshingReimbursements(true);
-              try {
-                updateDashboard(await getCompanyDashboardState(currentAuthAddress as string));
-              } catch (caught) {
-                toast.error(caught instanceof Error ? caught.message : "Could not refresh reimbursements");
-              } finally {
-                setIsRefreshingReimbursements(false);
-              }
-            }}
-          />
-          <AgoraCrossBorderCard
-            role="employer"
-            program={dashboardState.agora}
-            accountReady={Boolean(company.smartAccountAddress)}
-            busy={isRefreshingAgora}
-            onOpen={handleOpenAgoraBudget}
-            onRefresh={async () => {
-              setIsRefreshingAgora(true);
-              try {
-                updateDashboard(await getCompanyDashboardState(currentAuthAddress as string));
-              } catch (caught) {
-                toast.error(caught instanceof Error ? caught.message : "Could not refresh remittances");
-              } finally {
-                setIsRefreshingAgora(false);
-              }
-            }}
-          />
-        </div>
-
         <Tabs defaultValue="canvas" className="w-full">
           <TabsList className="mb-4">
-            <TabsTrigger value="canvas">Delegation Canvas</TabsTrigger>
+            <TabsTrigger value="canvas">Delegations</TabsTrigger>
             <TabsTrigger value="activity">Activity Log</TabsTrigger>
             <TabsTrigger value="settings">Company Policy</TabsTrigger>
           </TabsList>
 
           <TabsContent value="canvas" className="mt-0">
-            <DashboardFlowCanvas
-              company={canvasCompany ?? company}
-              headerAction={
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    startRefreshTransition(async () => {
-                      updateDashboard(await getCompanyDashboardState(currentAuthAddress as string));
+            {!isMobile && viewMode === "canvas" ? (
+              <DashboardFlowCanvas
+                company={canvasCompany ?? company}
+                headerAction={
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1.5 text-xs"
+                      onClick={() => setViewMode("cards")}
+                    >
+                      <LayoutGridIcon className="size-3.5" />
+                      Hierarchy View
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs"
+                      onClick={() => {
+                        startRefreshTransition(async () => {
+                          updateDashboard(await getCompanyDashboardState(currentAuthAddress as string));
+                        });
+                      }}
+                      disabled={isRefreshing}
+                    >
+                      {isRefreshing ? "Refreshing..." : "Refresh"}
+                    </Button>
+                  </div>
+                }
+                employees={canvasEmployees}
+                agents={dashboardState.agents.filter(agent => !isReimbursementAgent(agent) && !isAgoraAgent(agent)).map((agent) => ({
+                  id: agent.id,
+                  name: agent.name,
+                  smartAccountAddress: agent.smartAccountAddress,
+                }))}
+                delegations={canvasDelegations}
+                onConfigureDelegation={handleConfigureDelegation}
+                onDropEmployee={handleDropEmployee}
+                onDropAgent={({ agentId, canvasPositionX, canvasPositionY }) =>
+                  runDashboardMutation(async () => {
+                    const nextState = await createAgentDelegation({
+                      walletAddress: currentAuthAddress as string,
+                      agentId,
+                      canvasPositionX,
+                      canvasPositionY,
                     });
-                  }}
-                  disabled={isRefreshing}
-                >
-                  {isRefreshing ? "Refreshing..." : "Refresh"}
-                </Button>
-              }
-              employees={canvasEmployees}
-              agents={dashboardState.agents.filter(agent => !isReimbursementAgent(agent) && !isAgoraAgent(agent)).map((agent) => ({
-                id: agent.id,
-                name: agent.name,
-                smartAccountAddress: agent.smartAccountAddress,
-              }))}
-              delegations={canvasDelegations}
-              onConfigureDelegation={handleConfigureDelegation}
-              onDropEmployee={handleDropEmployee}
-              onDropAgent={({ agentId, canvasPositionX, canvasPositionY }) =>
-                runDashboardMutation(async () => {
-                  const nextState = await createAgentDelegation({
-                    walletAddress: currentAuthAddress as string,
-                    agentId,
-                    canvasPositionX,
-                    canvasPositionY,
-                  });
-                  toast.info("AI Agent Added to Canvas", {
-                    description: "Click Configure to set spending rules and caveats for this agent.",
-                  });
-                  return nextState;
-                })
-              }
-              onMoveDelegation={handleMoveDelegation}
-              onRevokeDelegation={handleRevokeDelegation}
-              onRemoveDelegation={handleRemoveDelegation}
-            />
+                    toast.info("AI Agent Added to Canvas", {
+                      description: "Click Configure to set spending rules and caveats for this agent.",
+                    });
+                    return nextState;
+                  })
+                }
+                onMoveDelegation={handleMoveDelegation}
+                onRevokeDelegation={handleRevokeDelegation}
+                onRemoveDelegation={handleRemoveDelegation}
+              />
+            ) : (
+              <DelegationCardsView
+                company={canvasCompany ?? company}
+                employees={canvasEmployees}
+                agents={dashboardState.agents.filter(agent => !isReimbursementAgent(agent) && !isAgoraAgent(agent)).map((agent) => ({
+                  id: agent.id,
+                  name: agent.name,
+                  smartAccountAddress: agent.smartAccountAddress,
+                }))}
+                delegations={canvasDelegations}
+                viewMode={viewMode}
+                onViewModeChange={setViewMode}
+                headerAction={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-xs"
+                    onClick={() => {
+                      startRefreshTransition(async () => {
+                        updateDashboard(await getCompanyDashboardState(currentAuthAddress as string));
+                      });
+                    }}
+                    disabled={isRefreshing}
+                  >
+                    {isRefreshing ? "Refreshing..." : "Refresh"}
+                  </Button>
+                }
+                onConfigureDelegation={handleConfigureDelegation}
+                onRevokeDelegation={handleRevokeDelegation}
+                onRemoveDelegation={handleRemoveDelegation}
+                onAddEmployee={handleAddEmployee}
+                onAddAgent={handleAddAgent}
+              />
+            )}
           </TabsContent>
 
           <TabsContent value="activity" className="mt-0">
@@ -1172,7 +1158,7 @@ export function EmployerClient({
       </div>
 
       <Drawer
-        direction="right"
+        direction={isMobile ? "bottom" : "right"}
         open={Boolean(selectedDelegation)}
         onOpenChange={(open) => {
           if (!open) {

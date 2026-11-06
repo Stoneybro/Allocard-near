@@ -95,9 +95,6 @@ export const companies = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (table) => [
-    uniqueIndex("companies_owner_id_unique").on(table.ownerId),
-  ],
 );
 
 export const companyMemberships = pgTable(
@@ -203,6 +200,7 @@ export const delegations = pgTable(
     delegateeType: delegateeTypeEnum("delegatee_type").notNull(),
     delegateeId: uuid("delegatee_id"),
     delegationHash: text("delegation_hash"),
+    treasuryReference: text("treasury_reference"),
     signedDelegation: jsonb("signed_delegation"),
     policyPrompt: text("policy_prompt"),
     status: delegationStatusEnum("status").notNull().default("pending_config"),
@@ -225,7 +223,7 @@ export const delegations = pgTable(
       table.delegateeId,
     ),
     index("delegations_status_idx").on(table.status),
-    uniqueIndex("delegations_delegation_hash_unique").on(table.delegationHash),
+    uniqueIndex("delegations_treasury_permission_unique").on(table.treasuryReference, table.delegationHash),
   ],
 );
 
@@ -344,3 +342,28 @@ export const consumedLoginNonces = pgTable("consumed_login_nonces", {
   nonceHash: text("nonce_hash").primaryKey(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
 }, table => [index("consumed_login_nonces_expiry_idx").on(table.expiresAt)]);
+
+/** Durable, conservative sponsorship quotas; failed attempts also consume a slot. */
+export const nearSponsorLimits = pgTable("near_sponsor_limits", {
+  bucket: text("bucket").primaryKey(),
+  used: numeric("used", { precision: 20, scale: 0 }).notNull(),
+});
+
+/** Persist the exact outer transaction before broadcast; retries only reconcile it. */
+export const nearSponsorJobs = pgTable("near_sponsor_jobs", {
+  id: text("id").primaryKey(),
+  actor: text("actor").notNull(),
+  intentHash: text("intent_hash").notNull(),
+  relayerId: text("relayer_id").notNull(),
+  state: text("state").notNull().default("reserved"),
+  transactionHash: text("transaction_hash"),
+  signedTransaction: text("signed_transaction"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, table => [index("near_sponsor_jobs_transaction_idx").on(table.transactionHash)]);
+
+/** A cross-process lease and monotonically allocated regular access-key nonce. */
+export const nearSponsorKeys = pgTable("near_sponsor_keys", {
+  key: text("key").primaryKey(),
+  nonce: numeric("nonce", { precision: 20, scale: 0 }).notNull(),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }).notNull(),
+});

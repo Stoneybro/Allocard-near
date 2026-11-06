@@ -6,9 +6,11 @@ import {
   type PermissionSpec,
   type ExecuteRequest,
   type AssetId,
+  parseTreasuryReference,
 } from "@allocard/delegation-sdk";
 import type { WalletSelector } from "@near-wallet-selector/core";
-import { DEFAULT_TREASURY_CONTRACT, NEAR_RPC_URL } from "./chain";
+import { DEFAULT_TREASURY_CONTRACT } from "./chain";
+import { nearBrowserRpc } from "./near-rpc-client";
 
 export { formatTokenAmount, parseTokenAmount };
 
@@ -27,28 +29,11 @@ export function createNearRpcCaller(accountId?: string): NearCaller {
   return {
     accountId,
     async viewFunction({ contractId, methodName, args }) {
-      const response = await fetch(NEAR_RPC_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: `allocard-view-${Date.now()}`,
-          method: "query",
-          params: {
-            request_type: "call_function",
-            finality: "final",
-            account_id: contractId,
-            method_name: methodName,
-            args_base64: btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(args || {})))),
-          },
-        }),
+      const result = await nearBrowserRpc("query", {
+        request_type: "call_function", finality: "final", account_id: contractId, method_name: methodName,
+        args_base64: btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(args || {})))),
       });
-
-      const data = await response.json();
-      if (data.error) {
-        throw new Error(data.error.message || data.error.cause?.info || "NEAR RPC view call failed");
-      }
-      const bytes = data.result?.result;
+      const bytes = result?.result;
       if (!bytes) return null;
       const str = new TextDecoder().decode(Uint8Array.from(bytes));
       return str ? JSON.parse(str) : null;
@@ -136,27 +121,9 @@ export async function getNearAccountBalance(accountId: string): Promise<{
   if (!accountId) return { totalNear: "0", availableNear: "0" };
 
   try {
-    const res = await fetch(NEAR_RPC_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: "view-account",
-        method: "query",
-        params: {
-          request_type: "view_account",
-          finality: "final",
-          account_id: accountId,
-        },
-      }),
-    });
-
-    const data = await res.json();
-    if (data.error || !data.result) {
-      return { totalNear: "0", availableNear: "0" };
-    }
-
-    const amountYocto: string = data.result.amount;
+    const result = await nearBrowserRpc("query", { request_type: "view_account", finality: "final", account_id: accountId });
+    if (!result) return { totalNear: "0", availableNear: "0" };
+    const amountYocto: string = result.amount;
     const formatted = formatTokenAmount(amountYocto, 24);
     // Trim display to at most 4 decimal places for UI cleanliness
     const parts = formatted.split(".");
@@ -171,12 +138,14 @@ export async function getNearAccountBalance(accountId: string): Promise<{
 
 /** All three pools are funded in one action batch; failure rolls the batch back. */
 export async function fundTreasury(selector: WalletSelector, signerId: string, contractId: string) {
+  const scope = parseTreasuryReference(contractId);
+  const args = scope.companyId ? { company_id: scope.companyId } : {};
   const { actionCreators } = await import("@near-wallet-selector/core");
   const wallet = await selector.wallet();
-  const outcome = await wallet.signAndSendTransaction({ signerId, receiverId: contractId, actions: [
-    actionCreators.functionCall("top_up_storage", {}, BigInt("40000000000000"), BigInt(parseTokenAmount("0.5", 24))),
-    actionCreators.functionCall("top_up_operating", {}, BigInt("40000000000000"), BigInt(parseTokenAmount("0.2", 24))),
-    actionCreators.functionCall("deposit_native", {}, BigInt("40000000000000"), BigInt(parseTokenAmount("1", 24))),
+  const outcome = await wallet.signAndSendTransaction({ signerId, receiverId: scope.contractId, actions: [
+    actionCreators.functionCall("top_up_storage", args, BigInt("40000000000000"), BigInt(parseTokenAmount("0.5", 24))),
+    actionCreators.functionCall("top_up_operating", args, BigInt("40000000000000"), BigInt(parseTokenAmount("0.2", 24))),
+    actionCreators.functionCall("deposit_native", args, BigInt("40000000000000"), BigInt(parseTokenAmount("1", 24))),
   ] });
   if (!outcome || typeof outcome.status !== "object" || !("SuccessValue" in outcome.status)) throw new Error("Funding was not confirmed. Check the transaction before retrying.");
   return confirmNearOutcome(outcome);
@@ -187,11 +156,9 @@ export async function confirmNearOutcome(outcome: any) {
   const txHash = outcome?.transaction?.hash || outcome?.transaction_outcome?.id;
   const signerId = outcome?.transaction?.signer_id;
   if (typeof txHash !== "string" || typeof signerId !== "string") throw new Error("Wallet did not return a transaction reference. Check its activity before retrying.");
-  const response = await fetch(NEAR_RPC_URL, { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: "confirm-transaction", method: "tx", params: { tx_hash: txHash, sender_account_id: signerId, wait_until: "FINAL" } }), signal: AbortSignal.timeout(45000) });
-  const payload = await response.json();
-  if (!response.ok || payload.error || !payload.result || typeof payload.result.status !== "object" || !("SuccessValue" in payload.result.status)) {
+  const result = await nearBrowserRpc("tx", { tx_hash: txHash, sender_account_id: signerId, wait_until: "FINAL" });
+  if (!result || typeof result.status !== "object" || !("SuccessValue" in result.status)) {
     throw new Error(`Transaction ${txHash} was not confirmed successful. Check it before retrying.`);
   }
-  return payload.result;
+  return result;
 }

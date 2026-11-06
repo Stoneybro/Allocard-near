@@ -1,3 +1,4 @@
+import { parseTreasuryReference, companyNetworkDomain } from "./company.js";
 import { computeExecuteHash, computeOwnerWithdrawHash } from "./canonical.js";
 import {
   Action,
@@ -53,6 +54,7 @@ export interface TreasuryClientOptions {
   networkDomain: string;
   caller: NearCaller;
   defaultGas?: string;
+  companyId?: string;
 }
 
 const DEFAULT_EXECUTE_GAS = "80000000000000"; // 80 TGas
@@ -60,15 +62,27 @@ const DEFAULT_MUTATION_GAS = "40000000000000"; // 40 TGas
 
 export class AllocardTreasuryClient {
   readonly contractId: string;
+  readonly companyId?: string;
   readonly networkDomain: string;
   readonly caller: NearCaller;
   readonly defaultGas: string;
+  private readonly mutationGas: string;
 
   constructor(options: TreasuryClientOptions) {
-    this.contractId = options.contractId;
+    const reference = parseTreasuryReference(options.contractId);
+    if (options.companyId && !/^[0-9a-f]{64}$/.test(options.companyId)) throw new Error("Invalid company ID");
+    if (options.companyId && reference.companyId && options.companyId !== reference.companyId) throw new Error("Conflicting company identity");
+    this.contractId = reference.contractId;
+    this.companyId = options.companyId || reference.companyId;
     this.networkDomain = options.networkDomain;
-    this.caller = options.caller;
-    this.defaultGas = options.defaultGas || DEFAULT_EXECUTE_GAS;
+    const scopedArgs = (args?: Record<string, unknown>) => this.companyId ? { ...args, company_id: this.companyId } : args;
+    this.caller = this.companyId ? {
+      accountId: options.caller.accountId,
+      viewFunction: params => options.caller.viewFunction({ ...params, args: scopedArgs(params.args) }),
+      ...(options.caller.functionCall ? { functionCall: (params: Parameters<NonNullable<NearCaller["functionCall"]>>[0]) => options.caller.functionCall!({ ...params, args: scopedArgs(params.args) }) } : {}),
+    } : options.caller;
+    this.defaultGas = options.defaultGas || (this.companyId ? "150000000000000" : DEFAULT_EXECUTE_GAS);
+    this.mutationGas = this.companyId ? "80000000000000" : DEFAULT_MUTATION_GAS;
   }
 
   private assertSigner() {
@@ -150,11 +164,11 @@ export class AllocardTreasuryClient {
   // --- Helper Hashes ---
 
   getExecuteHash(actor: string, request: ExecuteRequest): string {
-    return computeExecuteHash(this.networkDomain, this.contractId, actor, request);
+    return computeExecuteHash(companyNetworkDomain(this.networkDomain, this.companyId), this.contractId, actor, request);
   }
 
   getOwnerWithdrawHash(actor: string, request: OwnerWithdrawRequest): string {
-    return computeOwnerWithdrawHash(this.networkDomain, this.contractId, actor, request);
+    return computeOwnerWithdrawHash(companyNetworkDomain(this.networkDomain, this.companyId), this.contractId, actor, request);
   }
 
   // --- Mutations ---
@@ -165,7 +179,7 @@ export class AllocardTreasuryClient {
       contractId: this.contractId,
       methodName: "create_root_permission",
       args: { spec },
-      gas: DEFAULT_MUTATION_GAS,
+      gas: this.mutationGas,
       attachedDeposit: "0",
     });
     return decodeMutationId(res);
@@ -177,7 +191,7 @@ export class AllocardTreasuryClient {
       contractId: this.contractId,
       methodName: "create_child_permission",
       args: { parent_id: parentId, spec },
-      gas: DEFAULT_MUTATION_GAS,
+      gas: this.mutationGas,
       attachedDeposit: "0",
     });
     return decodeMutationId(res);
@@ -189,7 +203,7 @@ export class AllocardTreasuryClient {
       contractId: this.contractId,
       methodName: "revoke_permission",
       args: { permission_id: permissionId },
-      gas: DEFAULT_MUTATION_GAS,
+      gas: this.mutationGas,
       attachedDeposit: "0",
     });
   }
@@ -200,7 +214,7 @@ export class AllocardTreasuryClient {
       contractId: this.contractId,
       methodName: "approve_request",
       args: { actor, request },
-      gas: DEFAULT_MUTATION_GAS,
+      gas: this.mutationGas,
       attachedDeposit: "0",
     });
   }
@@ -211,7 +225,7 @@ export class AllocardTreasuryClient {
       contractId: this.contractId,
       methodName: "revoke_approval",
       args: { actor, request },
-      gas: DEFAULT_MUTATION_GAS,
+      gas: this.mutationGas,
       attachedDeposit: "0",
     });
   }
@@ -222,7 +236,7 @@ export class AllocardTreasuryClient {
       contractId: this.contractId,
       methodName: "deposit_native",
       args: {},
-      gas: DEFAULT_MUTATION_GAS,
+      gas: this.mutationGas,
       attachedDeposit: amountYocto,
     });
   }
@@ -233,7 +247,7 @@ export class AllocardTreasuryClient {
       contractId: this.contractId,
       methodName: "top_up_storage",
       args: {},
-      gas: DEFAULT_MUTATION_GAS,
+      gas: this.mutationGas,
       attachedDeposit: amountYocto,
     });
   }
@@ -244,7 +258,7 @@ export class AllocardTreasuryClient {
       contractId: this.contractId,
       methodName: "top_up_operating",
       args: {},
-      gas: DEFAULT_MUTATION_GAS,
+      gas: this.mutationGas,
       attachedDeposit: amountYocto,
     });
   }
@@ -329,7 +343,7 @@ export class AllocardTreasuryClient {
       contractId: this.contractId,
       methodName: "flag_unresolved",
       args: { execution_id: executionId },
-      gas: DEFAULT_MUTATION_GAS,
+      gas: this.mutationGas,
       attachedDeposit: "0",
     });
   }

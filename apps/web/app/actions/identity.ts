@@ -1,5 +1,9 @@
 "use server";
 
+import { readLiveNativeCapacity, capacityReadError } from "@/lib/live-capacity";
+
+import { parseTreasuryReference, computeCompanyId } from "@allocard/delegation-sdk";
+
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { formatTokenAmount, parseTokenAmount } from "@allocard/delegation-sdk";
 import { db } from "@/lib/db";
@@ -31,7 +35,6 @@ import { isReimbursementAgent, type ReimbursementProgram } from "@/lib/reimburse
 import { loadAgoraProgram } from "@/lib/agora/server";
 import { isAgoraAgent, type AgoraProgram } from "@/lib/agora/shared";
 export { isAgoraAgent, type AgoraProgram };
-import { nativeSpendingCapacity } from "@/lib/spending-capacity";
 import { verifyTreasuryOwner, treasuryReader, assertEmployeePermission } from "@/lib/near-server";
 import { TOKEN_SYMBOL } from "@/lib/chain";
 
@@ -218,7 +221,8 @@ export async function activateSmartAccount(input: {
 }) {
   const walletAddress = normalizeWalletAddress(input.walletAddress);
   await validateSessionWallet(walletAddress);
-  const smartAccountAddress = normalizeWalletAddress(input.smartAccountAddress);
+  const smartAccountAddress = input.smartAccountAddress.trim();
+  const treasuryScope = parseTreasuryReference(smartAccountAddress);
   const profile = await getWalletProfile(walletAddress);
 
   if (profile.status === "new" || !profile.user) {
@@ -237,6 +241,7 @@ export async function activateSmartAccount(input: {
       if (active) throw new Error("Revoke existing company permissions before changing its treasury");
     }
 
+    if (treasuryScope.companyId && treasuryScope.companyId !== computeCompanyId(walletAddress, profile.company.id)) throw new Error("Treasury company identity does not match this workspace");
     await verifyTreasuryOwner(smartAccountAddress, walletAddress);
     const [company] = await db
       .update(companies)
@@ -1314,6 +1319,7 @@ export async function activateDelegation(input: {
     .update(delegations)
     .set({
       delegationHash: input.delegationHash,
+      treasuryReference: profile.company.smartAccountAddress,
       signedDelegation: permission,
       status: "active",
       activatedAt: new Date(),
@@ -1902,20 +1908,14 @@ export async function getEmployeeDashboardState(
   let capacityError: string | undefined;
   if (company.smartAccountAddress && inboundRow?.delegationHash) {
     try {
-      const reader = treasuryReader(company.smartAccountAddress);
-      const [path, config, ledger] = await Promise.all([reader.getPermissionPath(inboundRow.delegationHash), reader.getConfig(), reader.getAssetLedger({ type: "NativeNear" })]);
-      const remaining = await nativeSpendingCapacity({ actor: user.walletAddress, path, config,
-        available: ledger?.enabled ? ledger.available : "0", now: BigInt(Date.now()),
-        usage: (id, scope) => reader.getUsage(id, { type: "NativeNear" }, scope),
-        executionCount: async id => (await reader.caller.viewFunction({ contractId: reader.contractId, methodName: "get_permission_usage", args: { permission_id: id } })).executions_count,
-        blocked: account => reader.caller.viewFunction({ contractId: reader.contractId, methodName: "is_principal_blocked", args: { account } }),
-      });
-      remainingEth = formatTokenAmount(remaining, 24);
-      const rule = path[0]?.rules.find(rule => rule.asset.type === "NativeNear");
-      liveApprovedEth = formatTokenAmount(rule?.lifetime_limit ?? "0", 24);
-      const usage = await reader.getUsage(inboundRow.delegationHash, { type: "NativeNear" }, { type: "Lifetime" });
-      liveSpentEth = formatTokenAmount(usage.settled, 24);
-    } catch { capacityError = "Live spending capacity could not be verified. Payments remain disabled until the treasury can be read."; }
+      const capacity = await readLiveNativeCapacity(treasuryReader(company.smartAccountAddress, { cacheMs: 2000 }), user.walletAddress, inboundRow.delegationHash);
+      remainingEth = capacity.remainingEth;
+      liveApprovedEth = capacity.approvedEth;
+      liveSpentEth = capacity.spentEth;
+    } catch (caught) {
+      capacityError = capacityReadError(caught);
+      console.error("Employee capacity read failed", { companyId: company.id, permissionId: inboundRow.delegationHash, reason: capacityError });
+    }
   }
 
   return {
@@ -2322,6 +2322,7 @@ export async function activateEmployeeDelegation(input: {
     .update(delegations)
     .set({
       delegationHash: input.delegationHash,
+      treasuryReference: treasury,
       signedDelegation: input.signedDelegation,
       status: "active",
       activatedAt: new Date(),

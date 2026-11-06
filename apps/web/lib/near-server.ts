@@ -1,36 +1,69 @@
-import { AllocardTreasuryClient, type Execution, type Permission } from "@allocard/delegation-sdk";
-import { treasuryCodeHash } from "./treasury-code";
-import { NEAR_RPC_URL } from "./chain";
+import { paymentActions, containsPaymentRequest } from "./near-payment-envelope";
+import { parseAccessKeyRpcResponse } from "./near-nonce";
+import { coordinatedNearRead, waitForRpcCooldown, backoffNearRead, noteRpcRateLimit } from "./near-read-coordinator";
+import { NearReadError, rpcReadFailure } from "./near-read-error";
+import { AllocardTreasuryClient, type Execution, type Permission, parseTreasuryReference } from "@allocard/delegation-sdk";
+import { treasuryCodeHash, sharedTreasuryCodeHash } from "./treasury-code";
+import { nearRpcServerUrl } from "./near-rpc-server";
 
-export async function nearQuery(params: Record<string, unknown>): Promise<any> {
-  const response = await fetch(NEAR_RPC_URL, {
-    method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
-    body: JSON.stringify({ jsonrpc: "2.0", id: "allocard", method: "query", params: { finality: "final", ...params } }),
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!response.ok) throw new Error("NEAR RPC unavailable; retry without changing your payment request");
-  const payload = await response.json();
-  if (payload.error) throw new Error("NEAR account, key or contract could not be verified");
-  return payload.result;
+export async function nearQuery(params: Record<string, unknown>, options: { cacheMs?: number; rpcId?: unknown; dedupe?: boolean } = {}): Promise<any> {
+  const normalized = { finality: "final", ...params };
+  const url = nearRpcServerUrl();
+  return coordinatedNearRead(url, normalized, () => queryUpstream(url, normalized, options.rpcId), options.cacheMs ?? 0, options.dedupe ?? false);
 }
 
-export function treasuryReader(contractId: string) {
+async function queryUpstream(url: string, params: Record<string, unknown>, rpcId: unknown): Promise<any> {
+  const operation = typeof params.method_name === "string" ? params.method_name : String(params.request_type ?? "query");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (!await waitForRpcCooldown(url)) throw new NearReadError(operation, "RATE_LIMITED", "The RPC provider requested a longer cooldown. Retry later or configure a testnet NEAR_RPC_URL with available quota.");
+    try {
+      const response = await fetch(url, {
+        method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+        body: JSON.stringify({ jsonrpc: "2.0", id: rpcId ?? "allocard", method: "query", params: { finality: "final", ...params } }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!response.ok) {
+        if (attempt === 0 && (response.status === 429 || response.status >= 500) && await backoffNearRead(url, response)) continue;
+        if (response.status === 429) noteRpcRateLimit(url, response);
+        throw new NearReadError(operation, response.status === 429 ? "RATE_LIMITED" : "HTTP_ERROR", `RPC provider returned HTTP ${response.status}. Check the server NEAR_RPC_URL.`);
+      }
+      const payload = params.request_type === "view_access_key" ? parseAccessKeyRpcResponse(await response.text()) : await response.json();
+      if (payload.error) throw rpcReadFailure(operation, payload.error);
+      // Older query responses can put an execution error inside result.
+      if (payload.result?.error) throw rpcReadFailure(operation, payload.result.error);
+      if (payload.result == null) throw new NearReadError(operation, "INVALID_RESPONSE", "RPC returned no result.");
+      return payload.result;
+    } catch (caught) {
+      if (caught instanceof NearReadError) throw caught;
+      if (attempt === 1) throw new NearReadError(operation, "UNAVAILABLE", "The server could not reach NEAR RPC. Retry or check NEAR_RPC_URL.");
+    }
+  }
+  throw new NearReadError(operation, "UNAVAILABLE", "NEAR RPC unavailable.");
+}
+
+export function treasuryReader(contractId: string, options: { cacheMs?: number } = {}) {
   return new AllocardTreasuryClient({ contractId, networkDomain: "near:testnet", caller: {
-    async viewFunction({ methodName, args }) {
-      const result = await nearQuery({ request_type: "call_function", account_id: contractId, method_name: methodName,
-        args_base64: Buffer.from(JSON.stringify(args ?? {})).toString("base64") });
-      return JSON.parse(Buffer.from(result.result).toString("utf8"));
+    async viewFunction({ contractId: target, methodName, args }) {
+      const result = await nearQuery({ request_type: "call_function", account_id: target, method_name: methodName,
+        args_base64: Buffer.from(JSON.stringify(args ?? {})).toString("base64") }, options);
+      try {
+        if (!Array.isArray(result.result)) throw new Error("Missing bytes");
+        return JSON.parse(Buffer.from(result.result).toString("utf8"));
+      } catch { throw new NearReadError(methodName, "INVALID_RESPONSE", "Contract view returned invalid JSON."); }
     },
   } });
 }
 
 export async function verifyTreasuryOwner(contractId: string, owner: string) {
+  const scope = parseTreasuryReference(contractId);
   const [config, account, expectedHash] = await Promise.all([
-    treasuryReader(contractId).getConfig(), nearQuery({ request_type: "view_account", account_id: contractId }), treasuryCodeHash(),
+    treasuryReader(contractId).getConfig(), nearQuery({ request_type: "view_account", account_id: scope.contractId }), scope.companyId ? sharedTreasuryCodeHash() : treasuryCodeHash(),
   ]);
-  if (account.code_hash !== expectedHash) throw new Error("Treasury code does not match this Allocard release");
-  if (config.schema_version !== 2 || config.network_domain !== "near:testnet" || config.owner !== owner) {
-    throw new Error("Treasury must be an Allocard schema-2 testnet contract owned by your signing account");
+  assertTreasuryCode(account, expectedHash);
+  const keys = await nearQuery({ request_type: "view_access_key_list", account_id: scope.contractId });
+  if (!Array.isArray(keys.keys) || keys.keys.length !== 0) throw new Error("Treasury has retained access keys that could bypass spending policies");
+  if (config.schema_version !== (scope.companyId ? 3 : 2) || config.network_domain !== "near:testnet" || config.owner !== owner) {
+    throw new Error("Treasury must be a compatible Allocard testnet contract owned by your signing account");
   }
   return config;
 }
@@ -48,26 +81,38 @@ export function assertSettledPayment(record: Execution | null, expected: { actor
 }
 
 export async function verifyPaymentTransaction(txHash: string, actor: string, treasury: string, requestId: string) {
+  const scope = parseTreasuryReference(treasury);
   if (!/^[1-9A-HJ-NP-Za-km-z]{32,64}$/.test(txHash)) throw new Error("A real NEAR transaction hash is required");
-  const response = await fetch(NEAR_RPC_URL, { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
-    body: JSON.stringify({ jsonrpc: "2.0", id: "verify-payment", method: "tx", params: { tx_hash: txHash, sender_account_id: actor, wait_until: "FINAL" } }), signal: AbortSignal.timeout(15000) });
-  const payload = await response.json();
-  const result = payload.result;
-  if (!response.ok || payload.error || !result || typeof result.status !== "object" || !("SuccessValue" in result.status)) throw new Error("Payment transaction could not be verified");
+  let result;
+  // Relayed transactions are indexed under the outer signer, while the treasury
+  // execution actor remains the employee. Retain the relayer ID for historical reads.
+  const senders = [...new Set([actor, process.env.NEAR_RELAYER_ACCOUNT_ID].filter((value): value is string => Boolean(value)))];
+  for (const sender of senders) {
+    try {
+      const response = await fetch(nearRpcServerUrl(), { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+        body: JSON.stringify({ jsonrpc: "2.0", id: "verify-payment", method: "tx", params: { tx_hash: txHash, sender_account_id: sender, wait_until: "FINAL" } }), signal: AbortSignal.timeout(15000) });
+      const payload = await response.json();
+      if (response.ok && !payload.error && payload.result) { result = payload.result; break; }
+    } catch { /* Try the other possible signer/shard before failing verification. */ }
+  }
+  if (!result || typeof result.status !== "object" || !("SuccessValue" in result.status)) throw new Error("Payment transaction could not be verified");
   const transaction = result.transaction;
-  if (transaction?.signer_id !== actor || transaction?.receiver_id !== treasury || transaction?.hash !== txHash) throw new Error("Payment transaction has a different signer or treasury");
-  const matching = transaction.actions?.some((action: any) => {
-    if (action.FunctionCall?.method_name !== "execute") return false;
-    try { return JSON.parse(Buffer.from(action.FunctionCall.args, "base64").toString("utf8")).request?.request_id === requestId; }
-    catch { return false; }
-  });
+  if (transaction?.hash !== txHash) throw new Error("Payment transaction has a different hash");
+  const matching = containsPaymentRequest(paymentActions(transaction, actor, scope.contractId), requestId, scope.companyId);
   if (!matching) throw new Error("Transaction does not contain this payment request");
 }
 
 export async function finalizedTimestamp(): Promise<bigint> {
-  const response = await fetch(NEAR_RPC_URL, { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+  const response = await fetch(nearRpcServerUrl(), { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
     body: JSON.stringify({ jsonrpc: "2.0", id: "finalized-clock", method: "block", params: { finality: "final" } }), signal: AbortSignal.timeout(15000) });
   const payload = await response.json();
   if (!response.ok || payload.error || !payload.result?.header?.timestamp_nanosec) throw new Error("Finalized chain time unavailable");
   return BigInt(payload.result.header.timestamp_nanosec) / BigInt(1000000);
+}
+
+/** Accept an exact local deployment or an immutable global reference, never a mutable publisher. */
+export function assertTreasuryCode(account: { code_hash?: string; global_contract_hash?: string | null; global_contract_account_id?: string | null }, expectedHash: string) {
+  if (account.global_contract_account_id) throw new Error("Mutable global treasury code is not supported");
+  const actualHash = account.global_contract_hash || account.code_hash;
+  if (actualHash !== expectedHash) throw new Error("Treasury code does not match this Allocard release");
 }

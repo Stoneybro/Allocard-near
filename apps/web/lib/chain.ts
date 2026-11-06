@@ -17,7 +17,7 @@ export function getTxExplorerUrl(txHash?: string | null): string {
 
 export function getAddressExplorerUrl(address?: string | null): string {
   if (!address) return EXPLORER_URL;
-  return `${EXPLORER_URL}/address/${address}`;
+  return `${EXPLORER_URL}/address/${address.split("#")[0]}`;
 }
 
 // Backward-compatibility shims for legacy modules during porting

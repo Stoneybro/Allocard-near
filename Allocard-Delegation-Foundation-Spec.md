@@ -1,5 +1,7 @@
 # Allocard delegation foundation — implementation specification
 
+Implementation extension: the active application now uses the schema-3 [shared treasury](docs/delegation/SHARED.md). This version-1.1 document remains the dedicated-treasury policy-engine specification. In the shared deployment, every authority, budget, approval, replay record and callback is additionally isolated by company ID, and canonical hash domains include that company ID. The shared wrapper enforces aggregate physical solvency across companies.
+
 Version: 1.1 proposal  
 Date: 1 November 2026  
 Target: native NEAR contracts written in Rust  

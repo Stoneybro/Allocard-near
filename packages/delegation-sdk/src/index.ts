@@ -10,3 +10,5 @@ export * from "./canonical.js";
 export * from "./client.js";
 
 export * from "./amounts.js";
+
+export * from "./company.js";

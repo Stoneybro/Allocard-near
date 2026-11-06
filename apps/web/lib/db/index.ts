@@ -1,6 +1,12 @@
-import { neon } from "@neondatabase/serverless";
+import { neon, neonConfig } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "./schema";
+import { neonFetch } from "./transport.mjs";
+
+// Preserve IPv4 routing while bounding stalled requests, including response bodies.
+if (typeof process !== "undefined" && process.versions?.node) {
+  neonConfig.fetchFunction = neonFetch;
+}
 
 const databaseUrl = 
   process.env.DATABASE_URL || 

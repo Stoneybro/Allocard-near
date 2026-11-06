@@ -35,14 +35,13 @@ import {
   ConnectRequiredCard,
 } from "@/components/auth-state";
 import { useAuth } from "@/components/AuthProvider";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { type SidebarAgent } from "@/components/app-sidebar";
 import { EmployeeSectionCards } from "@/components/employee-section-cards";
 import { ReimbursementDrawer } from "./ReimbursementDrawer";
-import { ReimbursementsCard } from "@/components/reimbursements-card";
 import { isReimbursementAgent } from "@/lib/reimbursements/shared";
 import { isAgoraAgent } from "@/lib/agora/shared";
-import { AgoraCrossBorderCard } from "@/components/agora-card";
 import { AgoraRemittanceDrawer } from "./AgoraRemittanceDrawer";
 import { DevOpsAgentDrawer } from "./DevOpsAgentDrawer";
 import { SmartAccountActivationButton } from "@/components/smart-account-activation-button";
@@ -319,6 +318,7 @@ export function EmployeeClient({
 } = {}) {
   const router = useRouter();
   const auth = useAuth();
+  const isMobile = useIsMobile();
   const currentAuthAddress = auth.status === "authenticated" ? (auth.address as `0x${string}`) : undefined;
   const didLoadDashboard = useRef(Boolean(initialProfile && initialDashboardState));
   const [dashboardState, setDashboardState] = useState<EmployeeDashboardState | null>(
@@ -580,8 +580,6 @@ export function EmployeeClient({
   const [isAgoraDrawerOpen, setIsAgoraDrawerOpen] = useState(false);
   const [isProcurementAgentDrawerOpen, setIsProcurementAgentDrawerOpen] = useState(false);
   const [activeProcurementDelegationId, setActiveProcurementDelegationId] = useState<string | null>(null);
-  const [isRefreshingReimbursements, setIsRefreshingReimbursements] = useState(false);
-  const [isRefreshingAgora, setIsRefreshingAgora] = useState(false);
 
   // Open drawer for existing delegation (configure / view rules)
   const handleConfigureDelegation = useCallback(
@@ -789,9 +787,9 @@ export function EmployeeClient({
           metadata_hash: null,
         };
 
-        if (!auth.selector || !dashboardState?.company?.smartAccountAddress) throw new Error("A signing wallet and treasury are required");
+        if (!dashboardState?.company?.smartAccountAddress) throw new Error("A signing wallet and treasury are required");
         if (!savedState.inboundDelegation?.delegationHash) throw new Error("A confirmed parent permission is required");
-        const caller = createNearWalletCaller(auth.selector, auth.accountId);
+        const caller = await getUnifiedNearCaller(auth);
         const client = getTreasuryClient(caller, dashboardState.company.smartAccountAddress);
         const delegationHash = await client.createChildPermission(parentPermissionId, childSpec);
 
@@ -1039,50 +1037,10 @@ export function EmployeeClient({
           spentEth={summary.spentEth}
         />
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <ReimbursementsCard
-            role="employee"
-            program={dashboardState.reimbursement}
-            accountReady={Boolean(employee.smartAccountAddress)}
-            busy={isRefreshingReimbursements}
-            onOpen={() => {
-              setIsReimbursementDrawerOpen(true);
-            }}
-            onRefresh={async () => {
-              setIsRefreshingReimbursements(true);
-              try {
-                await refreshDashboard();
-              } catch {
-                toast.error("Could not refresh reimbursement status");
-              } finally {
-                setIsRefreshingReimbursements(false);
-              }
-            }}
-          />
-          <AgoraCrossBorderCard
-            role="employee"
-            program={dashboardState.agora}
-            accountReady={Boolean(employee.smartAccountAddress)}
-            busy={isRefreshingAgora}
-            onOpen={() => {
-              setIsAgoraDrawerOpen(true);
-            }}
-            onRefresh={async () => {
-              setIsRefreshingAgora(true);
-              try {
-                await refreshDashboard();
-              } catch {
-                toast.error("Could not refresh Agora remittance status");
-              } finally {
-                setIsRefreshingAgora(false);
-              }
-            }}
-          />
-        </div>
-
         {/* Direct Spend Workspace */}
         <div className="w-full">
           <DirectSpendForm
+            key={`${dashboardState.company?.smartAccountAddress ?? "none"}:${auth.status === "authenticated" ? auth.accountId : "signed-out"}`}
             delegationId={dashboardState.inboundDelegation?.id || ""}
             pendingStorageKey={dashboardState.company?.smartAccountAddress && auth.status === "authenticated" ? `allocard-payment:${dashboardState.company.smartAccountAddress}:${auth.accountId}` : undefined}
             remainingBalanceEth={formatEthTrimmed(remainingWei)}
@@ -1094,7 +1052,7 @@ export function EmployeeClient({
 
       {/* ── Caveat Configuration Drawer (Tasks 5 & 6) ──────────────────────── */}
       <Drawer
-        direction="right"
+        direction={isMobile ? "bottom" : "right"}
         open={Boolean(selectedDelegation)}
         onOpenChange={(open) => {
           if (!open) {

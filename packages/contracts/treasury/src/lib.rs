@@ -44,9 +44,13 @@ pub trait FungibleToken {
     fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
 }
 
-#[near(contract_state)]
+#[cfg_attr(not(feature = "shared-engine"), near(contract_state))]
+#[cfg_attr(feature = "shared-engine", near(serializers = [borsh]))]
 #[derive(PanicOnDefault)]
 pub struct TreasuryContract {
+    #[cfg(feature = "shared-engine")]
+    #[borsh(skip)]
+    pub company_context: Option<String>,
     pub config: TreasuryConfig,
     pub permissions: LookupMap<PermissionId, Permission>,
     pub blocked_principals: LookupMap<AccountId, bool>,
@@ -59,11 +63,16 @@ pub struct TreasuryContract {
     pub approvals: LookupMap<ApprovalKey, ApprovalRecord>,
 }
 
-#[near]
 impl TreasuryContract {
-    #[init]
-    pub fn new(config: InitConfig) -> Self {
-        assert!(!env::state_exists(), "Contract is already initialized");
+    fn build(config: InitConfig, company_id: Option<String>) -> Self {
+        let prefix = |key: StorageKey| -> Vec<u8> {
+            let mut bytes = match &company_id {
+                Some(id) => [b"company:".as_slice(), id.as_bytes(), b":"].concat(),
+                None => vec![],
+            };
+            bytes.extend(borsh::to_vec(&key).unwrap());
+            bytes
+        };
         if config.network_domain.is_empty() || config.network_domain.len() > 64 {
             env::panic_str(ERR_INVALID_INPUT);
         }
@@ -77,8 +86,8 @@ impl TreasuryContract {
             env::panic_str(ERR_INVALID_INPUT);
         }
 
-        let mut asset_ledgers = LookupMap::new(StorageKey::AssetLedgers);
-        let mut registered_assets = Vector::new(StorageKey::RegisteredAssets);
+        let mut asset_ledgers = LookupMap::new(prefix(StorageKey::AssetLedgers));
+        let mut registered_assets = Vector::new(prefix(StorageKey::RegisteredAssets));
 
         // Native NEAR is automatically registered and enabled at initialization
         asset_ledgers.insert(
@@ -92,7 +101,7 @@ impl TreasuryContract {
         registered_assets.push(AssetId::NativeNear);
 
         let treasury_config = TreasuryConfig {
-            schema_version: 2,
+            schema_version: if company_id.is_some() { 3 } else { 2 },
             network_domain: config.network_domain.clone(),
             owner: config.owner.clone(),
             pending_owner: None,
@@ -123,22 +132,27 @@ impl TreasuryContract {
         });
 
         let mut contract = Self {
+            #[cfg(feature = "shared-engine")]
+            company_context: company_id.clone(),
             config: treasury_config,
-            permissions: LookupMap::new(StorageKey::Permissions),
-            blocked_principals: LookupMap::new(StorageKey::BlockedPrincipals),
-            usage: LookupMap::new(StorageKey::Usage),
-            permission_usage: LookupMap::new(StorageKey::PermissionUsage),
+            permissions: LookupMap::new(prefix(StorageKey::Permissions)),
+            blocked_principals: LookupMap::new(prefix(StorageKey::BlockedPrincipals)),
+            usage: LookupMap::new(prefix(StorageKey::Usage)),
+            permission_usage: LookupMap::new(prefix(StorageKey::PermissionUsage)),
             asset_ledgers,
             registered_assets,
-            executions: LookupMap::new(StorageKey::Executions),
-            replay_map: LookupMap::new(StorageKey::ReplayMap),
-            approvals: LookupMap::new(StorageKey::Approvals),
+            executions: LookupMap::new(prefix(StorageKey::Executions)),
+            replay_map: LookupMap::new(prefix(StorageKey::ReplayMap)),
+            approvals: LookupMap::new(prefix(StorageKey::Approvals)),
         };
         contract.flush_collections();
         contract.assert_physical_solvency(0);
         contract
     }
+}
 
+#[cfg_attr(not(feature = "shared-engine"), near)]
+impl TreasuryContract {
     // --- Authority Lifecycle & Permissions ---
 
     /// Creates a root permission (depth 0, issuer is treasury owner).
@@ -505,72 +519,6 @@ impl TreasuryContract {
 
     // --- Deposits & Top-ups ---
 
-    #[payable]
-    pub fn deposit_native(&mut self) {
-        let storage_before = self.storage_checkpoint();
-        let deposit = env::attached_deposit().as_yoctonear();
-        if deposit == 0 {
-            env::panic_str(ERR_INVALID_INPUT);
-        }
-
-        let mut ledger = self
-            .asset_ledgers
-            .get(&AssetId::NativeNear)
-            .cloned()
-            .unwrap_or_default();
-
-        ledger.available = U128(
-            ledger
-                .available
-                .0
-                .checked_add(deposit)
-                .unwrap_or_else(|| env::panic_str(ERR_INVALID_INPUT)),
-        );
-        self.asset_ledgers.insert(AssetId::NativeNear, ledger);
-
-        let sender = env::predecessor_account_id();
-        emit_event(EventLogData::TreasuryDeposit {
-            asset: "native_near",
-            sender: &sender,
-            amount: U128(deposit),
-        });
-        self.charge_storage(storage_before);
-    }
-
-    #[payable]
-    pub fn top_up_operating(&mut self) {
-        let storage_before = self.storage_checkpoint();
-        let deposit = env::attached_deposit().as_yoctonear();
-        if deposit == 0 {
-            env::panic_str(ERR_INVALID_INPUT);
-        }
-        self.config.operating_budget_remaining = U128(
-            self.config
-                .operating_budget_remaining
-                .0
-                .checked_add(deposit)
-                .unwrap_or_else(|| env::panic_str(ERR_INVALID_INPUT)),
-        );
-        self.charge_storage(storage_before);
-    }
-
-    #[payable]
-    pub fn top_up_storage(&mut self) {
-        let storage_before = self.storage_checkpoint();
-        let deposit = env::attached_deposit().as_yoctonear();
-        if deposit == 0 {
-            env::panic_str(ERR_INVALID_INPUT);
-        }
-        self.config.storage_funding_remaining = U128(
-            self.config
-                .storage_funding_remaining
-                .0
-                .checked_add(deposit)
-                .unwrap_or_else(|| env::panic_str(ERR_INVALID_INPUT)),
-        );
-        self.charge_storage(storage_before);
-    }
-
     /// NEP-141 token receiver callback.
     pub fn ft_on_transfer(&mut self, sender_id: AccountId, amount: U128, msg: String) -> U128 {
         let storage_before = self.storage_checkpoint();
@@ -638,7 +586,7 @@ impl TreasuryContract {
         }
 
         let (_request_id_bytes, request_hash) = crate::canonical::compute_execute_hash(
-            &self.config.network_domain,
+            &self.request_domain(),
             &env::current_account_id(),
             &actor,
             &request,
@@ -723,7 +671,7 @@ impl TreasuryContract {
         let approver = env::predecessor_account_id();
 
         let (_request_id_bytes, request_hash) = crate::canonical::compute_execute_hash(
-            &self.config.network_domain,
+            &self.request_domain(),
             &env::current_account_id(),
             &actor,
             &request,
@@ -770,7 +718,7 @@ impl TreasuryContract {
         }
 
         let (request_id_bytes, hash) = crate::canonical::compute_execute_hash(
-            &self.config.network_domain,
+            &self.request_domain(),
             &env::current_account_id(),
             &actor,
             &request,
@@ -962,7 +910,7 @@ impl TreasuryContract {
         }
 
         let (request_id_bytes, hash) = crate::canonical::compute_owner_withdraw_hash(
-            &self.config.network_domain,
+            &self.request_domain(),
             &env::current_account_id(),
             &owner,
             &request,
@@ -1078,132 +1026,6 @@ impl TreasuryContract {
     }
 
     /// Private settlement callback evaluated after transfer promise finishes.
-    #[private]
-    pub fn on_transfer_result(&mut self, execution_id: U64) -> Execution {
-        if env::promise_results_count() != 1 {
-            env::panic_str(ERR_INVALID_CALLBACK);
-        }
-
-        let mut execution = self
-            .executions
-            .get(&execution_id.0)
-            .cloned()
-            .unwrap_or_else(|| env::panic_str(ERR_EXECUTION_NOT_FOUND));
-
-        // If execution is already terminal, return its state without re-mutating
-        match execution.status {
-            ExecutionStatus::Succeeded | ExecutionStatus::Failed => return execution,
-            ExecutionStatus::Pending => {}
-        }
-
-        let succeeded = match env::promise_result_checked(0, 4096) {
-            Ok(_) => true,
-            Err(PromiseError::Failed) => false,
-            Err(_) => {
-                // A successful receipt with unreadable data is NOT proof of failure.
-                execution.needs_reconciliation = true;
-                self.executions.insert(execution_id.0, execution.clone());
-                return execution;
-            }
-        };
-        execution.needs_reconciliation = false;
-        let callback_storage = self.callback_storage_cost();
-        self.config.callback_storage_reserved = U128(
-            self.config
-                .callback_storage_reserved
-                .0
-                .checked_sub(callback_storage)
-                .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
-        );
-
-        if succeeded {
-            for res in &execution.reservations {
-                let mut u = self.usage.get(&res.budget_key).cloned().unwrap_or_default();
-                u.pending = U128(
-                    u.pending
-                        .0
-                        .checked_sub(res.amount.0)
-                        .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
-                );
-                u.settled = U128(
-                    u.settled
-                        .0
-                        .checked_add(res.amount.0)
-                        .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
-                );
-                self.usage.insert(res.budget_key.clone(), u);
-            }
-
-            if let Some(mut ledger) = self.asset_ledgers.get(execution.action.asset()).cloned() {
-                ledger.pending_outgoing = U128(
-                    ledger
-                        .pending_outgoing
-                        .0
-                        .checked_sub(execution.action.amount())
-                        .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
-                );
-                self.asset_ledgers
-                    .insert(execution.action.asset().clone(), ledger);
-            }
-
-            self.config.pending_execution_count = self
-                .config
-                .pending_execution_count
-                .checked_sub(1)
-                .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK));
-            execution.status = ExecutionStatus::Succeeded;
-            self.executions.insert(execution_id.0, execution.clone());
-
-            emit_event(EventLogData::ExecutionSucceeded { execution_id });
-        } else {
-            // Proven external failure: release reservations without adding settled; restore principal to available
-            for res in &execution.reservations {
-                let mut u = self.usage.get(&res.budget_key).cloned().unwrap_or_default();
-                u.pending = U128(
-                    u.pending
-                        .0
-                        .checked_sub(res.amount.0)
-                        .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
-                );
-                self.usage.insert(res.budget_key.clone(), u);
-            }
-
-            if let Some(mut ledger) = self.asset_ledgers.get(execution.action.asset()).cloned() {
-                ledger.pending_outgoing = U128(
-                    ledger
-                        .pending_outgoing
-                        .0
-                        .checked_sub(execution.action.amount())
-                        .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
-                );
-                ledger.available = U128(
-                    ledger
-                        .available
-                        .0
-                        .checked_add(execution.action.amount())
-                        .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
-                );
-                self.asset_ledgers
-                    .insert(execution.action.asset().clone(), ledger);
-            }
-
-            self.config.pending_execution_count = self
-                .config
-                .pending_execution_count
-                .checked_sub(1)
-                .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK));
-            execution.status = ExecutionStatus::Failed;
-            execution.failure_code = Some(ERR_EXECUTION_FAILED.to_string());
-            self.executions.insert(execution_id.0, execution.clone());
-
-            emit_event(EventLogData::ExecutionFailed {
-                execution_id,
-                failure_code: ERR_EXECUTION_FAILED,
-            });
-        }
-
-        execution
-    }
 
     /// Flags an execution pending for > 10 minutes as needing reconciliation.
     pub fn flag_unresolved(&mut self, execution_id: U64) {
@@ -1394,7 +1216,7 @@ impl TreasuryContract {
         };
 
         let (_req_id, hash) = match crate::canonical::compute_execute_hash(
-            &self.config.network_domain,
+            &self.request_domain(),
             &env::current_account_id(),
             &actor,
             &request,
@@ -1452,6 +1274,24 @@ impl TreasuryContract {
 
 // --- Internal Helper Methods (not exposed to NEAR RPC) ---
 impl TreasuryContract {
+    pub fn request_domain(&self) -> String {
+        #[cfg(feature = "shared-engine")]
+        if let Some(id) = &self.company_context {
+            return format!("{}:company:{}", self.config.network_domain, id);
+        }
+        self.config.network_domain.clone()
+    }
+
+    fn callback_args(&self, execution_id: u64) -> serde_json::Value {
+        #[allow(unused_mut)]
+        let mut args = serde_json::json!({"execution_id": U64(execution_id)});
+        #[cfg(feature = "shared-engine")]
+        if let Some(id) = &self.company_context {
+            args["company_id"] = serde_json::json!(id);
+        }
+        args
+    }
+
     fn assert_input_bound(&self) {
         if env::input().is_some_and(|input| input.len() > crate::policy::MAX_SERIALIZED_INPUT_BYTES)
         {
@@ -1459,7 +1299,7 @@ impl TreasuryContract {
         }
     }
 
-    fn flush_collections(&mut self) {
+    pub fn flush_collections(&mut self) {
         self.permissions.flush();
         self.blocked_principals.flush();
         self.usage.flush();
@@ -1522,6 +1362,10 @@ impl TreasuryContract {
     }
 
     fn assert_physical_solvency(&self, extra_outgoing: u128) {
+        #[cfg(feature = "shared-engine")]
+        if self.company_context.is_some() {
+            return;
+        }
         // env::storage_usage still includes the prior STATE representation until
         // near-sdk writes the new state after this method returns.
         let state_len = borsh::to_vec(self).unwrap().len() as u64;
@@ -1661,26 +1505,25 @@ impl TreasuryContract {
         amount: u128,
         execution_id: u64,
     ) {
+        let args = self.callback_args(execution_id);
+        let callback = Promise::new(env::current_account_id()).function_call(
+            "on_transfer_result",
+            serde_json::to_vec(&args).unwrap(),
+            NearToken::from_yoctonear(0),
+            self.config.callback_gas,
+        );
         match asset {
             AssetId::NativeNear => {
                 let _ = Promise::new(receiver.clone())
                     .transfer(NearToken::from_yoctonear(amount))
-                    .then(
-                        Self::ext(env::current_account_id())
-                            .with_static_gas(self.config.callback_gas)
-                            .on_transfer_result(U64(execution_id)),
-                    );
+                    .then(callback);
             }
             AssetId::Nep141(contract_id) => {
                 let _ = ext_ft::ext(contract_id.clone())
                     .with_attached_deposit(NearToken::from_yoctonear(1))
                     .with_static_gas(self.config.transfer_gas)
                     .ft_transfer(receiver.clone(), U128(amount), None)
-                    .then(
-                        Self::ext(env::current_account_id())
-                            .with_static_gas(self.config.callback_gas)
-                            .on_transfer_result(U64(execution_id)),
-                    );
+                    .then(callback);
             }
         }
     }
@@ -1728,6 +1571,34 @@ mod tests {
             approval: None,
             acknowledge_unbounded_budget: false,
         }
+    }
+
+    #[test]
+    fn global_factory_initial_funding_covers_state_and_operating_floor() {
+        let mut context = get_context(accounts(1));
+        // Global code is a small reference, not a local WASM allocation.
+        context
+            .account_balance(NearToken::from_millinear(200))
+            .storage_usage(500);
+        testing_env!(context.build());
+        let contract = TreasuryContract::new(InitConfig {
+            network_domain: "near:testnet".into(),
+            owner: accounts(1),
+            max_total_permissions: None,
+            max_pending_executions: None,
+            min_operating_reserve: None,
+            callback_gas: None,
+            transfer_gas: None,
+        });
+        assert_eq!(contract.get_config().owner, accounts(1));
+        assert_eq!(
+            contract
+                .get_asset_ledger(AssetId::NativeNear)
+                .unwrap()
+                .available
+                .0,
+            0
+        );
     }
 
     #[test]
@@ -2711,5 +2582,242 @@ mod tests {
         testing_env!(context.build());
         let contract = funded_contract(default_config());
         contract.assert_input_bound();
+    }
+}
+
+#[cfg(not(feature = "shared-engine"))]
+#[near]
+impl TreasuryContract {
+    #[init]
+    pub fn new(config: InitConfig) -> Self {
+        assert!(!env::state_exists(), "Contract is already initialized");
+        Self::build(config, None)
+    }
+    #[payable]
+    pub fn deposit_native(&mut self) {
+        self.deposit_native_inner()
+    }
+    #[payable]
+    pub fn top_up_operating(&mut self) {
+        self.top_up_operating_inner()
+    }
+    #[payable]
+    pub fn top_up_storage(&mut self) {
+        self.top_up_storage_inner()
+    }
+    #[private]
+    pub fn on_transfer_result(&mut self, execution_id: U64) -> Execution {
+        self.on_transfer_result_inner(execution_id)
+    }
+}
+
+#[cfg(feature = "shared-engine")]
+impl TreasuryContract {
+    pub fn new(config: InitConfig) -> Self {
+        assert!(!env::state_exists(), "Contract is already initialized");
+        Self::build(config, None)
+    }
+    pub fn new_shared(config: InitConfig, company_id: String) -> Self {
+        Self::build(config, Some(company_id))
+    }
+    pub fn deposit_native(&mut self) {
+        self.deposit_native_inner()
+    }
+    pub fn top_up_operating(&mut self) {
+        self.top_up_operating_inner()
+    }
+    pub fn top_up_storage(&mut self) {
+        self.top_up_storage_inner()
+    }
+    pub fn on_transfer_result(&mut self, execution_id: U64) -> Execution {
+        self.on_transfer_result_inner(execution_id)
+    }
+}
+
+impl TreasuryContract {
+    fn deposit_native_inner(&mut self) {
+        let storage_before = self.storage_checkpoint();
+        let deposit = env::attached_deposit().as_yoctonear();
+        if deposit == 0 {
+            env::panic_str(ERR_INVALID_INPUT);
+        }
+
+        let mut ledger = self
+            .asset_ledgers
+            .get(&AssetId::NativeNear)
+            .cloned()
+            .unwrap_or_default();
+
+        ledger.available = U128(
+            ledger
+                .available
+                .0
+                .checked_add(deposit)
+                .unwrap_or_else(|| env::panic_str(ERR_INVALID_INPUT)),
+        );
+        self.asset_ledgers.insert(AssetId::NativeNear, ledger);
+
+        let sender = env::predecessor_account_id();
+        emit_event(EventLogData::TreasuryDeposit {
+            asset: "native_near",
+            sender: &sender,
+            amount: U128(deposit),
+        });
+        self.charge_storage(storage_before);
+    }
+    fn top_up_operating_inner(&mut self) {
+        let storage_before = self.storage_checkpoint();
+        let deposit = env::attached_deposit().as_yoctonear();
+        if deposit == 0 {
+            env::panic_str(ERR_INVALID_INPUT);
+        }
+        self.config.operating_budget_remaining = U128(
+            self.config
+                .operating_budget_remaining
+                .0
+                .checked_add(deposit)
+                .unwrap_or_else(|| env::panic_str(ERR_INVALID_INPUT)),
+        );
+        self.charge_storage(storage_before);
+    }
+    fn top_up_storage_inner(&mut self) {
+        let storage_before = self.storage_checkpoint();
+        let deposit = env::attached_deposit().as_yoctonear();
+        if deposit == 0 {
+            env::panic_str(ERR_INVALID_INPUT);
+        }
+        self.config.storage_funding_remaining = U128(
+            self.config
+                .storage_funding_remaining
+                .0
+                .checked_add(deposit)
+                .unwrap_or_else(|| env::panic_str(ERR_INVALID_INPUT)),
+        );
+        self.charge_storage(storage_before);
+    }
+    fn on_transfer_result_inner(&mut self, execution_id: U64) -> Execution {
+        if env::promise_results_count() != 1 {
+            env::panic_str(ERR_INVALID_CALLBACK);
+        }
+
+        let mut execution = self
+            .executions
+            .get(&execution_id.0)
+            .cloned()
+            .unwrap_or_else(|| env::panic_str(ERR_EXECUTION_NOT_FOUND));
+
+        // If execution is already terminal, return its state without re-mutating
+        match execution.status {
+            ExecutionStatus::Succeeded | ExecutionStatus::Failed => return execution,
+            ExecutionStatus::Pending => {}
+        }
+
+        let succeeded = match env::promise_result_checked(0, 4096) {
+            Ok(_) => true,
+            Err(PromiseError::Failed) => false,
+            Err(_) => {
+                // A successful receipt with unreadable data is NOT proof of failure.
+                execution.needs_reconciliation = true;
+                self.executions.insert(execution_id.0, execution.clone());
+                return execution;
+            }
+        };
+        execution.needs_reconciliation = false;
+        let callback_storage = self.callback_storage_cost();
+        self.config.callback_storage_reserved = U128(
+            self.config
+                .callback_storage_reserved
+                .0
+                .checked_sub(callback_storage)
+                .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
+        );
+
+        if succeeded {
+            for res in &execution.reservations {
+                let mut u = self.usage.get(&res.budget_key).cloned().unwrap_or_default();
+                u.pending = U128(
+                    u.pending
+                        .0
+                        .checked_sub(res.amount.0)
+                        .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
+                );
+                u.settled = U128(
+                    u.settled
+                        .0
+                        .checked_add(res.amount.0)
+                        .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
+                );
+                self.usage.insert(res.budget_key.clone(), u);
+            }
+
+            if let Some(mut ledger) = self.asset_ledgers.get(execution.action.asset()).cloned() {
+                ledger.pending_outgoing = U128(
+                    ledger
+                        .pending_outgoing
+                        .0
+                        .checked_sub(execution.action.amount())
+                        .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
+                );
+                self.asset_ledgers
+                    .insert(execution.action.asset().clone(), ledger);
+            }
+
+            self.config.pending_execution_count = self
+                .config
+                .pending_execution_count
+                .checked_sub(1)
+                .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK));
+            execution.status = ExecutionStatus::Succeeded;
+            self.executions.insert(execution_id.0, execution.clone());
+
+            emit_event(EventLogData::ExecutionSucceeded { execution_id });
+        } else {
+            // Proven external failure: release reservations without adding settled; restore principal to available
+            for res in &execution.reservations {
+                let mut u = self.usage.get(&res.budget_key).cloned().unwrap_or_default();
+                u.pending = U128(
+                    u.pending
+                        .0
+                        .checked_sub(res.amount.0)
+                        .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
+                );
+                self.usage.insert(res.budget_key.clone(), u);
+            }
+
+            if let Some(mut ledger) = self.asset_ledgers.get(execution.action.asset()).cloned() {
+                ledger.pending_outgoing = U128(
+                    ledger
+                        .pending_outgoing
+                        .0
+                        .checked_sub(execution.action.amount())
+                        .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
+                );
+                ledger.available = U128(
+                    ledger
+                        .available
+                        .0
+                        .checked_add(execution.action.amount())
+                        .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK)),
+                );
+                self.asset_ledgers
+                    .insert(execution.action.asset().clone(), ledger);
+            }
+
+            self.config.pending_execution_count = self
+                .config
+                .pending_execution_count
+                .checked_sub(1)
+                .unwrap_or_else(|| env::panic_str(ERR_INVALID_CALLBACK));
+            execution.status = ExecutionStatus::Failed;
+            execution.failure_code = Some(ERR_EXECUTION_FAILED.to_string());
+            self.executions.insert(execution_id.0, execution.clone());
+
+            emit_event(EventLogData::ExecutionFailed {
+                execution_id,
+                failure_code: ERR_EXECUTION_FAILED,
+            });
+        }
+
+        execution
     }
 }

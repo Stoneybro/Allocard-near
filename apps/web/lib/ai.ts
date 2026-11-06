@@ -1,17 +1,16 @@
 /**
- * lib/ai.ts — Server-only Qwen AI integration module (Alibaba Cloud Model Studio)
+ * lib/ai.ts — NEAR AI Cloud integration module (with legacy DashScope fallback)
  *
- * OpenAI-compatible endpoint: DASHSCOPE_BASE_URL
- * Auth: Authorization: Bearer $DASHSCOPE_API_KEY
+ * Primary Endpoint: https://api.near.ai/v1 (NEAR AI Cloud)
+ * Auth: Authorization: Bearer $NEAR_AI_API_KEY
  *
  * Models used:
- *   - Text / reasoning / policy:  qwen3.8-max
- *   - Vision / receipt verify:    qwen3-vl-plus
- *   - Vision / receipt extract:   qwen3-vl-plus
+ *   - Text / reasoning / policy:  deepseek-ai/DeepSeek-V4.1-Flash-1017 (or Qwen/Qwen3.8-27B)
+ *   - Vision / receipt verify:    Qwen/Qwen3-VL-30B-A3B-Instruct (or qwen3-vl-plus)
  *
- * All functions accept an optional `companyPolicy` — the company-wide expense
+ * All policy functions accept an optional `companyPolicy` — the company-wide expense
  * policy document. This is the single source of truth layered above:
- *   1. On-chain caveats (hard mathematical constraints)
+ *   1. On-chain caveats & PermissionSpec (hard mathematical constraints)
  *   2. Company expense policy (natural language, company-wide)
  *   3. Delegation-specific additions (per-delegation overrides)
  */
@@ -19,17 +18,43 @@
 import type { CompanyDelegationCaveat } from "@/app/actions/identity";
 import { TOKEN_SYMBOL } from "@/lib/chain";
 
-const DEFAULT_BASE_URL = "https://ws-hjdcclpedbb2egen.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
-const TEXT_MODEL = "qwen3.8-max";
-const VISION_MODEL = "qwen3-vl-plus";
+const DEFAULT_NEAR_AI_BASE_URL = "https://api.near.ai/v1";
+const DEFAULT_DASHSCOPE_BASE_URL = "https://ws-hjdcclpedbb2egen.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
 
-function getBaseUrl(): string {
-  return process.env.DASHSCOPE_BASE_URL || DEFAULT_BASE_URL;
+const DEFAULT_NEAR_AI_TEXT_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-1017";
+const DEFAULT_DASHSCOPE_TEXT_MODEL = "qwen3.8-max";
+
+const DEFAULT_NEAR_AI_VISION_MODEL = "Qwen/Qwen3-VL-30B-A3B-Instruct";
+const DEFAULT_DASHSCOPE_VISION_MODEL = "qwen3-vl-plus";
+
+export function getBaseUrl(): string {
+  if (process.env.NEAR_AI_BASE_URL) return process.env.NEAR_AI_BASE_URL;
+  if (process.env.NEAR_AI_API_KEY) return DEFAULT_NEAR_AI_BASE_URL;
+  if (process.env.DASHSCOPE_BASE_URL) return process.env.DASHSCOPE_BASE_URL;
+  if (process.env.DASHSCOPE_API_KEY) return DEFAULT_DASHSCOPE_BASE_URL;
+  return DEFAULT_NEAR_AI_BASE_URL;
 }
 
-function getApiKey(): string | null {
-  return process.env.DASHSCOPE_API_KEY ?? null;
+export function getApiKey(): string | null {
+  return process.env.NEAR_AI_API_KEY ?? process.env.DASHSCOPE_API_KEY ?? null;
 }
+
+export function getTextModel(): string {
+  if (process.env.NEAR_AI_MODEL) return process.env.NEAR_AI_MODEL;
+  if (process.env.NEAR_AI_API_KEY) return DEFAULT_NEAR_AI_TEXT_MODEL;
+  if (process.env.DASHSCOPE_API_KEY) return DEFAULT_DASHSCOPE_TEXT_MODEL;
+  return DEFAULT_NEAR_AI_TEXT_MODEL;
+}
+
+export function getVisionModel(): string {
+  if (process.env.NEAR_AI_VISION_MODEL) return process.env.NEAR_AI_VISION_MODEL;
+  if (process.env.NEAR_AI_API_KEY) return DEFAULT_NEAR_AI_VISION_MODEL;
+  if (process.env.DASHSCOPE_API_KEY) return DEFAULT_DASHSCOPE_VISION_MODEL;
+  return DEFAULT_NEAR_AI_VISION_MODEL;
+}
+
+export const TEXT_MODEL = getTextModel();
+export const VISION_MODEL = getVisionModel();
 
 export type PolicyCheckResult = {
   approved: boolean;
@@ -89,20 +114,21 @@ export type VendorChoice = {
 };
 
 // ---------------------------------------------------------------------------
-// Low-level Qwen fetch helper
+// Low-level NEAR AI / OpenAI-compatible fetch helper
 // ---------------------------------------------------------------------------
 
-async function qwenChat<T>(params: {
-  model: string;
+export async function aiChat<T>(params: {
+  model?: string;
   messages: Array<{ role: string; content: unknown }>;
   responseSchema?: Record<string, unknown>;
   disableJsonSchema?: boolean;
 }): Promise<T> {
   const apiKey = getApiKey();
-  if (!apiKey) throw new Error("DASHSCOPE_API_KEY is not configured");
+  if (!apiKey) throw new Error("NEAR_AI_API_KEY or DASHSCOPE_API_KEY is not configured");
 
+  const model = params.model || getTextModel();
   const body: Record<string, unknown> = {
-    model: params.model,
+    model,
     messages: params.messages,
     temperature: 0.2,
     max_tokens: 1500,
@@ -120,19 +146,28 @@ async function qwenChat<T>(params: {
 
   if (!res.ok) {
     const text = await res.text();
-    console.error(`[qwenChat] API Error ${res.status}:`, text);
-    throw new Error(`Qwen API error ${res.status}: ${text}`);
+    console.error(`[aiChat] API Error ${res.status}:`, text);
+    throw new Error(`AI API error ${res.status}: ${text}`);
   }
 
   const json = (await res.json()) as { choices: Array<{ message: { content: string } }> };
   let content = json.choices?.[0]?.message?.content;
-  if (!content) throw new Error("Qwen returned an empty response");
+  if (!content) throw new Error("AI returned an empty response");
 
   // Clean markdown backticks if the model returned them instead of raw JSON
   content = content.replace(/^```(json)?\s*/i, "").replace(/```$/, "").trim();
 
+  // If there's surrounding text, locate the enclosing JSON object
+  const firstBrace = content.indexOf("{");
+  const lastBrace = content.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    content = content.substring(firstBrace, lastBrace + 1);
+  }
+
   return JSON.parse(content) as T;
 }
+
+export const qwenChat = aiChat;
 
 // ---------------------------------------------------------------------------
 // Shared policy builder
@@ -876,3 +911,22 @@ Rules:
     return fallback();
   }
 }
+
+// ---------------------------------------------------------------------------
+// NEAR AI Policy Engine Re-Exports
+// ---------------------------------------------------------------------------
+export {
+  parseNaturalLanguagePolicy,
+  validatePermissionSpec,
+  parsePolicyDeterministicFallback,
+  synthesizeCompanyPolicy,
+  specToCaveatFormValues,
+  isValidNearAccountId,
+  PERIOD_DURATIONS_MS,
+  type ParsePolicyInput,
+  type ParsedPolicyResult,
+  type CaveatFormValues,
+  type ValidatePolicyResult,
+  type PolicyPeriod,
+} from "./policy-engine";
+

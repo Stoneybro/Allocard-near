@@ -10,10 +10,12 @@ import { jwtVerify } from "jose";
 export async function middleware(request: NextRequest) {
   const token = request.cookies.get("allocard_session")?.value;
   const secret = process.env.SESSION_SECRET;
+  // Development sessions use a process-local secret; server guards verify them.
+  if (process.env.NODE_ENV !== "production" && (!secret || secret.length < 32)) return NextResponse.next();
   if (token && secret && secret.length >= 32) {
     try {
       const { payload } = await jwtVerify(token, new TextEncoder().encode(secret));
-      if (typeof payload.sub === "string" && typeof payload.walletAddress === "string") {
+      if (payload.authVersion === 2 && typeof payload.sub === "string" && typeof payload.walletAddress === "string") {
         return NextResponse.next();
       }
     } catch {

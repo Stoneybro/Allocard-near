@@ -1,4 +1,5 @@
 import { databaseFailure } from "@/lib/db/error";
+import { withRetry } from "@/lib/db/withRetry";
 import { sameSiteOrigin } from "@/lib/request-origin";
 import { and, eq, or } from "drizzle-orm";
 import { users } from "@/lib/db/schema";
@@ -23,10 +24,16 @@ export async function POST(request: Request) {
     const body = await request.json();
     if (typeof body.accessToken === "string" && typeof body.accountId === "string") {
       const verified = await verifyPrivySession(body.accessToken, body.accountId);
-      const [existing] = await db.select().from(users).where(or(eq(users.privyUserId, verified.providerUserId), eq(users.nearAccountId, verified.walletAddress))).limit(1);
+      const [existing] = await withRetry(
+        () => db.select().from(users).where(or(eq(users.privyUserId, verified.providerUserId), eq(users.nearAccountId, verified.walletAddress))).limit(1),
+        "auth:lookup-user"
+      );
       if (existing) {
         if (existing.privyUserId !== verified.providerUserId || (existing.nearAccountId && existing.nearAccountId !== verified.walletAddress)) throw new Error("Complete verified account linking before changing your NEAR signing wallet");
-        await db.update(users).set({ nearAccountId: verified.walletAddress, verifiedEmail: verified.email }).where(eq(users.id, existing.id));
+        await withRetry(
+          () => db.update(users).set({ nearAccountId: verified.walletAddress, verifiedEmail: verified.email }).where(eq(users.id, existing.id)),
+          "auth:update-user"
+        );
       }
       return Response.json(await createNearSession(verified.walletAddress, verified), { headers });
     }
@@ -42,11 +49,15 @@ export async function POST(request: Request) {
     const accessKey = await nearQuery({ request_type: "view_access_key", account_id: proof.accountId, public_key: proof.publicKey });
     if (accessKey.permission !== "FullAccess") throw new Error("Use a wallet account key with full access to prove account ownership");
     const nonceHash = createHash("sha256").update(JSON.stringify(challenge)).digest("hex");
-    const consumed = await db.insert(consumedLoginNonces).values({ nonceHash, expiresAt: new Date(Number(payload.exp) * 1000) })
-      .onConflictDoNothing().returning({ nonceHash: consumedLoginNonces.nonceHash });
+    const consumed = await withRetry(
+      () => db.insert(consumedLoginNonces).values({ nonceHash, expiresAt: new Date(Number(payload.exp) * 1000) })
+        .onConflictDoNothing().returning({ nonceHash: consumedLoginNonces.nonceHash }),
+      "auth:consume-nonce"
+    );
     if (!consumed.length) throw new Error("This sign-in challenge has already been used. Sign again with a fresh challenge.");
     return Response.json(await createNearSession(proof.accountId), { headers });
   } catch (error) {
+    console.error("[POST /api/auth/session]", error);
     const databaseError = databaseFailure(error);
     if (databaseError) return Response.json({ error: databaseError }, { status: 503, headers });
     return Response.json({ error: error instanceof Error ? error.message : "Sign-in verification failed" }, { status: 401, headers });

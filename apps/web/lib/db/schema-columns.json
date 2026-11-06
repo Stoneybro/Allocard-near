@@ -1,0 +1,157 @@
+{
+  "agent_bookings": [
+    "agent_id",
+    "amount_eth",
+    "booking_details",
+    "company_id",
+    "created_at",
+    "delegation_id",
+    "employee_id",
+    "id",
+    "tx_hash",
+    "venice_confidence",
+    "venice_prompt",
+    "venice_reasoning"
+  ],
+  "agents": [
+    "created_at",
+    "description",
+    "id",
+    "is_active",
+    "name",
+    "signer_address",
+    "smart_account_address"
+  ],
+  "claim_redemptions": [
+    "agent_id",
+    "amount_eth",
+    "claim_description",
+    "company_id",
+    "created_at",
+    "delegation_hash",
+    "employee_id",
+    "id",
+    "receipt_url",
+    "status",
+    "tx_hash",
+    "venice_approved",
+    "venice_confidence",
+    "venice_prompt",
+    "venice_reasoning"
+  ],
+  "companies": [
+    "company_policy",
+    "created_at",
+    "id",
+    "name",
+    "owner_id",
+    "smart_account_address"
+  ],
+  "company_memberships": [
+    "can_employee",
+    "can_employer",
+    "company_id",
+    "created_at",
+    "id",
+    "removed_at",
+    "status",
+    "user_id"
+  ],
+  "consumed_login_nonces": [
+    "expires_at",
+    "nonce_hash"
+  ],
+  "delegation_caveats": [
+    "caveat_type",
+    "caveat_value",
+    "created_at",
+    "delegation_id",
+    "id"
+  ],
+  "delegations": [
+    "activated_at",
+    "canvas_position_x",
+    "canvas_position_y",
+    "created_at",
+    "delegatee_id",
+    "delegatee_type",
+    "delegation_hash",
+    "delegator_id",
+    "delegator_type",
+    "id",
+    "parent_delegation_id",
+    "policy_prompt",
+    "revoked_at",
+    "signed_delegation",
+    "status",
+    "treasury_reference"
+  ],
+  "employee_profiles": [
+    "company_id",
+    "created_at",
+    "id",
+    "smart_account_address",
+    "user_id"
+  ],
+  "manual_transactions": [
+    "amount_eth",
+    "company_id",
+    "created_at",
+    "delegation_id",
+    "employee_id",
+    "execution_id",
+    "id",
+    "is_flagged",
+    "purpose",
+    "receipt_summary",
+    "to_address",
+    "treasury_contract_id",
+    "tx_hash"
+  ],
+  "near_sponsor_jobs": [
+    "actor",
+    "created_at",
+    "id",
+    "intent_hash",
+    "relayer_id",
+    "signed_transaction",
+    "state",
+    "transaction_hash"
+  ],
+  "near_sponsor_keys": [
+    "key",
+    "lease_until",
+    "nonce"
+  ],
+  "near_sponsor_limits": [
+    "bucket",
+    "used"
+  ],
+  "pending_employees": [
+    "accepted_at",
+    "accepted_by_user_id",
+    "company_id",
+    "created_at",
+    "email",
+    "id",
+    "normalized_email",
+    "status"
+  ],
+  "users": [
+    "company_id",
+    "created_at",
+    "embedded_wallet_address",
+    "id",
+    "near_account_id",
+    "privy_user_id",
+    "role",
+    "smart_account_address",
+    "verified_email"
+  ],
+  "workspace_preferences": [
+    "company_id",
+    "role",
+    "updated_at",
+    "user_id"
+  ]
+}

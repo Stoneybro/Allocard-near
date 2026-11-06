@@ -15,7 +15,10 @@
     "sdk:build": "pnpm --filter @allocard/delegation-sdk run build",
     "sdk:test": "pnpm --filter @allocard/delegation-sdk run test",
     "demo": "pnpm --filter @allocard/scripts run demo",
-    "delegation:check": "pnpm run contracts:test && pnpm run sdk:build && pnpm run sdk:test && pnpm run web:test && pnpm --filter @allocard/web run typecheck && pnpm run web:build"
+    "delegation:check": "pnpm run contracts:test && pnpm run sdk:build && pnpm run sdk:test && pnpm run web:test && pnpm --filter @allocard/web run typecheck && pnpm run web:build",
+    "factory:publish": "node packages/delegation-sdk/scripts/deploy-factory.mjs publish",
+    "factory:deploy": "node packages/delegation-sdk/scripts/deploy-factory.mjs deploy",
+    "shared:deploy": "node packages/delegation-sdk/scripts/deploy-shared.mjs"
   },
   "packageManager": "pnpm@11.28.10"
 }

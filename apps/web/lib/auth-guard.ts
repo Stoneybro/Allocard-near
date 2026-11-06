@@ -1,6 +1,7 @@
 import { getSessionWalletAddress } from "@/lib/session";
 import { getSessionIdentity } from "@/lib/session";
 import { db } from "@/lib/db";
+import { withRetry } from "@/lib/db/withRetry";
 import { companyMemberships, delegations, employeeProfiles, users } from "@/lib/db/schema";
 import { and, eq, or } from "drizzle-orm";
 
@@ -22,7 +23,7 @@ export async function requireSessionUser() {
   const identity = await getSessionIdentity();
   if (!identity) throw new Error("Unauthorized: no valid session. Please sign in.");
 
-  const [user] = await db
+  const [user] = await withRetry(() => db
     .select()
     .from(users)
     .where(
@@ -32,7 +33,7 @@ export async function requireSessionUser() {
         eq(users.privyUserId, identity.providerUserId)
       )
     )
-    .limit(1);
+    .limit(1), "auth:session-user");
 
   if (!user) throw new Error("Forbidden: create an Allocard profile before continuing.");
   if ((user.nearAccountId ?? user.embeddedWalletAddress).toLowerCase() !== identity.walletAddress.toLowerCase()) {

@@ -29,6 +29,10 @@ export function normalizeWalletAddress(address: string): WalletAddress {
 }
 
 export function formatWalletAddress(address: string): string {
+  if (address?.includes("#")) {
+    const [contract, company] = address.split("#");
+    if (isNativeNearAccount(contract) && /^[0-9a-f]{64}$/.test(company)) return `${contract} · ${company.slice(0, 8)}…`;
+  }
   try {
     const normalized = normalizeWalletAddress(address);
     if (normalized.includes(".")) {

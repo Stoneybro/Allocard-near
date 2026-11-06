@@ -1,12 +1,14 @@
 # Allocard delegation foundation
 
-Allocard lets principals spend from one company treasury within contract-enforced permissions, without prefunding employee wallets. Each payment selects a permission and satisfies every ancestor's policy and shared budget.
+Allocard lets employees spend from their company’s balance under contract-enforced permissions. The active architecture uses one shared NEAR contract with separate company owners, balances, policies, reserves, and execution histories. Each payment selects a permission and satisfies every ancestor's policy and shared budget.
 
-This repository contains a Rust treasury contract, a local TypeScript SDK, and a wallet-based NEAR testnet application. The company/employee flow verifies login signatures, treasury ownership/code, spending permissions, and settled payments. The separate delegation-demo page remains a local simulation. See [today’s acceptance run](docs/delegation/TODAY.md) for setup and the live checks still required.
+This repository contains a shared Rust treasury contract, its reusable policy engine, a TypeScript SDK, and a NEAR testnet application with Privy email/Google and wallet signing. The company/employee flow verifies login signatures, treasury ownership/code, spending permissions, and settled payments. The separate delegation-demo page remains a local simulation. See [today’s acceptance run](docs/delegation/TODAY.md) for setup and the live checks still required.
 
 ## Layout and checks
 
-- `packages/contracts/treasury`: Rust contract and sandbox tests.
+- `packages/contracts/shared`: active schema-3 shared company treasury.
+- `packages/contracts/treasury`: reusable policy engine and legacy dedicated treasury.
+- `packages/contracts/factory`: optional global-code factory experiment; not used by active onboarding.
 - `packages/delegation-sdk`: wallet-independent client, canonical hashes, exact token amounts, and optional `@allocard/delegation-sdk/near-api` binding for near-api-js v7.
 - `packages/scripts`: build, test, deployment, and offline envelope demo commands.
 - `apps/web`: Next.js company/employee application, with a separate simulation page.
@@ -46,7 +48,13 @@ Inject a `NearCaller` for mutations and views. Mutation ID results accept either
 
 Use `parseTokenAmount` and `formatTokenAmount` for exact amounts. Floating-point arithmetic and scientific notation are not supported for transaction amounts.
 
-## Development deployment
+## Active shared deployment
+
+Follow [SHARED.md](docs/delegation/SHARED.md). Build the contracts, review `pnpm shared:deploy`, and execute only after configuring a fresh funded testnet account. The tool deploys one ordinary contract and atomically removes every key. Configure server-only `SHARED_TREASURY_ACCOUNT_ID` and restart the app. Companies register state with a 0.2-NEAR storage/operating allocation; no per-company code deployment or global publication is required.
+
+SDK clients accept `contract.testnet#company-id` references or an explicit `companyId` option. Every call and canonical request hash is scoped to the company. The shared wrapper checks aggregate liabilities against physical native funds before completing mutations. This is logical isolation within a common account; bugs in shared logic can affect all companies.
+
+## Legacy dedicated deployment
 
 The updated treasury uses **state schema 2**. Its extra callback-reserve field changes Borsh state layout. Use a fresh deployment; do not overwrite a schema-1 treasury with this Wasm. No migration or application upgrade endpoint is supplied.
 
@@ -58,10 +66,10 @@ After initialization, fund `top_up_storage` and `top_up_operating` separately fr
 
 ## Limits and remaining work
 
-This is not an audited or production-ready treasury. Full-access deployment keys can replace its code or bypass contract controls. Locked deployments have no built-in upgrade/recovery path. Missing callbacks may lock reservations indefinitely. Retained history consumes storage. Fixed-duration windows are not calendar months.
+This is not an audited or production-ready treasury. Any retained full-access deployment keys can replace code or bypass contract controls; active shared deployment removes them. Locked deployments have no built-in upgrade/recovery path. Missing callbacks may lock reservations indefinitely. Retained history consumes storage. Fixed-duration windows are not calendar months.
 
 The sandbox tests currently cover selected native-transfer scenarios, not all acceptance categories in the foundation spec. Adversarial FT contracts, maximum-policy gas measurements, and NEP-366 relayer integration remain required before declaring the full foundation complete. Prior gas measurements predate the accounting changes and must be rerun; no updated throughput or maximum-bound claim is made here.
 
 ## Main application setup
 
-Follow [TODAY.md](docs/delegation/TODAY.md). Existing wallets are the supported login/signing path for this build. Email invitations require verified email identity and are not equivalent to a wallet login. Run the new database migration before signing in. Legacy sessions are invalidated; legacy database-only permissions are not accepted as on-chain authorization. No live end-to-end success is claimed from unit tests alone.
+Follow [TODAY.md](docs/delegation/TODAY.md). Privy email/Google login verifies the provider identity and linked native NEAR wallet on the server. Email invitations use the verified provider email; a standalone wallet signature does not prove an email address. Run the new database migration before signing in. Legacy sessions are invalidated; legacy database-only permissions are not accepted as on-chain authorization. No live end-to-end success is claimed from unit tests alone.

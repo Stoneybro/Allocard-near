@@ -28,6 +28,18 @@ describe("real wallet transactions", () => {
       { method: "deposit_native", deposit: BigInt("1000000000000000000000000") },
     ] });
   });
+  it("funds the selected company on a shared account in one batch", async () => {
+    const send = vi.fn(async (_request: unknown) => outcome);
+    const selector = { wallet: async () => ({ signAndSendTransaction: send }) } as unknown as WalletSelector;
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ result: outcome })));
+    const companyId = "a".repeat(64);
+    await fundTreasury(selector, "owner.testnet", `shared.testnet#${companyId}`);
+    expect(send.mock.calls[0][0]).toMatchObject({ receiverId: "shared.testnet", actions: [
+      { method: "top_up_storage", args: { company_id: companyId } },
+      { method: "top_up_operating", args: { company_id: companyId } },
+      { method: "deposit_native", args: { company_id: companyId } },
+    ] });
+  });
   it("does not report a failed funding batch as successful", async () => {
     const selector = { wallet: async () => ({ signAndSendTransaction: async () => ({ ...outcome, status: { Failure: {} } }) }) } as unknown as WalletSelector;
     await expect(fundTreasury(selector, "owner.testnet", "treasury.testnet")).rejects.toThrow();

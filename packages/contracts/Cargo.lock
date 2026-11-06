@@ -28,6 +28,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "allocard-factory"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "hex",
+ "near-sdk",
+ "near-workspaces",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "allocard-shared"
+version = "0.1.0"
+dependencies = [
+ "allocard-treasury",
+ "borsh",
+ "hex",
+ "near-sdk",
+ "near-workspaces",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "allocard-treasury"
 version = "0.1.0"
 dependencies = [
