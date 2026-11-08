@@ -2,86 +2,105 @@
 import { act, useEffect, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-type TestWalletState = { accounts: { accountId: string }[] };
-type TestPrivyUser = { linkedAccounts: { type: string; chainType: string; walletClientType: string; address: string }[] };
+import { useQueryClient } from "@tanstack/react-query";
+type TestPrivyUser = { id: string; linkedAccounts: { type: string; chainType: string; walletClientType: string; address: string }[] };
 const mocks = vi.hoisted(() => ({
   privy: { ready: true, authenticated: false, user: null as TestPrivyUser | null, login: vi.fn(), logout: vi.fn(), getAccessToken: vi.fn() },
-  createWallet: vi.fn(), signRawHash: vi.fn(), createPrivySession: vi.fn(), createSession: vi.fn(), clearSession: vi.fn(),
-  show: vi.fn(), accounts: [] as { accountId: string }[], listener: null as null | ((state: TestWalletState) => void),
+  createWallet: vi.fn(), signRawHash: vi.fn(), createPrivySession: vi.fn(), clearSession: vi.fn(),
+  baseCall: vi.fn(), baseSend: vi.fn(),
 }));
 vi.mock("@privy-io/react-auth", () => ({ PrivyProvider: ({ children }: { children: ReactNode }) => children, usePrivy: () => mocks.privy }));
 vi.mock("@privy-io/react-auth/extended-chains", () => ({ useCreateWallet: () => ({ createWallet: mocks.createWallet }), useSignRawHash: () => ({ signRawHash: mocks.signRawHash }) }));
-vi.mock("@/lib/privy-near", () => ({ createPrivyNearTransport: () => ({ caller: {}, sendActions: vi.fn() }) }));
-vi.mock("@/lib/session-client", () => ({ createPrivySession: mocks.createPrivySession, createSession: mocks.createSession, clearSession: mocks.clearSession }));
-vi.mock("@near-wallet-selector/core", () => ({ setupWalletSelector: async () => ({ store: {
-  getState: () => ({ accounts: mocks.accounts }), observable: { subscribe: (callback: (state: TestWalletState) => void) => { mocks.listener = callback; return { unsubscribe: vi.fn() }; } },
-} }) }));
-vi.mock("@near-wallet-selector/modal-ui", () => ({ setupModal: () => ({ show: mocks.show }) }));
-vi.mock("@near-wallet-selector/meteor-wallet", () => ({ setupMeteorWallet: vi.fn() }));
-vi.mock("@near-wallet-selector/my-near-wallet", () => ({ setupMyNearWallet: vi.fn() }));
+vi.mock("@/lib/privy-near", () => ({ createPrivyNearTransport: () => ({ caller: { functionCall: mocks.baseCall }, sendActions: mocks.baseSend }) }));
+vi.mock("@/lib/session-client", async importOriginal => ({ ...await importOriginal<typeof import("@/lib/session-client")>(), createPrivySession: mocks.createPrivySession, clearSession: mocks.clearSession }));
 import { AuthProvider, useAuth, type AuthState } from "@/components/AuthProvider";
-const identity = { walletAddress: "a".repeat(64), providerUserId: "privy:alice", email: "alice@example.com" };
+const identity = { walletAddress: "a".repeat(64), providerUserId: "did:privy:alice", email: "alice@example.com" };
 let state: AuthState;
+let queryClient: ReturnType<typeof useQueryClient>;
 let root: Root;
+const seen: string[] = [];
 function Probe() {
-  const current = useAuth();
-  useEffect(() => { state = current; }, [current]);
+  const current = useAuth(); const currentClient = useQueryClient();
+  useEffect(() => { state = current; queryClient = currentClient; seen.push(current.status); }, [current, currentClient]);
   return <span>{current.status}</span>;
 }
 async function render() { await act(async () => { root.render(<AuthProvider><Probe /></AuthProvider>); }); }
+function signIn() {
+  mocks.privy.authenticated = true;
+  mocks.privy.user = { id: identity.providerUserId, linkedAccounts: [{ type: "wallet", chainType: "near", walletClientType: "privy", address: identity.walletAddress }] };
+}
 beforeEach(() => {
-  vi.clearAllMocks(); localStorage.clear();
+  vi.clearAllMocks(); localStorage.clear(); seen.length = 0;
   vi.stubEnv("NEXT_PUBLIC_PRIVY_APP_ID", "test-app");
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   Object.assign(mocks.privy, { ready: true, authenticated: false, user: null });
-  mocks.accounts = []; mocks.listener = null;
   mocks.clearSession.mockResolvedValue(undefined);
-  mocks.createPrivySession.mockResolvedValue(identity);
-  mocks.createSession.mockResolvedValue(identity);
+  mocks.createPrivySession.mockReset().mockResolvedValue(identity);
+  mocks.baseCall.mockResolvedValue({ success: true }); mocks.baseSend.mockResolvedValue({ success: true });
   root = createRoot(document.createElement("div"));
 });
 afterEach(async () => { await act(async () => root.unmount()); vi.unstubAllEnvs(); });
-describe("authentication provider transitions", () => {
-  it("opens the existing-wallet selector when Privy is configured and remembers the choice", async () => {
-    await render();
-    await act(async () => { if (state.status === "unauthenticated") state.connectExistingWallet(); });
-    // Dynamic module loading can finish after the initial act.
-    await vi.waitFor(() => expect(mocks.show).toHaveBeenCalled());
-    expect(mocks.privy.login).not.toHaveBeenCalled();
-    expect(localStorage.getItem("allocard_auth_method")).toBe("wallet");
-  });
-  it("restores the selected wallet login method on reload", async () => {
+describe("Privy-only authentication", () => {
+  it("opens Privy and ignores the obsolete wallet-selector preference", async () => {
     localStorage.setItem("allocard_auth_method", "wallet");
     await render();
-    await vi.waitFor(() => expect(mocks.show).toHaveBeenCalled());
-    expect(mocks.privy.login).not.toHaveBeenCalled();
+    await act(async () => { if (state.status === "unauthenticated") state.connect(); });
+    expect(mocks.privy.login).toHaveBeenCalledTimes(1);
+  });
+  it("fails clearly when Privy is not configured", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRIVY_APP_ID", ""); await render();
+    expect(state).toMatchObject({ status: "unauthenticated", error: expect.stringContaining("not configured") });
   });
   it("leaves connecting state when Privy logs out during session creation", async () => {
-    mocks.privy.authenticated = true;
-    mocks.privy.user = { linkedAccounts: [{ type: "wallet", chainType: "near", walletClientType: "privy", address: identity.walletAddress }] };
-    mocks.createPrivySession.mockImplementationOnce(() => new Promise(() => {}));
+    signIn(); mocks.createPrivySession.mockImplementationOnce(() => new Promise(() => {}));
     await render(); expect(state.status).toBe("connecting");
     mocks.privy.authenticated = false; mocks.privy.user = null;
-    await render();
-    expect(state.status).toBe("unauthenticated");
+    await render(); expect(state.status).toBe("unauthenticated");
     expect(mocks.clearSession).toHaveBeenCalled();
   });
-  it("leaves connecting state when a wallet disconnects during signing", async () => {
-    vi.stubEnv("NEXT_PUBLIC_PRIVY_APP_ID", "");
-    mocks.accounts = [{ accountId: identity.walletAddress }];
-    mocks.createSession.mockImplementationOnce(() => new Promise(() => {}));
+  it("keeps renewal callback stable and preserves wallet visibility", async () => {
+    signIn(); await render(); expect(state.status).toBe("authenticated");
+    if (state.status !== "authenticated") throw new Error("Expected authentication");
+    const renew = state.establishSession;
+    seen.length = 0;
+    mocks.createPrivySession.mockResolvedValue({ ...identity });
+    await act(async () => { await renew(); });
     await render();
-    await vi.waitFor(() => expect(mocks.createSession).toHaveBeenCalled());
-    expect(state.status).toBe("connecting");
-    await act(async () => { mocks.accounts = []; mocks.listener?.({ accounts: [] }); });
-    expect(state.status).toBe("unauthenticated");
-    expect(mocks.clearSession).toHaveBeenCalled();
-  });
-  it("renews the server session when establishSession is requested", async () => {
-    mocks.privy.authenticated = true;
-    mocks.privy.user = { linkedAccounts: [{ type: "wallet", chainType: "near", walletClientType: "privy", address: identity.walletAddress }] };
-    await render(); expect(state.status).toBe("authenticated");
-    await act(async () => { if (state.status === "authenticated") await state.establishSession(); });
+    expect(state.status === "authenticated" && state.establishSession).toBe(renew);
+    expect(seen).not.toContain("connecting");
     expect(mocks.createPrivySession).toHaveBeenCalledTimes(2);
+  });
+  it("does not restart bootstrap when SDK callbacks change", async () => {
+    signIn(); await render(); seen.length = 0;
+    const original = mocks.privy.getAccessToken;
+    mocks.privy.getAccessToken = vi.fn();
+    try {
+      await render();
+      expect(mocks.createPrivySession).toHaveBeenCalledTimes(1);
+      expect(seen).not.toContain("connecting");
+    } finally { mocks.privy.getAccessToken = original; }
+  });
+  it("hides the previous identity and clears private data when the user changes", async () => {
+    signIn(); await render();
+    queryClient.setQueryData(["allocard", "private"], "secret");
+    mocks.privy.user = { ...mocks.privy.user!, id: "did:privy:bob" };
+    mocks.createPrivySession.mockImplementationOnce(() => new Promise(() => {}));
+    await render();
+    expect(state.status).toBe("connecting");
+    expect(queryClient.getQueryData(["allocard", "private"])).toBeUndefined();
+    expect(mocks.clearSession).toHaveBeenCalledTimes(1);
+  });
+  it("invalidates account reads only after a confirmed transaction", async () => {
+    signIn(); await render();
+    const key = ["allocard", "testnet", identity.providerUserId, identity.walletAddress, "dashboard"];
+    queryClient.setQueryData(key, { balance: "1" });
+    await act(async () => { if (state.status === "authenticated") await state.sendActions({ receiverId: "treasury.testnet", actions: [] }); });
+    expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
+    queryClient.setQueryData(key, { balance: "1" });
+    mocks.baseSend.mockRejectedValueOnce(new Error("Rejected"));
+    await act(async () => {
+      if (state.status === "authenticated") await expect(state.sendActions({ receiverId: "treasury.testnet", actions: [] })).rejects.toThrow("Rejected");
+    });
+    expect(queryClient.getQueryState(key)?.isInvalidated).toBe(false);
   });
 });

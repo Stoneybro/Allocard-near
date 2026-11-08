@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import { useAccountScope } from "@/hooks/use-account-queries";
+import { withTimeout } from "@/lib/request-timeout";
 import { activateSmartAccount } from "@/app/actions/identity";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/components/AuthProvider";
 import { getUnifiedNearCaller } from "@/lib/near";
-import { sharedConfig, registerCompany, type SharedConfig } from "@/lib/shared-treasury";
+import { sharedConfig, registerCompany } from "@/lib/shared-treasury";
 import { parseTreasuryReference } from "@allocard/delegation-sdk";
 import { isNativeNearAccount } from "@/lib/wallet";
 
@@ -26,24 +29,19 @@ export function SmartAccountActivationButton({
 }) {
   const auth = useAuth();
   const [error, setError] = useState<string | null>(null);
-  const [shared, setShared] = useState<SharedConfig | null>(null);
-  const [configError, setConfigError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (mode === "company") {
-      void sharedConfig()
-        .then((config) => {
-          if (!cancelled) setShared(config);
-        })
-        .catch((caught) => {
-          if (!cancelled) setConfigError(caught.message);
-        });
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [mode]);
+  const { key } = useAccountScope();
+  const queryClient = useQueryClient();
+  const config = useQuery({
+    queryKey: [...key, "shared-config"], enabled: mode === "company",
+    queryFn: () => withTimeout(sharedConfig(), "Company setup is temporarily unavailable. Please retry."),
+    staleTime: 60_000,
+  });
+  const shared = config.data;
+  const configError = config.error?.message;
+  const activation = useMutation({
+    mutationFn: activateSmartAccount, retry: false,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: key }),
+  });
 
   const [pending, startTransition] = useTransition();
 
@@ -51,7 +49,7 @@ export function SmartAccountActivationButton({
     startTransition(async () => {
       try {
         setError(null);
-        if (auth.status !== "authenticated" || (!auth.selector && !auth.sendActions)) {
+        if (auth.status !== "authenticated" || !auth.sendActions) {
           throw new Error("Connect your NEAR signing wallet first");
         }
 
@@ -66,7 +64,7 @@ export function SmartAccountActivationButton({
           if (!isNativeNearAccount(target)) throw new Error("Enter a NEAR account ID");
         }
 
-        const result = await activateSmartAccount({
+        const result = await activation.mutateAsync({
           walletAddress: auth.accountId || walletAddress,
           smartAccountAddress: target,
         });

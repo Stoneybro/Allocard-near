@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Loader2 } from "lucide-react";
+import { useAuth } from "@/components/AuthProvider";
+import { useQueryClient } from "@tanstack/react-query";
+import { accountQueryKey } from "@/lib/query-keys";
+import { getWalletProfile } from "@/app/actions/identity";
+import { withTimeout } from "@/lib/request-timeout";
 import Image from "next/image";
 
 function routeForStatus(status?: "new" | "picker" | "employer" | "employee" | null) {
@@ -13,17 +18,19 @@ function routeForStatus(status?: "new" | "picker" | "employer" | "employee" | nu
 
 export function LandingPageClient({
   initialWalletAddress,
-  initialProfileStatus,
 }: {
   initialWalletAddress?: string | null;
-  initialProfileStatus?: "employer" | "employee" | "picker" | "new" | null;
 } = {}) {
   const router = useRouter();
+  const auth = useAuth();
+  const queryClient = useQueryClient();
+  const requestedLogin = useRef(false);
+  const [routeError, setRouteError] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "routing">("idle");
   const [activeTarget, setActiveTarget] = useState<"nav" | "hero">("hero");
   const isNavigatingRef = useRef(false);
 
-  const isAuthenticated = Boolean(initialWalletAddress);
+  const isAuthenticated = auth.status === "authenticated" || (auth.status === "connecting" && Boolean(initialWalletAddress));
 
   // Prefetch dashboard routes so assets are immediately available in browser cache
   useEffect(() => {
@@ -39,20 +46,41 @@ export function LandingPageClient({
     }
   }, []);
 
-  const handleGetStarted = useCallback(
-    (target: "nav" | "hero" = "hero") => {
-      if (isNavigatingRef.current) return;
-      isNavigatingRef.current = true;
-      setActiveTarget(target);
-      setPhase("routing");
-
-      const destination = routeForStatus(initialProfileStatus);
-      router.push(destination);
-    },
-    [router, initialProfileStatus]
-  );
-
-  const isBusy = phase !== "idle";
+  const address = auth.status === "authenticated" ? auth.address : null;
+  const principal = auth.status === "authenticated" ? auth.providerUserId : null;
+  const openWorkspace = useCallback(async () => {
+    if (!address || !principal || isNavigatingRef.current) return;
+    isNavigatingRef.current = true;
+    requestedLogin.current = false;
+    setRouteError(null);
+    setPhase("routing");
+    try {
+      const profile = await queryClient.fetchQuery({
+        queryKey: [...accountQueryKey(principal, address), "profile"],
+        queryFn: () => withTimeout(getWalletProfile(address), "Could not open your workspace. Please try again."),
+        staleTime: 0,
+      });
+      router.push(routeForStatus(profile.status));
+    } catch (caught) {
+      setRouteError(caught instanceof Error ? caught.message : "Could not open your workspace.");
+      isNavigatingRef.current = false;
+      setPhase("idle");
+    }
+  }, [address, principal, queryClient, router]);
+  useEffect(() => {
+    if (address && requestedLogin.current) void openWorkspace();
+  }, [address, openWorkspace]);
+  const handleGetStarted = (target: "nav" | "hero" = "hero") => {
+    setActiveTarget(target);
+    if (auth.status === "unauthenticated") {
+      requestedLogin.current = true;
+      setRouteError(null);
+      auth.connect();
+    } else if (auth.status === "authenticated") {
+      void openWorkspace();
+    }
+  };
+  const isBusy = phase !== "idle" || auth.status === "connecting";
 
   const renderNavButtonContent = () => {
     if (phase === "routing" && activeTarget === "nav") {
@@ -97,6 +125,9 @@ export function LandingPageClient({
   return (
     <div className="landing landing-restored min-h-screen font-sans antialiased">
 
+      {(routeError || (auth.status === "unauthenticated" && auth.error)) && (
+        <p role="alert" className="fixed bottom-4 left-4 right-4 z-50 rounded-md border bg-white p-4 text-sm text-red-700 shadow-lg">{routeError || (auth.status === "unauthenticated" ? auth.error : "")}</p>
+      )}
       <a className="landing-skip" href="#main">Skip to content</a>
 
       {/* ── Nav ── */}

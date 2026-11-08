@@ -2,6 +2,7 @@
   "agent_bookings": [
     "agent_id",
     "amount_eth",
+    "asset_network",
     "booking_details",
     "company_id",
     "created_at",
@@ -22,9 +23,21 @@
     "signer_address",
     "smart_account_address"
   ],
+  "auth_sessions": [
+    "created_at",
+    "email",
+    "expires_at",
+    "last_seen_at",
+    "provider_session_hash",
+    "provider_user_id",
+    "revoked_at",
+    "token_hash",
+    "wallet_address"
+  ],
   "claim_redemptions": [
     "agent_id",
     "amount_eth",
+    "asset_network",
     "claim_description",
     "company_id",
     "created_at",
@@ -32,6 +45,7 @@
     "employee_id",
     "id",
     "receipt_url",
+    "reimbursement_job_id",
     "status",
     "tx_hash",
     "venice_approved",
@@ -56,10 +70,6 @@
     "removed_at",
     "status",
     "user_id"
-  ],
-  "consumed_login_nonces": [
-    "expires_at",
-    "nonce_hash"
   ],
   "delegation_caveats": [
     "caveat_type",
@@ -95,6 +105,7 @@
   ],
   "manual_transactions": [
     "amount_eth",
+    "asset_network",
     "company_id",
     "created_at",
     "delegation_id",
@@ -136,6 +147,32 @@
     "id",
     "normalized_email",
     "status"
+  ],
+  "reimbursement_jobs": [
+    "actor",
+    "agent_id",
+    "amount_yocto",
+    "company_id",
+    "created_at",
+    "delegation_id",
+    "description",
+    "employee_id",
+    "execution_id",
+    "id",
+    "intent_hash",
+    "lease_token",
+    "lease_until",
+    "recipient",
+    "request",
+    "review",
+    "signed_transaction",
+    "state",
+    "transaction_hash",
+    "treasury"
+  ],
+  "revoked_provider_sessions": [
+    "provider_session_hash",
+    "revoked_at"
   ],
   "users": [
     "company_id",

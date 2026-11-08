@@ -1,29 +1,21 @@
 export type WalletAddress = string;
 
-// NEAR account IDs: 2 to 64 characters, lowercase alphanumeric + '-' + '_' + '.'
-// Also permits 64-char implicit hex accounts, and legacy 0x addresses.
-const nearAccountPattern = /^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
-const hex64Pattern = /^[0-9a-f]{64}$/;
-const legacyEthPattern = /^0x[a-fA-F0-9]{40}$/;
-
+// NEAR account IDs are lowercase, 2–64 characters, with single separators.
+const nearAccountPattern = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
+export function isNativeNearAccount(value: unknown): value is string {
+  return typeof value === "string" && value.length >= 2 && value.length <= 64 && !value.startsWith("0x") && nearAccountPattern.test(value);
+}
 export function isValidWalletAddress(address: string): boolean {
-  if (!address || typeof address !== "string") return false;
-  const normalized = address.trim().toLowerCase();
-  if (normalized.length < 2 || normalized.length > 64) return false;
-  return (
-    nearAccountPattern.test(normalized) ||
-    hex64Pattern.test(normalized) ||
-    legacyEthPattern.test(normalized)
-  );
+  return typeof address === "string" && isNativeNearAccount(address.trim());
 }
 
 export function normalizeWalletAddress(address: string): WalletAddress {
   if (!address || typeof address !== "string") {
     throw new Error("Invalid wallet address: input is required");
   }
-  const normalized = address.trim().toLowerCase();
+  const normalized = address.trim();
   if (!isValidWalletAddress(normalized)) {
-    throw new Error(`Invalid NEAR account ID or address: "${address}"`);
+    throw new Error(`Invalid NEAR account ID: "${address}"`);
   }
   return normalized as WalletAddress;
 }
@@ -70,8 +62,4 @@ export function validateCompanyName(name: string) {
   }
 
   return formatted;
-}
-
-export function isNativeNearAccount(value: unknown): value is string {
-  return typeof value === "string" && value.length >= 2 && value.length <= 64 && !value.startsWith("0x") && nearAccountPattern.test(value);
 }

@@ -1,6 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useInfiniteQuery } from "@tanstack/react-query";
+import { useAccountScope } from "@/hooks/use-account-queries";
+import { withTimeout } from "@/lib/request-timeout";
 import {
   Table,
   TableBody,
@@ -11,29 +14,24 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, ExternalLink } from "lucide-react";
-import { getActivityLog, ActivityLogItem } from "@/app/actions/activity";
+import { getActivityLog, type ActivityCursor } from "@/app/actions/activity";
 import { getTxExplorerUrl, TOKEN_SYMBOL } from "@/lib/chain";
 
 export function ActivityLogTable({ companyId }: { companyId: string }) {
-  const [log, setLog] = useState<ActivityLogItem[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let mounted = true;
-    getActivityLog(companyId)
-      .then((data) => {
-        if (mounted) {
-          setLog(data);
-          setLoading(false);
-        }
-      })
-      .catch((err) => {
-        console.error("Failed to fetch activity log:", err);
-        if (mounted) setLoading(false);
-      });
-    
-    return () => { mounted = false; };
-  }, [companyId]);
+  const { key, address } = useAccountScope();
+  const [type, setType] = useState("all");
+  const query = useInfiniteQuery({
+    queryKey: [...key, "activity", companyId, type], enabled: !!address && !!companyId,
+    initialPageParam: null as ActivityCursor | null,
+    queryFn: ({ pageParam }) => withTimeout(getActivityLog(companyId, { cursor: pageParam, type }), "Activity took too long to load. Please retry."),
+    getNextPageParam: page => page.nextCursor,
+    refetchInterval: 30_000,
+  });
+  const log = query.data?.pages.flatMap(page => page.items) ?? [];
+  const loading = query.isPending;
+  if (query.error) return <div role="alert" className="p-6 text-sm text-destructive">
+    {query.error.message} <button onClick={() => { void query.refetch(); }} className="underline">Try again</button>
+  </div>;
 
   if (loading) {
     return (
@@ -43,16 +41,16 @@ export function ActivityLogTable({ companyId }: { companyId: string }) {
     );
   }
 
-  if (log.length === 0) {
-    return (
-      <div className="text-center p-12 border rounded-lg border-dashed text-muted-foreground">
-        No activity found for this company.
-      </div>
-    );
-  }
 
   return (
     <div className="rounded-md border">
+      <div className="flex items-center justify-between p-3 text-sm">
+        <label>Activity type <select aria-label="Activity type" value={type} onChange={event => setType(event.target.value)} className="ml-2 rounded border p-1">
+          {["all", "Direct Spend", "Procurement", "Reimbursement"].map(value => <option key={value} value={value}>{value}</option>)}
+        </select></label>
+        <button className="underline" onClick={() => { void query.refetch(); }}>Refresh</button>
+      </div>
+      {!log.length && <p className="p-6 text-sm text-muted-foreground">No matching activity.</p>}
       <Table>
         <TableHeader>
           <TableRow>
@@ -78,7 +76,7 @@ export function ActivityLogTable({ companyId }: { companyId: string }) {
               <TableCell>
                 <Badge variant="outline">{item.type}</Badge>
               </TableCell>
-              <TableCell>{item.amountEth} {TOKEN_SYMBOL}</TableCell>
+              <TableCell>{item.amountNear} {item.assetNetwork === "near:testnet" ? TOKEN_SYMBOL : "(legacy asset)"}</TableCell>
               <TableCell className="max-w-xs truncate" title={item.purpose}>
                 {item.purpose}
               </TableCell>
@@ -97,7 +95,7 @@ export function ActivityLogTable({ companyId }: { companyId: string }) {
                 </Badge>
               </TableCell>
               <TableCell>
-                {item.txHash ? (
+                {item.txHash && item.assetNetwork === "near:testnet" ? (
                   <a
                     href={getTxExplorerUrl(item.txHash)}
                     target="_blank"
@@ -114,6 +112,7 @@ export function ActivityLogTable({ companyId }: { companyId: string }) {
           ))}
         </TableBody>
       </Table>
+      {query.hasNextPage && <button className="m-4 text-sm underline" disabled={query.isFetchingNextPage} onClick={() => { void query.fetchNextPage(); }}>{query.isFetchingNextPage ? "Loading…" : "Load more activity"}</button>}
     </div>
   );
 }

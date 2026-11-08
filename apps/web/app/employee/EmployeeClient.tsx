@@ -1,7 +1,9 @@
 "use client";
-import { generateRequestId } from "@allocard/delegation-sdk";
+import { useQueryClient } from "@tanstack/react-query";
+import { useAccountScope, useDashboardData } from "@/hooks/use-account-queries";
+import { preparePendingPayment } from "@/lib/pending-payment";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -38,12 +40,10 @@ import { useAuth } from "@/components/AuthProvider";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { type SidebarAgent } from "@/components/app-sidebar";
+import { ReimbursementsCard } from "@/components/reimbursements-card";
 import { EmployeeSectionCards } from "@/components/employee-section-cards";
 import { ReimbursementDrawer } from "./ReimbursementDrawer";
 import { isReimbursementAgent } from "@/lib/reimbursements/shared";
-import { isAgoraAgent } from "@/lib/agora/shared";
-import { AgoraRemittanceDrawer } from "./AgoraRemittanceDrawer";
-import { DevOpsAgentDrawer } from "./DevOpsAgentDrawer";
 import { SmartAccountActivationButton } from "@/components/smart-account-activation-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -90,10 +90,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { DirectSpendForm } from "./DirectSpendForm";
 import { cn } from "@/lib/utils";
 import { formatWalletAddress, generateEmployeeReferenceId, isValidWalletAddress } from "@/lib/wallet";
-import { CHAIN_ID, TOKEN_SYMBOL, getAddressExplorerUrl, getTxExplorerUrl } from "@/lib/chain";
-import type { PermissionSpec, ExecuteRequest } from "@allocard/delegation-sdk";
+import { TOKEN_SYMBOL, getAddressExplorerUrl, getTxExplorerUrl } from "@/lib/chain";
+import type { PermissionSpec } from "@allocard/delegation-sdk";
 import {
-  createNearWalletCaller,
   getUnifiedNearCaller,
   getTreasuryClient,
   parseTokenAmount,
@@ -105,10 +104,10 @@ import {
 type DelegationRow = EmployeeDashboardState["outboundDelegations"][number];
 
 type CaveatForm = {
-  maxAmountEth: string;
+  maxAmountNear: string;
   period: "none" | "hourly" | "daily" | "weekly" | "monthly";
-  periodAmountEth: string;
-  perTransactionCapEth: string;
+  periodAmountNear: string;
+  perTransactionCapNear: string;
   allowedTargets: string;
   limitedCallsEnabled: boolean;
   limitedCalls: string;
@@ -116,9 +115,9 @@ type CaveatForm = {
 };
 
 type FormErrors = {
-  maxAmountEth?: string;
-  periodAmountEth?: string;
-  perTransactionCapEth?: string;
+  maxAmountNear?: string;
+  periodAmountNear?: string;
+  perTransactionCapNear?: string;
   limitedCalls?: string;
   allowedTargets?: string;
   allowedTargetsWarning?: string;
@@ -133,15 +132,14 @@ const periodDurations = {
   monthly: 60 * 60 * 24 * 30,
 } as const;
 
-const ETH_AMOUNT_RE = /^\d+(\.\d+)?$/;
-const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+const NEAR_AMOUNT_RE = /^\d+(\.\d+)?$/;
 
-function buildEmptyCaveatForm(parentMaxEth: string): CaveatForm {
+function buildEmptyCaveatForm(parentMaxNear: string): CaveatForm {
   return {
-    maxAmountEth: parentMaxEth,
+    maxAmountNear: parentMaxNear,
     period: "none",
-    periodAmountEth: "",
-    perTransactionCapEth: "",
+    periodAmountNear: "",
+    perTransactionCapNear: "",
     allowedTargets: "",
     limitedCallsEnabled: false,
     limitedCalls: "1",
@@ -163,18 +161,18 @@ function caveatRecord(caveat: DelegationRow["caveats"][number]) {
 
 function formFromDelegation(
   delegation: DelegationRow | null,
-  parentMaxEth: string,
+  parentMaxNear: string,
 ): CaveatForm {
-  if (!delegation) return buildEmptyCaveatForm(parentMaxEth);
+  if (!delegation) return buildEmptyCaveatForm(parentMaxNear);
 
-  const nextForm: CaveatForm = buildEmptyCaveatForm(parentMaxEth);
+  const nextForm: CaveatForm = buildEmptyCaveatForm(parentMaxNear);
 
   for (const caveat of delegation.caveats) {
     const value = caveatRecord(caveat);
 
     if (caveat.caveatType === "nativeTokenTransferAmount") {
-      const wei = value.maxAmount ?? value.amount;
-      nextForm.maxAmountEth = typeof wei === "string" ? weiToEthInput(wei) : parentMaxEth;
+      const yocto = value.maxAmount ?? value.amount;
+      nextForm.maxAmountNear = typeof yocto === "string" ? yoctoToNearInput(yocto) : parentMaxNear;
     }
 
     if (caveat.caveatType === "nativeTokenPeriodTransfer") {
@@ -184,12 +182,12 @@ function formFromDelegation(
         period === "hourly" || period === "daily" || period === "weekly" || period === "monthly"
           ? period
           : "daily";
-      nextForm.periodAmountEth = typeof amount === "string" ? weiToEthInput(amount) : "";
+      nextForm.periodAmountNear = typeof amount === "string" ? yoctoToNearInput(amount) : "";
     }
 
     if (caveat.caveatType === "valueLte") {
-      const maxValue = value.maxValue ?? value.valueWei;
-      nextForm.perTransactionCapEth = typeof maxValue === "string" ? weiToEthInput(maxValue) : "";
+      const maxValue = value.maxValue ?? value.valueYocto;
+      nextForm.perTransactionCapNear = typeof maxValue === "string" ? yoctoToNearInput(maxValue) : "";
     }
 
     if (caveat.caveatType === "allowedTargets" && Array.isArray(value.targets)) {
@@ -205,8 +203,8 @@ function formFromDelegation(
   return nextForm;
 }
 
-function weiToEthInput(wei: string) {
-  const value = BigInt(wei);
+function yoctoToNearInput(yocto: string) {
+  const value = BigInt(yocto);
   const whole = value / 1_000_000_000_000_000_000_000_000n;
   const fractional = value % 1_000_000_000_000_000_000_000_000n;
   if (fractional === 0n) return whole.toString();
@@ -224,10 +222,10 @@ function formatDelegationStatus(status: string) {
 
 function buildServerCaveats(form: CaveatForm) {
   return {
-    maxAmountEth: form.maxAmountEth,
+    maxAmountNear: form.maxAmountNear,
     period: form.period,
-    periodAmountEth: form.periodAmountEth || form.maxAmountEth,
-    perTransactionCapEth: form.perTransactionCapEth,
+    periodAmountNear: form.periodAmountNear || form.maxAmountNear,
+    perTransactionCapNear: form.perTransactionCapNear,
     allowedTargets: splitAddresses(form.allowedTargets),
     redeemers: [],
     limitedCalls: form.limitedCallsEnabled ? Number(form.limitedCalls) : null,
@@ -235,55 +233,55 @@ function buildServerCaveats(form: CaveatForm) {
   };
 }
 
-function validateCaveatForm(form: CaveatForm, availableMaxEth: string): FormErrors {
+function validateCaveatForm(form: CaveatForm, availableMaxNear: string): FormErrors {
   const errors: FormErrors = {};
-  const availableMax = parseFloat(availableMaxEth);
+  const availableMax = parseFloat(availableMaxNear);
 
-  if (!ETH_AMOUNT_RE.test(form.maxAmountEth.trim())) {
-    errors.maxAmountEth = `Enter a valid ${TOKEN_SYMBOL} amount (e.g. 0.005).`;
+  if (!NEAR_AMOUNT_RE.test(form.maxAmountNear.trim())) {
+    errors.maxAmountNear = `Enter a valid ${TOKEN_SYMBOL} amount (e.g. 0.005).`;
   } else {
-    const max = parseFloat(form.maxAmountEth);
+    const max = parseFloat(form.maxAmountNear);
     if (max <= 0) {
-      errors.maxAmountEth = "Spending limit must be greater than 0.";
-    } else if (availableMaxEth && !isNaN(availableMax)) {
+      errors.maxAmountNear = "Spending limit must be greater than 0.";
+    } else if (availableMaxNear && !isNaN(availableMax)) {
       if (max > availableMax) {
-        errors.maxAmountEth = `Cannot exceed your remaining delegated balance of ${availableMaxEth} ${TOKEN_SYMBOL}.`;
+        errors.maxAmountNear = `Cannot exceed your remaining delegated balance of ${availableMaxNear} ${TOKEN_SYMBOL}.`;
       }
     }
   }
 
   if (form.period !== "none") {
-    const raw = form.periodAmountEth.trim();
+    const raw = form.periodAmountNear.trim();
     if (!raw) {
-      errors.periodAmountEth = "Enter a period allowance when a recurring period is selected.";
-    } else if (!ETH_AMOUNT_RE.test(raw)) {
-      errors.periodAmountEth = `Enter a valid ${TOKEN_SYMBOL} amount (e.g. 0.01).`;
+      errors.periodAmountNear = "Enter a period allowance when a recurring period is selected.";
+    } else if (!NEAR_AMOUNT_RE.test(raw)) {
+      errors.periodAmountNear = `Enter a valid ${TOKEN_SYMBOL} amount (e.g. 0.01).`;
     } else {
       const period = parseFloat(raw);
-      const max = parseFloat(form.maxAmountEth);
+      const max = parseFloat(form.maxAmountNear);
       if (period <= 0) {
-        errors.periodAmountEth = "Period allowance must be greater than 0.";
-      } else if (!errors.maxAmountEth && period > max) {
-        errors.periodAmountEth = `Period allowance cannot exceed the lifetime limit (${form.maxAmountEth} ${TOKEN_SYMBOL}).`;
+        errors.periodAmountNear = "Period allowance must be greater than 0.";
+      } else if (!errors.maxAmountNear && period > max) {
+        errors.periodAmountNear = `Period allowance cannot exceed the lifetime limit (${form.maxAmountNear} ${TOKEN_SYMBOL}).`;
       }
     }
   }
 
-  const perTxRaw = form.perTransactionCapEth.trim();
+  const perTxRaw = form.perTransactionCapNear.trim();
   if (perTxRaw) {
-    if (!ETH_AMOUNT_RE.test(perTxRaw)) {
-      errors.perTransactionCapEth = `Enter a valid ${TOKEN_SYMBOL} amount (e.g. 0.005).`;
+    if (!NEAR_AMOUNT_RE.test(perTxRaw)) {
+      errors.perTransactionCapNear = `Enter a valid ${TOKEN_SYMBOL} amount (e.g. 0.005).`;
     } else {
       const perTx = parseFloat(perTxRaw);
       if (perTx <= 0) {
-        errors.perTransactionCapEth = "Per-transaction cap must be greater than 0.";
+        errors.perTransactionCapNear = "Per-transaction cap must be greater than 0.";
       } else {
         const ceiling =
-          form.period !== "none" && form.periodAmountEth.trim()
-            ? parseFloat(form.periodAmountEth)
-            : parseFloat(form.maxAmountEth);
+          form.period !== "none" && form.periodAmountNear.trim()
+            ? parseFloat(form.periodAmountNear)
+            : parseFloat(form.maxAmountNear);
         if (!isNaN(ceiling) && perTx > ceiling) {
-          errors.perTransactionCapEth = `Per-transaction cap cannot exceed ${form.period !== "none" ? `the period allowance (${form.periodAmountEth} ${TOKEN_SYMBOL})` : `the lifetime limit (${form.maxAmountEth} ${TOKEN_SYMBOL})`}.`;
+          errors.perTransactionCapNear = `Per-transaction cap cannot exceed ${form.period !== "none" ? `the period allowance (${form.periodAmountNear} ${TOKEN_SYMBOL})` : `the lifetime limit (${form.maxAmountNear} ${TOKEN_SYMBOL})`}.`;
         }
       }
     }
@@ -318,78 +316,25 @@ export function EmployeeClient({
 } = {}) {
   const router = useRouter();
   const auth = useAuth();
+  const queryClient = useQueryClient();
+  const { key: accountKey } = useAccountScope();
   const isMobile = useIsMobile();
-  const currentAuthAddress = auth.status === "authenticated" ? (auth.address as `0x${string}`) : undefined;
-  const didLoadDashboard = useRef(Boolean(initialProfile && initialDashboardState));
-  const [dashboardState, setDashboardState] = useState<EmployeeDashboardState | null>(
-    initialDashboardState ?? null,
-  );
-  const [workspaceOptions, setWorkspaceOptions] = useState<WorkspaceOption[]>(
-    (initialProfile && "workspaces" in initialProfile && initialProfile.workspaces) || [],
-  );
-  const [activeCompanyId, setActiveCompanyId] = useState<string>(
-    (initialProfile && "user" in initialProfile && initialProfile.user ? initialProfile.user.companyId : "") || "",
-  );
+  const currentAuthAddress = auth.status === "authenticated" ? (auth.address) : undefined;
+  const { profile, dashboardState, setDashboardState, mutate: mutateDashboard, refresh: refreshDashboard, error: queryError } =
+    useDashboardData("employee", getEmployeeDashboardState, initialProfile, initialDashboardState);
+  const workspaceOptions = (profile && "workspaces" in profile && profile.workspaces) || [];
+  const activeCompanyId = profile?.user?.companyId ?? "";
   const [isPending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setError] = useState<string | null>(null);
   const [selectedDelegationId, setSelectedDelegationId] = useState<string | null>(null);
   const [caveatForm, setCaveatForm] = useState<CaveatForm>(buildEmptyCaveatForm(""));
   const [formErrors, setFormErrors] = useState<FormErrors>({});
 
-  useEffect(() => {
-    if (auth.status !== "authenticated") {
-      didLoadDashboard.current = false;
-      setDashboardState(null);
-      return;
-    }
-    if (didLoadDashboard.current) {
-      void auth.establishSession().catch(() => {});
-      return;
-    }
-    didLoadDashboard.current = true;
-    const addr = auth.address;
-
-    startTransition(async () => {
-      try {
-        await auth.establishSession();
-        const { getWalletProfile } = await import("@/app/actions/identity");
-        const profile = await getWalletProfile(addr);
-
-        if (profile.status === "new") {
-          router.replace("/onboarding");
-          return;
-        }
-
-        if (profile.status === "picker") {
-          router.replace("/onboarding");
-          return;
-        }
-
-        if (profile.status === "employer") {
-          router.replace("/employer");
-          return;
-        }
-
-        setWorkspaceOptions(profile.workspaces ?? []);
-        setActiveCompanyId(profile.user.companyId ?? "");
-
-        const state = await getEmployeeDashboardState(addr);
-        setDashboardState(state);
-        setError(null);
-      } catch (caughtError) {
-        setError(
-          caughtError instanceof Error
-            ? caughtError.message
-            : "Failed to load dashboard. Please refresh."
-        );
-      }
-    });
-  }, [auth.status, router]);
-
+  const error = actionError ?? queryError?.message;
 
   // ── Derived values ─────────────────────────────────────────────────────────
 
-  const approvedWei = useMemo(() => {
+  const approvedYocto = useMemo(() => {
     try {
       const inbound = dashboardState?.inboundDelegation;
       if (!inbound) return 0n;
@@ -400,7 +345,7 @@ export function EmployeeClient({
     } catch { return 0n; }
   }, [dashboardState?.inboundDelegation]);
 
-  const redelegatedWei = useMemo(() => {
+  const redelegatedYocto = useMemo(() => {
     try {
       const activeOutbound = dashboardState?.outboundDelegations.filter((d) => d.status === "active") ?? [];
       return activeOutbound.reduce((sum, d) => {
@@ -412,9 +357,9 @@ export function EmployeeClient({
     } catch { return 0n; }
   }, [dashboardState?.outboundDelegations]);
 
-  const spentWei = useMemo(() => {
+  const spentYocto = useMemo(() => {
     try {
-      const val = dashboardState?.summary?.spentEth ?? '0';
+      const val = dashboardState?.summary?.spentNear ?? '0';
       const num = parseFloat(val);
       if (isNaN(num) || num <= 0) return 0n;
       const [whole, fractional = ""] = val.split(".");
@@ -423,37 +368,37 @@ export function EmployeeClient({
         BigInt((fractional + "0".repeat(24)).slice(0, 24))
       );
     } catch { return 0n; }
-  }, [dashboardState?.summary?.spentEth]);
+  }, [dashboardState?.summary?.spentNear]);
 
-  const remainingWei = BigInt(parseTokenAmount(dashboardState?.summary.remainingEth ?? "0", 24));
+  const remainingYocto = BigInt(parseTokenAmount(dashboardState?.summary.remainingNear ?? "0", 24));
 
-  const parentMaxEth = useMemo(() => {
+  const parentMaxNear = useMemo(() => {
     try {
       const inbound = dashboardState?.inboundDelegation;
       if (!inbound) return "0";
       const caveat = inbound.caveats.find((c) => c.caveatType === "nativeTokenTransferAmount");
       if (!caveat) return "0";
       const val = caveat.caveatValue as Record<string, unknown>;
-      const wei = BigInt(String(val.maxAmount ?? val.amount ?? "0"));
-      return weiToEthInput(wei.toString());
+      const yocto = BigInt(String(val.maxAmount ?? val.amount ?? "0"));
+      return yoctoToNearInput(yocto.toString());
     } catch { return "0"; }
   }, [dashboardState?.inboundDelegation]);
 
-  const availableMaxEth = useMemo(() => {
-    let baseRemaining = remainingWei;
+  const availableMaxNear = useMemo(() => {
+    let baseRemaining = remainingYocto;
     if (selectedDelegationId && dashboardState) {
       const currentDel = dashboardState.outboundDelegations.find(d => d.id === selectedDelegationId);
       if (currentDel && currentDel.status === "active") {
         const caveat = currentDel.caveats.find((c) => c.caveatType === "nativeTokenTransferAmount");
         if (caveat) {
           const val = caveat.caveatValue as Record<string, unknown>;
-          const currentWei = BigInt(String(val.maxAmount ?? val.amount ?? "0"));
-          baseRemaining += currentWei;
+          const currentYocto = BigInt(String(val.maxAmount ?? val.amount ?? "0"));
+          baseRemaining += currentYocto;
         }
       }
     }
-    return baseRemaining > 0n ? weiToEthInput(baseRemaining.toString()) : "0";
-  }, [remainingWei, selectedDelegationId, dashboardState]);
+    return baseRemaining > 0n ? yoctoToNearInput(baseRemaining.toString()) : "0";
+  }, [remainingYocto, selectedDelegationId, dashboardState]);
 
   const selectedDelegation = useMemo(
     () => dashboardState?.outboundDelegations.find((d) => d.id === selectedDelegationId) ?? null,
@@ -470,7 +415,7 @@ export function EmployeeClient({
 
     // 1. Live platform agents from database (excluding built-in dashboard card services)
     const liveAgents: SidebarAgent[] = (dashboardState.agents ?? [])
-      .filter((agent) => !isReimbursementAgent(agent) && !isAgoraAgent(agent))
+      .filter((agent) => !isReimbursementAgent(agent))
       .map((agent) => {
         const delegation = dashboardState.outboundDelegations.find(
           (d) => d.delegateeId === agent.id && d.status !== "revoked"
@@ -530,26 +475,18 @@ export function EmployeeClient({
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
-  function formatEthTrimmed(wei: bigint) {
-    const s = weiToEthInput(wei.toString());
+  function formatNearTrimmed(yocto: bigint) {
+    const s = yoctoToNearInput(yocto.toString());
     if (!s.includes(".")) return s;
     return s.replace(/(\.\d*?[1-9])0+$/, "$1").replace(/\.0+$/, "");
   }
-
-  const refreshDashboard = useCallback(async () => {
-    if (auth.status !== "authenticated" || !auth.address) return;
-    const state = await getEmployeeDashboardState(auth.address);
-    setDashboardState(state);
-  }, [auth]);
-
-  // Manual refresh only — mutations already refresh state automatically
 
   const runEmployeeMutation = useCallback(
     (mutation: () => Promise<EmployeeDashboardState>) => {
       setError(null);
       startTransition(async () => {
         try {
-          setDashboardState(await mutation());
+          await mutateDashboard(mutation);
         } catch (caughtError) {
           const message = caughtError instanceof Error ? caughtError.message : "Action failed";
           setError(message);
@@ -557,13 +494,13 @@ export function EmployeeClient({
         }
       });
     },
-    [],
+    [mutateDashboard],
   );
 
   const handleSmartAccountActivated = (smartAccountAddress: string | null) => {
     if (!smartAccountAddress) return;
 
-    toast.success("Safe Smart Account Deployed", {
+    toast.success("NEAR Account Activated", {
       description: `Employee account is active on NEAR Testnet (${smartAccountAddress})`,
       action: {
         label: "View Explorer",
@@ -577,9 +514,6 @@ export function EmployeeClient({
   };
 
   const [isReimbursementDrawerOpen, setIsReimbursementDrawerOpen] = useState(false);
-  const [isAgoraDrawerOpen, setIsAgoraDrawerOpen] = useState(false);
-  const [isProcurementAgentDrawerOpen, setIsProcurementAgentDrawerOpen] = useState(false);
-  const [activeProcurementDelegationId, setActiveProcurementDelegationId] = useState<string | null>(null);
 
   // Open drawer for existing delegation (configure / view rules)
   const handleConfigureDelegation = useCallback(
@@ -590,41 +524,22 @@ export function EmployeeClient({
       // For active agent delegations, open the agent-specific drawer
       if (delegation?.status === "active" && delegation.delegateeId) {
         const agent = dashboardState?.agents.find(a => a.id === delegation.delegateeId);
-        if (
-          agent?.name === "Cloud & Tooling Agent" ||
-          agent?.name === "DevOps Procurement Agent" ||
-          agent?.name === "Procurement Agent"
-        ) {
-          if (!dashboardState?.inboundDelegation || dashboardState.inboundDelegation.status !== "active") {
-            toast.warning("No Spending Allowance Delegated", {
-              description:
-                "Your company has not delegated spending funds to you yet. Please ask your employer to configure an allowance for you first.",
-            });
-            return;
-          }
-          setActiveProcurementDelegationId(delegationId);
-          setIsProcurementAgentDrawerOpen(true);
-          return;
-        }
         if (isReimbursementAgent(agent)) {
           setIsReimbursementDrawerOpen(true);
           return;
         }
-        if (isAgoraAgent(agent)) {
-          setIsAgoraDrawerOpen(true);
-          return;
-        }
+
       }
 
       // Default: open the caveat configuration drawer (for pending agents or employees)
       setSelectedDelegationId(delegationId);
-      // Wait for React to process selectedDelegationId state update so availableMaxEth recalculates
+      // Wait for React to process selectedDelegationId state update so availableMaxNear recalculates
       setTimeout(() => {
-        setCaveatForm(formFromDelegation(delegation, availableMaxEth));
+        setCaveatForm(formFromDelegation(delegation, availableMaxNear));
         setFormErrors({});
       }, 0);
     },
-    [dashboardState?.outboundDelegations, dashboardState?.agents, dashboardState?.inboundDelegation, availableMaxEth],
+    [dashboardState, availableMaxNear],
   );
 
   // Agent selector / budget assigner
@@ -639,10 +554,7 @@ export function EmployeeClient({
         setIsReimbursementDrawerOpen(true);
         return;
       }
-      if (isAgoraAgent(selectedAgent)) {
-        setIsAgoraDrawerOpen(true);
-        return;
-      }
+
 
       // If already delegated, open rules or task drawer
       const existing = dashboardState.outboundDelegations.find(
@@ -666,6 +578,7 @@ export function EmployeeClient({
         try {
           const state = await createAgentRedelegation({ walletAddress, agentId });
           setDashboardState(state);
+          await refreshDashboard();
           toast.info("Agent Budget Created", {
             description: "Configure spending rules and caveats to activate sub-delegation.",
           });
@@ -675,7 +588,7 @@ export function EmployeeClient({
           );
           if (pending) {
             setSelectedDelegationId(pending.id);
-            setCaveatForm(formFromDelegation(pending, parentMaxEth));
+            setCaveatForm(formFromDelegation(pending, parentMaxNear));
             setFormErrors({});
           }
         } catch (caughtError) {
@@ -696,7 +609,7 @@ export function EmployeeClient({
         }
       });
     },
-    [auth, parentMaxEth, dashboardState, handleConfigureDelegation],
+    [auth, parentMaxNear, dashboardState, handleConfigureDelegation],
   );
 
   // Task 7b: revoke an employee's own outbound delegation
@@ -733,7 +646,7 @@ export function EmployeeClient({
     if (auth.status !== "authenticated" || !selectedDelegation || !auth.address) return;
     const walletAddress = auth.address;
 
-    const errors = validateCaveatForm(caveatForm, availableMaxEth);
+    const errors = validateCaveatForm(caveatForm, availableMaxNear);
     setFormErrors(errors);
     const hasErrors = Object.keys(errors).some(
       (k) => k !== "allowedTargetsWarning" && errors[k as keyof FormErrors],
@@ -757,11 +670,11 @@ export function EmployeeClient({
           throw new Error("Delegation target agent is missing.");
         }
 
-        const agentSmartAccountAddress = await getAgentSmartAccountAddress(agentId);
+        const agentSmartAccountAddress = await queryClient.fetchQuery({ queryKey: [...accountKey, "agent-account", dashboardState?.company.id, agentId], queryFn: () => getAgentSmartAccountAddress(agentId) });
 
         const parentPermissionId = savedState.inboundDelegation?.delegationHash || "";
-        const parsedLimit = caveatForm.maxAmountEth ? parseTokenAmount(caveatForm.maxAmountEth, 24) : null;
-        const parsedPerTx = caveatForm.perTransactionCapEth ? parseTokenAmount(caveatForm.perTransactionCapEth, 24) : null;
+        const parsedLimit = caveatForm.maxAmountNear ? parseTokenAmount(caveatForm.maxAmountNear, 24) : null;
+        const parsedPerTx = caveatForm.perTransactionCapNear ? parseTokenAmount(caveatForm.perTransactionCapNear, 24) : null;
 
         const childSpec: PermissionSpec = {
           delegate: agentSmartAccountAddress,
@@ -800,13 +713,14 @@ export function EmployeeClient({
           signedDelegation: childSpec,
         });
         setDashboardState(activatedState);
+        await refreshDashboard();
         setSelectedDelegationId(null);
 
         const agent = dashboardState?.agents.find(a => a.id === selectedDelegation.delegateeId);
         const agentName = agent?.name ?? "AI Agent";
 
         toast.success("Agent Sub-Delegation Activated", {
-          description: `Assigned ${caveatForm.maxAmountEth} ${TOKEN_SYMBOL} budget to ${agentName} on NEAR Testnet`,
+          description: `Assigned ${caveatForm.maxAmountNear} ${TOKEN_SYMBOL} budget to ${agentName} on NEAR Testnet`,
           action: {
             label: "View Explorer",
             onClick: () => window.open(getAddressExplorerUrl(agentSmartAccountAddress), "_blank"),
@@ -816,42 +730,26 @@ export function EmployeeClient({
         setError(caughtError instanceof Error ? caughtError.message : "Could not activate delegation");
       }
     });
-  }, [selectedDelegation, auth, caveatForm, availableMaxEth, dashboardState?.inboundDelegation]);
+  }, [selectedDelegation, auth, caveatForm, availableMaxNear, dashboardState?.inboundDelegation]);
 
   // Persist a request before signing. Retrying an uncertain dispatch reuses it.
-  const handleExecuteSpend = async (details: { toAddress: string; amountEth: string; purpose?: string; isFlagged?: boolean }) => {
+  const handleExecuteSpend = async (details: { toAddress: string; amountNear: string; purpose?: string; isFlagged?: boolean }) => {
     if (auth.status !== "authenticated") throw new Error("Connect your NEAR signing wallet");
     const activePermissionId = dashboardState?.inboundDelegation?.delegationHash;
-    const treasury = dashboardState?.company?.smartAccountAddress;
-    if (!treasury) throw new Error("A company treasury is required");
+    const company = dashboardState?.company;
+    const treasury = company?.smartAccountAddress;
+    if (!company || !treasury) throw new Error("A company treasury is required");
     const caller = await getUnifiedNearCaller(auth);
     if (!caller.functionCall) throw new Error("A signing wallet is required");
     const client = getTreasuryClient(caller, treasury);
     const key = `allocard-payment:${treasury}:${auth.accountId}`;
-    const amount = parseTokenAmount(details.amountEth, 24);
-    let saved: { request: ExecuteRequest; transactionHash?: string; executionId?: string; delegationId?: string; attempted?: boolean } | null = JSON.parse(localStorage.getItem(key) || "null");
-    if (saved && (saved.request.action.amount !== amount || saved.request.action.receiver !== details.toAddress)) {
-      throw new Error("A previous payment is unresolved. Retry its original recipient and amount before starting another payment.");
-    }
-    const permissionId = saved?.request.permission_id || activePermissionId;
-    if (!permissionId || !/^[0-9]+$/.test(permissionId)) throw new Error("A confirmed company permission is required");
-    if (!saved) {
-      saved = { delegationId: dashboardState?.inboundDelegation?.id, attempted: false, request: { api_version: 1, request_id: generateRequestId(), permission_id: permissionId,
-        action: { type: "Transfer", asset: { type: "NativeNear" }, receiver: details.toAddress, amount },
-        deadline_ms: (Date.now() + 15 * 60 * 1000).toString() } };
-      localStorage.setItem(key, JSON.stringify(saved));
-    }
-    // An existing execution can be settled even if its permission was revoked meanwhile.
-    const existing = await client.getExecutionByRequest(auth.accountId, saved.request.request_id);
-    if (!existing && BigInt(saved.request.deadline_ms) <= BigInt(Date.now())) {
-      const response = await fetch("/api/wallet/pending", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ companyId: dashboardState?.company?.id, requestId: saved.request.request_id, deadlineMs: saved.request.deadline_ms }) });
-      const status = await response.json();
-      if (response.ok && status.canDiscard) {
-        localStorage.removeItem(key);
-        throw new Error("The chain confirms the previous request expired without dispatch. Submit again to start a fresh payment.");
-      }
-      throw new Error("The previous payment is still unresolved. Keep this request and retry after checking its on-chain status.");
-    }
+    const amount = parseTokenAmount(details.amountNear, 24);
+    const { saved, existing } = await preparePendingPayment({
+      storage: localStorage, key, companyId: company.id,
+      receiver: details.toAddress, amount, activePermissionId,
+      delegationId: dashboardState?.inboundDelegation?.id,
+      readExecution: requestId => client.getExecutionByRequest(auth.accountId, requestId),
+    });
     if (!existing) {
       const preview = await client.previewExecute(auth.accountId, saved.request);
       if (!preview.allowed) { if (!saved.attempted) localStorage.removeItem(key); throw new Error(preview.error_message || preview.error_code || "Payment is outside your spending permission"); }
@@ -892,6 +790,7 @@ export function EmployeeClient({
       throw new Error(data.error || "Failed to verify receipt");
     }
     const data = await res.json();
+    await refreshDashboard();
     return data.verification;
   };
 
@@ -1014,7 +913,7 @@ export function EmployeeClient({
             </div>
             <SmartAccountActivationButton
               mode="employee"
-              walletAddress={(currentAuthAddress || employee.walletAddress) as `0x${string}`}
+              walletAddress={(currentAuthAddress || employee.walletAddress)}
               existingSmartAccountAddress={employee.smartAccountAddress}
               onActivated={(result) => handleSmartAccountActivated(result.smartAccountAddress)}
             />
@@ -1030,20 +929,23 @@ export function EmployeeClient({
         )}
 
         {/* Summary cards */}
+        <ReimbursementsCard role="employee" program={dashboardState.reimbursement} accountReady={!!employee.smartAccountAddress}
+          onOpen={() => setIsReimbursementDrawerOpen(true)} onRefresh={() => { void refreshDashboard(); }} />
         <EmployeeSectionCards
-          approvedLimitEth={summary.approvedLimitEth}
-          redelegatedEth={summary.redelegatedEth}
-          remainingEth={formatEthTrimmed(remainingWei)}
-          spentEth={summary.spentEth}
+          approvedLimitNear={summary.approvedLimitNear}
+          redelegatedNear={summary.redelegatedNear}
+          remainingNear={formatNearTrimmed(remainingYocto)}
+          spentNear={summary.spentNear}
         />
 
         {/* Direct Spend Workspace */}
         <div className="w-full">
           <DirectSpendForm
+            companyId={dashboardState.company.id}
             key={`${dashboardState.company?.smartAccountAddress ?? "none"}:${auth.status === "authenticated" ? auth.accountId : "signed-out"}`}
             delegationId={dashboardState.inboundDelegation?.id || ""}
             pendingStorageKey={dashboardState.company?.smartAccountAddress && auth.status === "authenticated" ? `allocard-payment:${dashboardState.company.smartAccountAddress}:${auth.accountId}` : undefined}
-            remainingBalanceEth={formatEthTrimmed(remainingWei)}
+            remainingBalanceNear={formatNearTrimmed(remainingYocto)}
             onExecute={handleExecuteSpend}
             onVerifyReceipt={handleVerifyReceipt}
           />
@@ -1082,7 +984,7 @@ export function EmployeeClient({
                   {formatDelegationStatus(selectedDelegation.status)}
                 </Badge>
                 <p className="text-xs text-muted-foreground">
-                  Remaining available: <span className="font-semibold text-foreground">{availableMaxEth} {TOKEN_SYMBOL}</span>
+                  Remaining available: <span className="font-semibold text-foreground">{availableMaxNear} {TOKEN_SYMBOL}</span>
                 </p>
               </div>
             )}
@@ -1102,18 +1004,18 @@ export function EmployeeClient({
                 <Label htmlFor="emp-max-amount">Lifetime Spending Limit ({TOKEN_SYMBOL})</Label>
                 <Input
                   id="emp-max-amount"
-                  value={caveatForm.maxAmountEth}
-                  className={formErrors.maxAmountEth ? "border-destructive" : ""}
+                  value={caveatForm.maxAmountNear}
+                  className={formErrors.maxAmountNear ? "border-destructive" : ""}
                   disabled={selectedDelegation?.status === "active"}
                   onChange={(e) =>
-                    setCaveatForm((f) => ({ ...f, maxAmountEth: e.target.value }))
+                    setCaveatForm((f) => ({ ...f, maxAmountNear: e.target.value }))
                   }
                 />
-                {formErrors.maxAmountEth ? (
-                  <p className="text-[0.8rem] text-destructive">{formErrors.maxAmountEth}</p>
+                {formErrors.maxAmountNear ? (
+                  <p className="text-[0.8rem] text-destructive">{formErrors.maxAmountNear}</p>
                 ) : (
                   <p className="text-[0.8rem] text-muted-foreground">
-                    Max: {availableMaxEth} {TOKEN_SYMBOL} (your remaining available balance).
+                    Max: {availableMaxNear} {TOKEN_SYMBOL} (your remaining available balance).
                   </p>
                 )}
               </div>
@@ -1141,7 +1043,7 @@ export function EmployeeClient({
                   </SelectContent>
                 </Select>
                 <p className="text-[0.8rem] text-muted-foreground">
-                  Reset the agent's spending on a recurring schedule.
+                  Reset the agent&apos;s spending on a recurring schedule.
                 </p>
               </div>
 
@@ -1150,15 +1052,15 @@ export function EmployeeClient({
                   <Label htmlFor="emp-period-amount">Allowance per Period ({TOKEN_SYMBOL})</Label>
                   <Input
                     id="emp-period-amount"
-                    value={caveatForm.periodAmountEth}
-                    className={formErrors.periodAmountEth ? "border-destructive" : ""}
+                    value={caveatForm.periodAmountNear}
+                    className={formErrors.periodAmountNear ? "border-destructive" : ""}
                     disabled={selectedDelegation?.status === "active"}
                     onChange={(e) =>
-                      setCaveatForm((f) => ({ ...f, periodAmountEth: e.target.value }))
+                      setCaveatForm((f) => ({ ...f, periodAmountNear: e.target.value }))
                     }
                   />
-                  {formErrors.periodAmountEth ? (
-                    <p className="text-[0.8rem] text-destructive">{formErrors.periodAmountEth}</p>
+                  {formErrors.periodAmountNear ? (
+                    <p className="text-[0.8rem] text-destructive">{formErrors.periodAmountNear}</p>
                   ) : (
                     <p className="text-[0.8rem] text-muted-foreground">
                       How much the agent can spend per {caveatForm.period} period.
@@ -1178,15 +1080,15 @@ export function EmployeeClient({
                 <Label htmlFor="emp-value-lte">Maximum Per-Transaction ({TOKEN_SYMBOL})</Label>
                 <Input
                   id="emp-value-lte"
-                  value={caveatForm.perTransactionCapEth}
-                  className={formErrors.perTransactionCapEth ? "border-destructive" : ""}
+                  value={caveatForm.perTransactionCapNear}
+                  className={formErrors.perTransactionCapNear ? "border-destructive" : ""}
                   disabled={selectedDelegation?.status === "active"}
                   onChange={(e) =>
-                    setCaveatForm((f) => ({ ...f, perTransactionCapEth: e.target.value }))
+                    setCaveatForm((f) => ({ ...f, perTransactionCapNear: e.target.value }))
                   }
                 />
-                {formErrors.perTransactionCapEth ? (
-                  <p className="text-[0.8rem] text-destructive">{formErrors.perTransactionCapEth}</p>
+                {formErrors.perTransactionCapNear ? (
+                  <p className="text-[0.8rem] text-destructive">{formErrors.perTransactionCapNear}</p>
                 ) : (
                   <p className="text-[0.8rem] text-muted-foreground">
                     Cap per single transaction. Leave blank for no cap.
@@ -1305,7 +1207,7 @@ export function EmployeeClient({
                     <AlertDialogHeader>
                       <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
                       <AlertDialogDescription>
-                        This will permanently revoke this agent's active sub-delegation on NEAR Testnet.
+                        This will permanently revoke this agent&apos;s active sub-delegation on NEAR Testnet.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
@@ -1347,35 +1249,6 @@ export function EmployeeClient({
           program={dashboardState.reimbursement}
           accountReady={Boolean(dashboardState.employee.smartAccountAddress)}
           onRefresh={refreshDashboard}
-        />
-      )}
-      {dashboardState && (
-        <AgoraRemittanceDrawer
-          isOpen={isAgoraDrawerOpen}
-          onOpenChange={setIsAgoraDrawerOpen}
-          companyId={dashboardState.company.id}
-          employeeId={dashboardState.employee.id}
-          program={dashboardState.agora}
-          accountReady={Boolean(dashboardState.employee.smartAccountAddress)}
-          onRefresh={refreshDashboard}
-        />
-      )}
-
-      {activeProcurementDelegationId && dashboardState && (
-        <DevOpsAgentDrawer
-          isOpen={isProcurementAgentDrawerOpen}
-          onOpenChange={setIsProcurementAgentDrawerOpen}
-          employee={dashboardState.employee}
-          company={dashboardState.company}
-          agentId={
-            dashboardState.agents.find(
-              (a) =>
-                a.name === "Cloud & Tooling Agent" ||
-                a.name === "DevOps Procurement Agent" ||
-                a.name === "Procurement Agent",
-            )?.id || ""
-          }
-          delegationId={activeProcurementDelegationId}
         />
       )}
     </DashboardShell>

@@ -266,15 +266,17 @@ export const claimRedemptions = pgTable(
     }),
     /** Hash of the delegation that was (or would have been) redeemed. */
     delegationHash: text("delegation_hash"),
+    reimbursementJobId: text("reimbursement_job_id").references(() => reimbursementJobs.id),
     claimDescription: text("claim_description").notNull(),
-    amountEth: text("amount_eth").notNull(),
+    assetNetwork: text("asset_network").notNull().default("legacy:unknown"),
+    amountNear: text("amount_eth").notNull(),
     /** Vercel Blob URL of the uploaded receipt image, if provided. */
     receiptUrl: text("receipt_url"),
     /** Full prompt text sent to AI, stored for audit. */
-    venicePrompt: text("venice_prompt"),
-    veniceApproved: boolean("venice_approved"),
-    veniceReasoning: text("venice_reasoning"),
-    veniceConfidence: doublePrecision("venice_confidence"),
+    aiPrompt: text("venice_prompt"),
+    aiApproved: boolean("venice_approved"),
+    aiReasoning: text("venice_reasoning"),
+    aiConfidence: doublePrecision("venice_confidence"),
     /** On-chain tx hash of the UserOperation that redeemed the delegation. */
     txHash: text("tx_hash"),
     status: claimStatusEnum("status").notNull().default("pending"),
@@ -283,6 +285,7 @@ export const claimRedemptions = pgTable(
       .defaultNow(),
   },
   (table) => [
+    uniqueIndex("claim_redemptions_job_unique").on(table.reimbursementJobId),
     index("claim_redemptions_agent_id_idx").on(table.agentId),
     index("claim_redemptions_employee_id_idx").on(table.employeeId),
     index("claim_redemptions_company_id_idx").on(table.companyId),
@@ -299,11 +302,12 @@ export const agentBookings = pgTable(
     employeeId: uuid("employee_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
     bookingDetails: jsonb("booking_details").notNull(),
-    amountEth: numeric("amount_eth").notNull(),
+    assetNetwork: text("asset_network").notNull().default("legacy:unknown"),
+    amountNear: numeric("amount_eth").notNull(),
     txHash: text("tx_hash"),
-    venicePrompt: text("venice_prompt"),
-    veniceReasoning: text("venice_reasoning"),
-    veniceConfidence: doublePrecision("venice_confidence"),
+    aiPrompt: text("venice_prompt"),
+    aiReasoning: text("venice_reasoning"),
+    aiConfidence: doublePrecision("venice_confidence"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -320,7 +324,8 @@ export const manualTransactions = pgTable(
     employeeId: uuid("employee_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     delegationId: uuid("delegation_id").notNull().references(() => delegations.id, { onDelete: "cascade" }),
     toAddress: text("to_address").notNull(),
-    amountEth: numeric("amount_eth").notNull(),
+    assetNetwork: text("asset_network").notNull().default("legacy:unknown"),
+    amountNear: numeric("amount_eth").notNull(),
     purpose: text("purpose").notNull(),
     isFlagged: boolean("is_flagged").notNull().default(false),
     txHash: text("tx_hash"),
@@ -336,12 +341,6 @@ export const manualTransactions = pgTable(
     index("manual_transactions_company_id_idx").on(table.companyId),
   ]
 );
-
-/** Single-use NEP-413 login challenges; expire old rows during maintenance. */
-export const consumedLoginNonces = pgTable("consumed_login_nonces", {
-  nonceHash: text("nonce_hash").primaryKey(),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-}, table => [index("consumed_login_nonces_expiry_idx").on(table.expiresAt)]);
 
 /** Durable, conservative sponsorship quotas; failed attempts also consume a slot. */
 export const nearSponsorLimits = pgTable("near_sponsor_limits", {
@@ -367,3 +366,44 @@ export const nearSponsorKeys = pgTable("near_sponsor_keys", {
   nonce: numeric("nonce", { precision: 20, scale: 0 }).notNull(),
   leaseUntil: timestamp("lease_until", { withTimezone: true }).notNull(),
 });
+
+/** Opaque browser sessions, revocable independently of the Privy SDK. */
+export const authSessions = pgTable("auth_sessions", {
+  tokenHash: text("token_hash").primaryKey(),
+  providerSessionHash: text("provider_session_hash").notNull(),
+  providerUserId: text("provider_user_id").notNull(),
+  walletAddress: text("wallet_address").notNull(),
+  email: text("email").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+}, table => [index("auth_sessions_provider_idx").on(table.providerSessionHash), index("auth_sessions_expiry_idx").on(table.expiresAt)]);
+export const revokedProviderSessions = pgTable("revoked_provider_sessions", {
+  providerSessionHash: text("provider_session_hash").primaryKey(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Receipt-bound intent and exact signed NEAR transaction are durable before broadcast. */
+export const reimbursementJobs = pgTable("reimbursement_jobs", {
+  id: text("id").primaryKey(),
+  intentHash: text("intent_hash").notNull(),
+  companyId: uuid("company_id").notNull().references(() => companies.id),
+  employeeId: uuid("employee_id").notNull().references(() => users.id),
+  agentId: uuid("agent_id").notNull().references(() => agents.id),
+  delegationId: uuid("delegation_id").notNull().references(() => delegations.id),
+  treasury: text("treasury").notNull(),
+  actor: text("actor").notNull(),
+  recipient: text("recipient").notNull(),
+  amountYocto: numeric("amount_yocto", { precision: 78, scale: 0 }).notNull(),
+  description: text("description").notNull(),
+  request: jsonb("request").notNull(),
+  state: text("state").notNull().default("reviewing"),
+  review: jsonb("review"),
+  leaseToken: text("lease_token").notNull(),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }).notNull(),
+  signedTransaction: text("signed_transaction"),
+  transactionHash: text("transaction_hash"),
+  executionId: text("execution_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, table => [index("reimbursement_jobs_employee_idx").on(table.employeeId), index("reimbursement_jobs_company_idx").on(table.companyId)]);

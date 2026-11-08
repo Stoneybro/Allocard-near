@@ -22,14 +22,14 @@ export function SectionCards({
   employeeCount,
   smartAccountBalance,
   activeDelegationCount,
-  delegatedNativeEthAllowance,
+  delegatedNativeNearAllowance,
   onTopUp,
   isToppingUp,
 }: {
   employeeCount: number;
   smartAccountBalance: string;
   activeDelegationCount: number;
-  delegatedNativeEthAllowance: string;
+  delegatedNativeNearAllowance: string;
   onTopUp?: () => void;
   isToppingUp?: boolean;
 }) {
@@ -107,7 +107,7 @@ export function SectionCards({
         <CardHeader>
           <CardDescription>Budgeted {TOKEN_SYMBOL}</CardDescription>
           <CardTitle className="text-xl font-semibold tabular-nums @[250px]/card:text-2xl">
-            {delegatedNativeEthAllowance} {TOKEN_SYMBOL}
+            {delegatedNativeNearAllowance} {TOKEN_SYMBOL}
           </CardTitle>
           <CardAction>
             <Badge variant="outline" className="px-1 py-0">

@@ -1,8 +1,8 @@
 import { Buffer } from "buffer";
 import { parseTreasuryReference, type ExecuteRequest } from "@allocard/delegation-sdk";
-import { sponsoredDelegate, sponsoredSigningBytes, type SponsoredPayment } from "./near-sponsored-action";
+import { sponsoredCompanyDelegate, sponsoredDelegate, sponsoredSigningBytes, type SponsoredCompany, type SponsoredPayment } from "./near-sponsored-action";
 
-async function sponsorRequest(operation: "prepare" | "submit", body: object) {
+async function sponsorRequest(operation: "prepare" | "submit" | "prepare-company" | "submit-company", body: object) {
   let response: Response;
   try {
     response = await fetch("/api/near/sponsor", {
@@ -11,10 +11,10 @@ async function sponsorRequest(operation: "prepare" | "submit", body: object) {
       signal: AbortSignal.timeout(120000),
     });
   } catch {
-    throw new Error("Gas sponsorship could not be confirmed. Retry this same payment to check its status.");
+    throw new Error("Gas sponsorship could not be confirmed. Retry this same action to check its status.");
   }
   const result = await response.json().catch(() => null);
-  if (!response.ok || !result) throw new Error(result?.error ?? "Gas sponsorship could not be confirmed. Retry the same payment to check its status.");
+  if (!response.ok || !result) throw new Error(result?.error ?? "Gas sponsorship could not be confirmed. Retry the same action to check its status.");
   return result;
 }
 
@@ -30,6 +30,21 @@ export async function sponsoredExecute(accountId: string, receiverId: string, ar
   const signature = await signHash(`0x${Buffer.from(digest).toString("hex")}`);
   if (!/^0x[0-9a-fA-F]{128}$/.test(signature)) throw new Error("Privy did not return an Ed25519 signature");
   const result = await sponsorRequest("submit", { ...payment, nonce: prepared.nonce, maxBlockHeight: prepared.maxBlockHeight, signature });
-  if (!result.outcome) throw new Error("Sponsored payment has no confirmed outcome. Retry the same payment to check its status.");
+  if (!result.outcome) throw new Error("Sponsored payment has no confirmed outcome. Retry the same action to check its status.");
+  return result.outcome;
+}
+
+export async function sponsoredCreateCompany(accountId: string, company: SponsoredCompany, signHash: (hash: `0x${string}`) => Promise<`0x${string}`>) {
+  const prepared = await sponsorRequest("prepare-company", company);
+  if (!prepared.enabled) return null;
+  if (prepared.registered) return { registered: true };
+  if (prepared.outcome) return prepared.outcome;
+  const delegate = sponsoredCompanyDelegate(accountId, company, prepared.nonce, prepared.maxBlockHeight);
+  const digest = await crypto.subtle.digest("SHA-256", sponsoredSigningBytes(delegate));
+  const signature = await signHash(`0x${Buffer.from(digest).toString("hex")}`);
+  if (!/^0x[0-9a-fA-F]{128}$/.test(signature)) throw new Error("Privy did not return an Ed25519 signature");
+  const result = await sponsorRequest("submit-company", { ...company, nonce: prepared.nonce, maxBlockHeight: prepared.maxBlockHeight, signature });
+  if (result.registered) return { registered: true };
+  if (!result.outcome) throw new Error("Company registration could not be confirmed. Retry this workspace to check its status.");
   return result.outcome;
 }

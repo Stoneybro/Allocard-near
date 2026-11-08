@@ -24,8 +24,13 @@ export function decodeMutationId(result: unknown): string {
     const status = (result as { status?: { SuccessValue?: string; Failure?: unknown } }).status;
     if (status?.Failure !== undefined) throw new Error(`NEAR transaction failed: ${JSON.stringify(status.Failure)}`);
     if (typeof status?.SuccessValue !== "string") throw new Error("Expected final NEAR execution outcome");
-    const bytes = Uint8Array.from(atob(status.SuccessValue), (char) => char.charCodeAt(0));
-    decoded = JSON.parse(new TextDecoder().decode(bytes));
+    if (status.SuccessValue === "") throw new Error("NEAR transaction confirmed without a contract return value. Reconcile the transaction before retrying.");
+    try {
+      const bytes = Uint8Array.from(atob(status.SuccessValue), (char) => char.charCodeAt(0));
+      decoded = JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+      throw new Error("NEAR contract returned an invalid encoded JSON result");
+    }
   }
   if (typeof decoded !== "string" || !/^(0|[1-9][0-9]*)$/.test(decoded) || BigInt(decoded) > (1n << 64n) - 1n) {
     throw new Error("Expected a decimal u64 contract result");
@@ -281,7 +286,28 @@ export class AllocardTreasuryClient {
       attachedDeposit: "0",
     });
 
-    const executionId = decodeMutationId(res);
+    let executionId: string;
+    if (res?.status?.SuccessValue === "" && res.status.Failure === undefined) {
+      // A NEP-366 outer receipt can confirm with an empty return value.
+      // Resolve the inner execution through its replay record, never by coercing
+      // an empty result to zero or by issuing a replacement payment.
+      const actor = this.caller.accountId;
+      const record = actor ? await this.getExecutionByRequest(actor, request.request_id) : null;
+      const expectedAsset = request.action.asset;
+      const actualAsset = record?.action?.asset;
+      if (!actor || !record || record.actor !== actor || record.request_id !== request.request_id ||
+          record.request_hash !== this.getExecuteHash(actor, request) || record.authority_mode !== "Delegated" ||
+          record.permission_id !== request.permission_id || record.action?.type !== request.action.type ||
+          record.action.receiver !== request.action.receiver || record.action.amount !== request.action.amount ||
+          actualAsset?.type !== expectedAsset.type || (expectedAsset.type === "Nep141" &&
+            (actualAsset.type !== "Nep141" || actualAsset.contract_id !== expectedAsset.contract_id))) {
+        const hash = res?.transaction?.hash || res?.transaction_outcome?.id;
+        throw new Error(`Transaction${hash ? ` ${hash}` : ""} confirmed without a return value, but its matching treasury execution could not be verified. Keep this payment request and retry it to reconcile the original transaction.`);
+      }
+      executionId = decodeMutationId(record.id);
+    } else {
+      executionId = decodeMutationId(res);
+    }
 
     const waitForOutcome = async (timeoutMs = 30000, intervalMs = 1000): Promise<Execution> => {
       const startTime = Date.now();

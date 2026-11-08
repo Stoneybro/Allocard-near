@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
       imageBase64,
       mimeType,
       claimDescription: tx.purpose,
-      amountEth: tx.amountEth,
+      amountNear: tx.amountNear,
     });
 
     // We store a summarized receipt string in receiptSummary

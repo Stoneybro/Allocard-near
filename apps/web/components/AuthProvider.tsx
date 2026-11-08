@@ -1,151 +1,160 @@
 "use client";
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 import { useCreateWallet, useSignRawHash } from "@privy-io/react-auth/extended-chains";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createPrivyNearTransport, type NearActionSender } from "@/lib/privy-near";
 import type { NearCaller } from "@allocard/delegation-sdk";
-import type { WalletSelector } from "@near-wallet-selector/core";
-import type { WalletSelectorModal } from "@near-wallet-selector/modal-ui";
-import "@near-wallet-selector/modal-ui/styles.css";
-import { clearSession, createPrivySession, createSession, type SessionIdentity } from "@/lib/session-client";
-import { DEFAULT_TREASURY_CONTRACT } from "@/lib/chain";
-export type AuthMethod = "privy" | "fast-auth" | "wallet-selector";
+import { clearSession, createPrivySession, SessionClientError, type SessionIdentity } from "@/lib/session-client";
+import { QueryProvider } from "./QueryProvider";
+import { accountQueryKey } from "@/lib/query-keys";
+import { withTimeout } from "@/lib/request-timeout";
+
 export type AuthState =
   | { status: "connecting" }
-  | { status: "unauthenticated"; connect: () => void; connectExistingWallet: () => void; loginFastAuth: (options?: { redirectUri?: string }) => Promise<void>; connecting: boolean; error?: string }
-  | { status: "authenticated"; address: `0x${string}`; accountId: string; email: string | null; authMethod: AuthMethod; disconnect: () => void; establishSession: () => Promise<SessionIdentity>; selector: WalletSelector | null; caller?: NearCaller; sendActions?: NearActionSender; connectExistingWallet: () => void };
+  | { status: "unauthenticated"; connect: () => void; connecting: boolean; error?: string }
+  | { status: "authenticated"; address: string; accountId: string; providerUserId: string; email: string; authMethod: "privy"; disconnect: () => Promise<void>; establishSession: () => Promise<SessionIdentity>; caller: NearCaller; sendActions: NearActionSender };
 const AuthContext = createContext<AuthState>({ status: "connecting" });
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+const privyConfig = {
+  loginMethods: ["email", "google"] as ("email" | "google")[],
+  embeddedWallets: { ethereum: { createOnLogin: "off" as const }, solana: { createOnLogin: "off" as const } },
+};
+
+export function AuthProvider({ children }: { children: ReactNode }) {
   const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID;
-  const [method, setMethod] = useState<"privy" | "wallet" | null>(null);
-  useEffect(() => {
-    // Hydrate the browser-only login preference after the server render.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setMethod(localStorage.getItem("allocard_auth_method") === "wallet" ? "wallet" : "privy");
-  }, []);
-  const switchMethod = async (next: "privy" | "wallet") => {
-    await clearSession();
-    localStorage.setItem("allocard_auth_method", next);
-    setMethod(next);
-  };
-  if (!appId) return <WalletAuthProvider>{children}</WalletAuthProvider>;
-  if (!method) return <AuthContext.Provider value={{ status: "connecting" }}>{children}</AuthContext.Provider>;
-  return <PrivyProvider appId={appId} config={{ loginMethods: ["email", "google"], embeddedWallets: { ethereum: { createOnLogin: "off" }, solana: { createOnLogin: "off" } } }}><>{method === "wallet" ? <WalletAuthProvider onEmail={() => switchMethod("privy")}>{children}</WalletAuthProvider> : <PrivyAuthBridge onExistingWallet={() => switchMethod("wallet")}>{children}</PrivyAuthBridge>}</></PrivyProvider>;
+  return <QueryProvider>{appId ? (
+    <PrivyProvider appId={appId} config={privyConfig}><PrivyAuthBridge>{children}</PrivyAuthBridge></PrivyProvider>
+  ) : (
+    <AuthContext.Provider value={{ status: "unauthenticated", connecting: false, connect: () => {}, error: "Sign-in is not configured. Contact support." }}>{children}</AuthContext.Provider>
+  )}</QueryProvider>;
 }
-function PrivyAuthBridge({ children, onExistingWallet }: { children: React.ReactNode; onExistingWallet: () => Promise<void> }) {
+
+function PrivyAuthBridge({ children }: { children: ReactNode }) {
   const privy = usePrivy();
   const { createWallet } = useCreateWallet();
-  const { getAccessToken } = privy;
   const { signRawHash } = useSignRawHash();
-  const [identity, setIdentity] = useState<SessionIdentity | null>(null);
+  const queryClient = useQueryClient();
+  const [session, setSession] = useState<{ principal: string; identity: SessionIdentity } | null>(null);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [retry, setRetry] = useState(0);
-  const wasAuthenticated = useRef(false);
-  const creation = useRef<ReturnType<typeof createWallet> | null>(null);
+  const principal = privy.authenticated ? privy.user?.id ?? null : null;
   const wallet = privy.user?.linkedAccounts.find(account => account.type === "wallet" && account.chainType === "near" && account.walletClientType === "privy");
   const accountId = wallet && "address" in wallet ? wallet.address : null;
+  // SDK callback identities may change during OAuth and wallet creation. Keep
+  // their latest implementations without making them bootstrap dependencies.
+  const sdk = useRef({ createWallet, getAccessToken: privy.getAccessToken, signRawHash, logout: privy.logout, login: privy.login });
+  useEffect(() => { sdk.current = { createWallet, getAccessToken: privy.getAccessToken, signRawHash, logout: privy.logout, login: privy.login }; });
+  const creation = useRef<{ principal: string; promise: ReturnType<typeof createWallet> } | null>(null);
+  const previousPrincipal = useRef<string | null>(null);
+
   useEffect(() => {
+    if (!privy.ready) return;
     let cancelled = false;
-    // Synchronize local identity with changes from the external authentication SDK.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setIdentity(null);
-    if (!privy.ready || !privy.authenticated) {
-      setBusy(false);
+    const changedPrincipal = previousPrincipal.current !== principal;
+    const hadPrincipal = previousPrincipal.current !== null;
+    previousPrincipal.current = principal;
+    if (changedPrincipal) {
       creation.current = null;
-      if (wasAuthenticated.current) void clearSession().catch(caught => setError(caught.message));
-      wasAuthenticated.current = false;
-      return;
+      // Cancel old reads before removing private cached data.
+      void queryClient.cancelQueries({ queryKey: ["allocard"] });
+      queryClient.removeQueries({ queryKey: ["allocard"] });
     }
-    wasAuthenticated.current = true;
-    setBusy(true); setError(undefined);
+    const clearing = changedPrincipal && hadPrincipal ? clearSession() : Promise.resolve();
+    if (!principal) {
+      void clearing.then(() => { if (!cancelled) { setBusy(false); setSession(null); } }).catch(() => setError("Could not clear your session. Please retry sign-out."));
+      return () => { cancelled = true; };
+    }
     void (async () => {
+      await clearing;
+      if (cancelled) return;
+      setBusy(true);
+      setError(undefined);
       let address = accountId;
       if (!address) {
-        const created = await (creation.current ??= createWallet({ chainType: "near" }).catch(error => { creation.current = null; throw error; }));
-        address = created.wallet.address;
+        if (creation.current?.principal !== principal) {
+          creation.current = { principal, promise: withTimeout(sdk.current.createWallet({ chainType: "near" }), "Wallet setup timed out. Please try signing in again.") };
+        }
+        address = (await creation.current.promise).wallet.address;
       }
       if (cancelled) return;
-      const result = await createPrivySession(address, () => getAccessToken());
-      if (!cancelled) setIdentity(result);
-    })().catch(caught => { if (!cancelled) setError(caught instanceof Error ? caught.message : "Sign-in failed"); }).finally(() => { if (!cancelled) setBusy(false); });
+      const identity = await withTimeout(createPrivySession(address, () => sdk.current.getAccessToken()), "Sign-in timed out. Please try again.", 60_000);
+      if (identity.providerUserId !== principal) throw new Error("Your account changed. Please sign in again.");
+      if (!cancelled) setSession(current => current?.principal === principal && current.identity.walletAddress === identity.walletAddress && current.identity.email === identity.email ? current : { principal, identity });
+    })().catch(caught => {
+      if (!cancelled) {
+        creation.current = null;
+        setError(caught instanceof Error ? caught.message : "Sign-in failed");
+      }
+    }).finally(() => { if (!cancelled) setBusy(false); });
     return () => { cancelled = true; };
-  }, [privy.ready, privy.authenticated, accountId, retry, createWallet, getAccessToken]);
-  const transport = useMemo(() => identity ? createPrivyNearTransport(identity.walletAddress, async hash => {
-    const result = await signRawHash({ address: identity.walletAddress, chainType: "near", hash });
+  }, [privy.ready, principal, accountId, retry, queryClient]);
+
+  // Keep the same verified identity visible during background synchronization.
+  // A different user or wallet can never reuse the previous identity.
+  const identity = principal && session?.principal === principal && (!accountId || accountId === session.identity.walletAddress) ? session.identity : null;
+  const address = identity?.walletAddress;
+  const establishSession = useCallback(async () => {
+    if (!address) throw new Error("Sign in again to continue");
+    // Renewal does not change the identity or callback reference.
+    return createPrivySession(address, () => sdk.current.getAccessToken());
+  }, [address]);
+  const signHash = useCallback(async (hash: `0x${string}`) => {
+    if (!address) throw new Error("Sign in again to continue");
+    const result = await signRawHash({ address, chainType: "near", hash });
     return result.signature as `0x${string}`;
-  }) : null, [identity, signRawHash]);
-  if (!privy.ready || busy) return <AuthContext.Provider value={{ status: "connecting" }}>{children}</AuthContext.Provider>;
-  if (!identity || !transport) return <AuthContext.Provider value={{ status: "unauthenticated", connecting: false, error, connect: () => privy.login(), connectExistingWallet: () => { void onExistingWallet().catch(caught => setError(caught.message)); }, loginFastAuth: async () => { if (privy.authenticated) setRetry(n => n + 1); else privy.login(); } }}>{children}</AuthContext.Provider>;
-  return <AuthContext.Provider value={{ status: "authenticated", accountId: identity.walletAddress, address: identity.walletAddress as `0x${string}`, email: identity.email, authMethod: "privy", selector: null, caller: transport.caller, sendActions: transport.sendActions, establishSession: async () => {
-    const next = await createPrivySession(identity.walletAddress, () => getAccessToken());
-    setIdentity(next);
-    return next;
-  }, connectExistingWallet: () => { void onExistingWallet().catch(caught => setError(caught.message)); }, disconnect: async () => { setIdentity(null); try { await clearSession(); } finally { await privy.logout(); } } }}>{children}</AuthContext.Provider>;
-}
-function WalletAuthProvider({ children, onEmail }: { children: React.ReactNode; onEmail?: () => Promise<void> }) {
-  const [selector, setSelector] = useState<WalletSelector | null>(null);
-  const [modal, setModal] = useState<WalletSelectorModal | null>(null);
-  const [accountId, setAccountId] = useState<string | null>(null);
-  const [identity, setIdentity] = useState<SessionIdentity | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [signing, setSigning] = useState(false);
-  const [error, setError] = useState<string>();
-  const [retry, setRetry] = useState(0);
-  const previousAccount = useRef<string | null>(null);
-  const autoConnect = Boolean(onEmail);
-  useEffect(() => {
-    let cancelled = false; let unsubscribe: (() => void) | undefined;
-    void (async () => {
-      try {
-        const [{ setupWalletSelector }, { setupModal }, { setupMeteorWallet }, { setupMyNearWallet }] = await Promise.all([
-          import("@near-wallet-selector/core"), import("@near-wallet-selector/modal-ui"), import("@near-wallet-selector/meteor-wallet"), import("@near-wallet-selector/my-near-wallet"),
-        ]);
-        const next = await setupWalletSelector({ network: "testnet", modules: [setupMeteorWallet(), setupMyNearWallet()] });
-        if (cancelled) return;
-        const nextModal = setupModal(next, { contractId: DEFAULT_TREASURY_CONTRACT, description: "Connect a NEAR testnet wallet, then sign the Allocard login message." });
-        setSelector(next); setModal(nextModal);
-        if (autoConnect && !next.store.getState().accounts.length) nextModal.show();
-        setAccountId(next.store.getState().accounts[0]?.accountId ?? null);
-        const subscription = next.store.observable.subscribe(state => { if (!cancelled) setAccountId(state.accounts[0]?.accountId ?? null); });
-        unsubscribe = () => subscription.unsubscribe();
-      } catch (caught) { if (!cancelled) setError(caught instanceof Error ? caught.message : "Wallet initialization failed"); }
-      finally { if (!cancelled) setLoading(false); }
-    })();
-    return () => { cancelled = true; unsubscribe?.(); };
-  }, [autoConnect]);
-  useEffect(() => {
-    let cancelled = false;
-    // Discard the previous identity as the wallet SDK changes its selected account.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setIdentity(null);
-    if (previousAccount.current && previousAccount.current !== accountId) {
-      void clearSession().catch(caught => setError(caught.message));
-    }
-    previousAccount.current = accountId;
-    if (!accountId || !selector) { setSigning(false); return; }
-    setSigning(true); setError(undefined);
-    void createSession(accountId, selector).then(next => { if (!cancelled) setIdentity(next); })
-      .catch(caught => { if (!cancelled) setError(caught instanceof Error ? caught.message : "Sign-in failed"); })
-      .finally(() => { if (!cancelled) setSigning(false); });
-    return () => { cancelled = true; };
-  }, [accountId, selector, retry]);
-  const connectExistingWallet = useCallback(() => { if (accountId) setRetry(value => value + 1); else modal?.show(); }, [accountId, modal]);
+  }, [address, signRawHash]);
+  useQuery({
+    queryKey: ["auth-session", principal], enabled: !!identity,
+    queryFn: async () => {
+      const response = await fetch("/api/auth/session", { cache: "no-store", credentials: "same-origin", signal: AbortSignal.timeout(15_000) });
+      if (response.status === 401) {
+        try { await establishSession(); await queryClient.invalidateQueries({ queryKey: accountQueryKey(principal, address ?? null) }); }
+        catch (caught) {
+          if (caught instanceof SessionClientError && (caught.status === 401 || caught.status === 403)) {
+            setSession(null);
+            await queryClient.cancelQueries({ queryKey: ["allocard"] });
+            queryClient.removeQueries({ queryKey: ["allocard"] });
+            await sdk.current.logout();
+          }
+          throw caught;
+        }
+      }
+      else if (!response.ok) throw new Error("Session service is temporarily unavailable");
+      return true;
+    }, refetchInterval: 5 * 60_000, staleTime: 60_000, retry: false,
+  });
+  const transport = useMemo(() => {
+    if (!address || !principal) return null;
+    const base = createPrivyNearTransport(address, signHash);
+    const invalidate = () => queryClient.invalidateQueries({ queryKey: accountQueryKey(principal, address) });
+    return {
+      caller: { ...base.caller, functionCall: async (...args: Parameters<NonNullable<NearCaller["functionCall"]>>) => {
+        const result = await base.caller.functionCall!(...args);
+        await invalidate();
+        return result;
+      } },
+      sendActions: (async request => {
+        const result = await base.sendActions(request);
+        await invalidate();
+        return result;
+      }) as NearActionSender,
+    };
+  }, [address, principal, queryClient, signHash]);
   const disconnect = useCallback(async () => {
-    setIdentity(null);
-    try { await clearSession(); } finally { await (await selector?.wallet())?.signOut(); setAccountId(null); }
-  }, [selector]);
-  const state: AuthState = useMemo(() => {
-    if (loading || signing) return { status: "connecting" };
-    if (identity && identity.walletAddress === accountId) return {
-      status: "authenticated", address: identity.walletAddress as `0x${string}`, accountId: identity.walletAddress,
-      email: identity.email, authMethod: "wallet-selector", selector, disconnect, connectExistingWallet,
-      establishSession: async () => { if (!selector) throw new Error("Wallet unavailable"); return createSession(identity.walletAddress, selector); },
-    };
-    return { status: "unauthenticated", connect: connectExistingWallet, connectExistingWallet, connecting: signing, error,
-      loginFastAuth: async () => { if (onEmail) { await onEmail(); return; } setError("Email/social signing is not ready. Connect a NEAR wallet for the verified testnet flow."); },
-    };
-  }, [loading, signing, identity, accountId, selector, disconnect, connectExistingWallet, error, onEmail]);
-  return <AuthContext.Provider value={state}>{children}</AuthContext.Provider>;
+    setSession(null);
+    await queryClient.cancelQueries({ queryKey: ["allocard"] });
+    queryClient.removeQueries({ queryKey: ["allocard"] });
+    try { await clearSession(); } finally { await sdk.current.logout(); }
+  }, [queryClient]);
+  const connect = useCallback(() => {
+    if (sdk.current && principal) setRetry(n => n + 1);
+    else sdk.current.login();
+  }, [principal]);
+
+  if (identity && transport) return <AuthContext.Provider value={{ status: "authenticated", address: identity.walletAddress, accountId: identity.walletAddress, providerUserId: identity.providerUserId, email: identity.email, authMethod: "privy", disconnect, establishSession, ...transport }}>{children}</AuthContext.Provider>;
+  if (!privy.ready || (principal && busy) || (privy.authenticated && !principal)) return <AuthContext.Provider value={{ status: "connecting" }}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ status: "unauthenticated", connecting: false, error, connect }}>{children}</AuthContext.Provider>;
 }
 export function useAuth() { return useContext(AuthContext); }

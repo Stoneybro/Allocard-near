@@ -1,4 +1,4 @@
-import { sponsoredExecute } from "./near-sponsor-client";
+import { sponsoredCreateCompany, sponsoredExecute } from "./near-sponsor-client";
 import { nextAccessKeyNonce } from "./near-nonce";
 import { Buffer } from "buffer";
 import { utils } from "near-api-js";
@@ -60,6 +60,12 @@ export function createPrivyNearTransport(accountId: string, signHash: (hash: `0x
     async functionCall({ contractId, methodName, args, gas, attachedDeposit }) {
       return enqueue(async () => {
         const { functionCall } = await import("near-api-js/lib/transaction");
+        if (methodName === "create_company") {
+          const companyKey = (args as { company_key?: unknown } | undefined)?.company_key;
+          if (typeof companyKey !== "string") throw new Error("Company workspace identity is required");
+          const outcome = await sponsoredCreateCompany(accountId, { contractId, companyKey, deposit: String(attachedDeposit ?? "0") }, signHash);
+          if (outcome) return outcome;
+        }
         if (methodName === "execute" && String(attachedDeposit ?? "0") === "0") {
           const outcome = await sponsoredExecute(accountId, contractId, args as Parameters<typeof sponsoredExecute>[2], signHash);
           if (outcome) return outcome;

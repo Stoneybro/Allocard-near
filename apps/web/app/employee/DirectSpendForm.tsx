@@ -1,6 +1,10 @@
 "use client";
 
+import type { ReceiptVerificationResult } from "@/lib/ai";
 import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAccountScope } from "@/hooks/use-account-queries";
+import type { Execution } from "@allocard/delegation-sdk";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,27 +28,46 @@ import {
 } from "@/components/ui/alert-dialog";
 
 type Props = {
+  companyId: string;
   delegationId: string;
   pendingStorageKey?: string;
-  remainingBalanceEth: string;
-  onExecute: (details: { toAddress: string; amountEth: string; purpose?: string; isFlagged?: boolean }) => Promise<string>;
-  onVerifyReceipt: (txHash: string, imageBase64: string) => Promise<any>;
+  remainingBalanceNear: string;
+  onExecute: (details: { toAddress: string; amountNear: string; purpose?: string; isFlagged?: boolean }) => Promise<string>;
+  onVerifyReceipt: (txHash: string, imageBase64: string) => Promise<ReceiptVerificationResult>;
 };
 
-export function DirectSpendForm({ delegationId, pendingStorageKey, remainingBalanceEth, onExecute, onVerifyReceipt }: Props) {
+export function DirectSpendForm({ companyId, delegationId, pendingStorageKey, remainingBalanceNear, onExecute, onVerifyReceipt }: Props) {
   const [step, setStep] = useState<"input" | "receipt" | "done">("input");
   
   const [toAddress, setToAddress] = useState("");
-  const [amountEth, setAmountEth] = useState("");
+  const [amountNear, setAmountNear] = useState("");
   
   const [txHash, setTxHash] = useState<string | null>(null);
   const [receiptImage, setReceiptImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
-  const [isExecuting, setIsExecuting] = useState(false);
-  const [isSubmittingReceipt, setIsSubmittingReceipt] = useState(false);
-  const [verificationResult, setVerificationResult] = useState<any>(null);
+  const execution = useMutation({ mutationFn: onExecute, retry: false });
+  const receipt = useMutation({ mutationFn: ({ hash, image }: { hash: string; image: string }) => onVerifyReceipt(hash, image), retry: false });
+  const isExecuting = execution.isPending;
+  const isSubmittingReceipt = receipt.isPending;
+  const queryClient = useQueryClient();
+  const { key } = useAccountScope();
+  const pendingStatus = useQuery({
+    queryKey: [...key, "pending-payment", companyId, pendingStorageKey], enabled: !!pendingStorageKey && !isExecuting,
+    queryFn: async () => {
+      const saved = JSON.parse(localStorage.getItem(pendingStorageKey!) || "null");
+      if (!saved?.request) return null;
+      const response = await fetch("/api/wallet/pending", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ companyId, requestId: saved.request.request_id, deadlineMs: saved.request.deadline_ms }), signal: AbortSignal.timeout(20_000) });
+      const result = await response.json(); if (!response.ok) throw new Error(result.error || "Could not check payment status");
+      return result as { execution: Execution | null; canDiscard: boolean };
+    },
+    refetchInterval: query => query.state.data && !query.state.data.canDiscard && (!query.state.data.execution || query.state.data.execution.status === "Pending") ? 2500 : false,
+  });
+  useEffect(() => {
+    if (pendingStatus.data?.execution?.status === "Succeeded") void queryClient.invalidateQueries({ queryKey: key });
+  }, [pendingStatus.data?.execution?.status, queryClient, key]);
+  const [verificationResult, setVerificationResult] = useState<ReceiptVerificationResult | null>(null);
 
   const [hasPendingRequest, setHasPendingRequest] = useState(false);
   useEffect(() => {
@@ -52,8 +75,10 @@ export function DirectSpendForm({ delegationId, pendingStorageKey, remainingBala
     try {
       const saved = JSON.parse(localStorage.getItem(pendingStorageKey) || "null");
       if (saved?.request?.action) {
+        // Restore browser-persisted payment intent after hydration.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setToAddress(saved.request.action.receiver);
-        setAmountEth(formatTokenAmount(saved.request.action.amount, 24));
+        setAmountNear(formatTokenAmount(saved.request.action.amount, 24));
         setHasPendingRequest(true);
       }
     } catch { setError("Saved payment data could not be read. Check your account's execution history before starting another payment."); }
@@ -61,7 +86,7 @@ export function DirectSpendForm({ delegationId, pendingStorageKey, remainingBala
 
   const validateInputs = (): boolean => {
     const trimmedTo = toAddress.trim();
-    if (!trimmedTo || !amountEth) {
+    if (!trimmedTo || !amountNear) {
       setError("Please fill in recipient account and amount.");
       return false;
     }
@@ -72,9 +97,9 @@ export function DirectSpendForm({ delegationId, pendingStorageKey, remainingBala
     }
 
     try {
-      const amount = BigInt(parseTokenAmount(amountEth.trim(), 24));
-      const remaining = BigInt(parseTokenAmount(remainingBalanceEth, 24));
-      if (amount <= BigInt(0) || (!hasPendingRequest && amount > remaining)) throw new Error(`Enter an amount within your available ${remainingBalanceEth} NEAR`);
+      const amount = BigInt(parseTokenAmount(amountNear.trim(), 24));
+      const remaining = BigInt(parseTokenAmount(remainingBalanceNear, 24));
+      if (amount <= BigInt(0) || (!hasPendingRequest && amount > remaining)) throw new Error(`Enter an amount within your available ${remainingBalanceNear} NEAR`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Invalid amount");
       return false;
@@ -91,26 +116,27 @@ export function DirectSpendForm({ delegationId, pendingStorageKey, remainingBala
   };
 
   const handleExecute = async () => {
-    setIsExecuting(true);
     setError(null);
     try {
-      const hash = await onExecute({
+      const hash = await execution.mutateAsync({
         toAddress: toAddress.trim(),
-        amountEth: amountEth.trim(),
+        amountNear: amountNear.trim(),
       });
       setTxHash(hash);
       setHasPendingRequest(false);
       setStep("receipt");
       setIsConfirmOpen(false);
+      void pendingStatus.refetch();
       toast.success("Expense Executed Successfully", {
-        description: `${amountEth} ${TOKEN_SYMBOL} sent to ${formatWalletAddress(toAddress.trim())} • NEAR Testnet`,
+        description: `${amountNear} ${TOKEN_SYMBOL} sent to ${formatWalletAddress(toAddress.trim())} • NEAR Testnet`,
         action: {
           label: "View Explorer",
           onClick: () => window.open(getTxExplorerUrl(hash), "_blank"),
         },
       });
-    } catch (err: any) {
+    } catch (err) {
       if (pendingStorageKey) setHasPendingRequest(Boolean(localStorage.getItem(pendingStorageKey)));
+      void pendingStatus.refetch();
       console.error(err);
       const parsed = parseUserOpError(err);
       setError(parsed);
@@ -118,8 +144,6 @@ export function DirectSpendForm({ delegationId, pendingStorageKey, remainingBala
         description: parsed,
       });
       setIsConfirmOpen(false);
-    } finally {
-      setIsExecuting(false);
     }
   };
 
@@ -138,9 +162,8 @@ export function DirectSpendForm({ delegationId, pendingStorageKey, remainingBala
   const handleSubmitReceipt = async () => {
     if (!txHash || !receiptImage) return;
 
-    setIsSubmittingReceipt(true);
     try {
-      const result = await onVerifyReceipt(txHash, receiptImage);
+      const result = await receipt.mutateAsync({ hash: txHash, image: receiptImage });
       setVerificationResult(result);
       setStep("done");
       if (result?.verified) {
@@ -153,18 +176,19 @@ export function DirectSpendForm({ delegationId, pendingStorageKey, remainingBala
         });
       }
     } catch (err) {
+      void pendingStatus.refetch();
       console.error(err);
       setError("Failed to verify receipt with AI");
       toast.error("Verification Failed", {
         description: "Could not process receipt with AI vision.",
       });
-    } finally {
-      setIsSubmittingReceipt(false);
     }
   };
 
   return (
     <Card className="w-full max-w-lg mx-auto shadow-xs border-border/80 bg-card">
+      {pendingStatus.data?.execution && <p role="status" className="px-6 pt-4 text-sm">Saved payment status: {pendingStatus.data.execution.status}. Retry the same payment to reconcile its history; status checks never sign transactions.</p>}
+      {pendingStatus.error && <p role="alert" className="px-6 text-sm text-destructive">{pendingStatus.error.message}</p>}
       <CardHeader>
         <CardTitle className="text-base font-semibold text-foreground">
           Direct Corporate Spend
@@ -210,7 +234,7 @@ export function DirectSpendForm({ delegationId, pendingStorageKey, remainingBala
               <div className="flex items-center justify-between">
                 <Label htmlFor="ds-amount" className="text-xs font-medium">Amount ({TOKEN_SYMBOL})</Label>
                 <span className="text-[11px] font-mono text-muted-foreground">
-                  Available: {remainingBalanceEth} {TOKEN_SYMBOL}
+                  Available: {remainingBalanceNear} {TOKEN_SYMBOL}
                 </span>
               </div>
               <Input
@@ -218,8 +242,8 @@ export function DirectSpendForm({ delegationId, pendingStorageKey, remainingBala
                 type="text"
                 inputMode="decimal"
                 placeholder="0.00"
-                value={amountEth}
-                onChange={(e) => setAmountEth(e.target.value)}
+                value={amountNear}
+                onChange={(e) => setAmountNear(e.target.value)}
                 disabled={isExecuting}
                 className="font-mono text-xs"
               />
@@ -228,7 +252,7 @@ export function DirectSpendForm({ delegationId, pendingStorageKey, remainingBala
             <AlertDialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
               <Button
                 onClick={handleStartExecute}
-                disabled={(!delegationId && !hasPendingRequest) || !toAddress || !amountEth || isExecuting}
+                disabled={(!delegationId && !hasPendingRequest) || !toAddress || !amountNear || isExecuting}
                 className="w-full mt-2 text-xs"
               >
                 {isExecuting ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
@@ -239,10 +263,10 @@ export function DirectSpendForm({ delegationId, pendingStorageKey, remainingBala
                 <AlertDialogHeader>
                   <AlertDialogTitle>Confirm Direct Spend</AlertDialogTitle>
                   <AlertDialogDescription className="text-xs leading-relaxed">
-                    You are authorizing a payout of <strong className="text-foreground">{amountEth} {TOKEN_SYMBOL}</strong> to{" "}
+                    You are authorizing a payout of <strong className="text-foreground">{amountNear} {TOKEN_SYMBOL}</strong> to{" "}
                     <strong className="break-all font-mono text-[11px] text-foreground">{toAddress}</strong> on NEAR Testnet.
                     <br /><br />
-                    This transaction executes directly from the company's delegated balance and is irreversible. On-chain caveats and per-transaction limits apply.
+                    This transaction executes directly from the company&apos;s delegated balance and is irreversible. On-chain caveats and per-transaction limits apply.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -278,7 +302,7 @@ export function DirectSpendForm({ delegationId, pendingStorageKey, remainingBala
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-muted-foreground font-sans">Settled Amount:</span>
-                <span className="font-semibold text-foreground">{amountEth} {TOKEN_SYMBOL}</span>
+                <span className="font-semibold text-foreground">{amountNear} {TOKEN_SYMBOL}</span>
               </div>
               {txHash && (
                 <div className="flex justify-between items-center pt-2 border-t border-border/60">
@@ -365,7 +389,7 @@ export function DirectSpendForm({ delegationId, pendingStorageKey, remainingBala
               className="w-full text-xs"
               onClick={() => {
                 setToAddress("");
-                setAmountEth("");
+                setAmountNear("");
                 setTxHash(null);
                 setReceiptImage(null);
                 setVerificationResult(null);

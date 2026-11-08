@@ -1,7 +1,7 @@
 import { sameSiteOrigin } from "@/lib/request-origin";
 import { getSessionIdentity } from "@/lib/session";
 import { databaseFailure } from "@/lib/db/error";
-import { sponsorshipEnabled, sponsoredPaymentSchema, sponsoredProofSchema, prepareSponsoredPayment, submitSponsoredPayment } from "@/lib/near-sponsor-server";
+import { companySponsorshipEnabled, sponsoredCompanySchema, sponsoredCompanyProofSchema, prepareSponsoredCompany, submitSponsoredCompany, sponsorshipEnabled, sponsoredPaymentSchema, sponsoredProofSchema, prepareSponsoredPayment, submitSponsoredPayment } from "@/lib/near-sponsor-server";
 export const runtime = "nodejs";
 export const maxDuration = 120;
 const headers = { "Cache-Control": "no-store, private" };
@@ -13,8 +13,17 @@ export async function POST(request: Request) {
   try {
     const body = JSON.parse(text);
     const { operation, ...input } = body;
-    if (!["prepare", "submit"].includes(operation)) return Response.json({ error: "Unsupported sponsorship operation" }, { status: 400, headers });
+    if (!["prepare", "submit", "prepare-company", "submit-company"].includes(operation)) return Response.json({ error: "Unsupported sponsorship operation" }, { status: 400, headers });
     if (!sponsorshipEnabled()) return Response.json({ enabled: false }, { headers });
+    if (operation === "prepare-company" || operation === "submit-company") {
+      if (!companySponsorshipEnabled()) return Response.json({ enabled: false }, { headers });
+      const schema = operation === "prepare-company" ? sponsoredCompanySchema : sponsoredCompanyProofSchema;
+      if (!schema.safeParse(input).success) return Response.json({ error: "Invalid sponsored company registration" }, { status: 400, headers });
+      const result = operation === "prepare-company"
+        ? await prepareSponsoredCompany(sponsoredCompanySchema.parse(input))
+        : await submitSponsoredCompany(sponsoredCompanyProofSchema.parse(input));
+      return Response.json(result, { headers });
+    }
     const parsed = (operation === "prepare" ? sponsoredPaymentSchema : sponsoredProofSchema).safeParse(input);
     if (!parsed.success) return Response.json({ error: "Invalid sponsored employee payment" }, { status: 400, headers });
     const result = operation === "prepare"

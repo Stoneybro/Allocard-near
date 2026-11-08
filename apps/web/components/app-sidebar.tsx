@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import type { WorkspaceOption } from "@/app/actions/identity";
 import { isReimbursementAgent } from "@/lib/reimbursements/shared";
-import { isAgoraAgent } from "@/lib/agora/shared";
 import {
   BotIcon,
   CheckIcon,
@@ -227,23 +226,23 @@ function AddEmployeeDialog({
         <DialogHeader>
           <DialogTitle>Add an Employee</DialogTitle>
           <DialogDescription>
-            Add a team member by their work email address. They will gain access to their corporate card workspace upon signing in.
+            Add their work email, then share the Allocard link. They can accept access after signing in with that email.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="flex flex-col gap-4 py-2">
           <div className="space-y-1.5">
-            <Label htmlFor="invite-employee-email">Employee NEAR account</Label>
+            <Label htmlFor="invite-employee-email">Employee email</Label>
             <Input
               id="invite-employee-email"
-              type="text"
-              placeholder="employee.testnet"
-              autoComplete="off"
+              type="email"
+              placeholder="colleague@company.com"
+              autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               disabled={isSubmitting}
             />
             <p className="text-xs text-muted-foreground">
-              For this wallet build, enter the employee’s NEAR account. They accept in a separate browser profile after signing in. Email invitations require verified email login.
+              They can accept after signing in with this email address. Their NEAR wallet is created automatically.
             </p>
           </div>
 

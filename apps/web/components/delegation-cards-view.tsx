@@ -84,7 +84,7 @@ export function DelegationCardsView({ company, employees, agents = [], delegatio
           </div>
           <div className="flex flex-wrap items-center gap-x-5 gap-y-3 pl-12 sm:justify-end sm:pl-0">
             <div className="min-w-24 sm:text-right">
-              <p className="text-sm font-medium tabular-nums">{isActive ? `${delegation.remainingEth ?? "—"} ${TOKEN_SYMBOL}` : "—"}</p>
+              <p className="text-sm font-medium tabular-nums">{isActive ? `${delegation.remainingNear ?? "—"} ${TOKEN_SYMBOL}` : "—"}</p>
               <p className="mt-0.5 text-xs text-muted-foreground">{isActive ? `remaining${delegation.allowance ? ` of ${delegation.allowance}` : ""}` : isPending ? "Set a spending limit" : "Spending disabled"}</p>
             </div>
             <Badge variant="outline" className={`font-normal ${isActive ? "border-emerald-600/20 text-emerald-700 dark:text-emerald-400" : "text-muted-foreground"}`}>{isActive ? "Active" : isPending ? "Needs setup" : "Revoked"}</Badge>

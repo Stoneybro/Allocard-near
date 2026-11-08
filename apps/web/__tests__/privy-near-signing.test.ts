@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPrivyNearTransport } from "@/lib/privy-near";
 import { nextAccessKeyNonce, parseAccessKeyRpcResponse } from "@/lib/near-nonce";
 import { SignedTransaction } from "near-api-js/lib/transaction";
-vi.mock("@/lib/near-sponsor-client", () => ({ sponsoredExecute: vi.fn(async () => null) }));
+vi.mock("@/lib/near-sponsor-client", () => ({ sponsoredCreateCompany: vi.fn(async () => null), sponsoredExecute: vi.fn(async () => null) }));
 vi.mock("@/lib/near-rpc-client",()=>({nearBrowserRpc:vi.fn()}));
 import { nearBrowserRpc } from "@/lib/near-rpc-client";
 const account="ab".repeat(32);

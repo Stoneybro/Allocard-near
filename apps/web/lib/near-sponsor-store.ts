@@ -11,9 +11,10 @@ export async function claimSponsorJob(input: Pick<SponsorJob, "id" | "actor" | "
   // Do not retry mutations after an ambiguous database response.
   return (await db.insert(jobs).values(input).onConflictDoNothing().returning())[0] ?? null;
 }
-export async function takeSponsorQuota(actor: string, globalLimit: number, userLimit: number) {
+export async function takeSponsorQuota(actor: string, globalLimit: number, userLimit: number, scope = "") {
   const day = new Date().toISOString().slice(0, 10);
-  for (const [bucket, max] of [[`wallet:${actor}:${day}`, userLimit], [`global:${day}`, globalLimit]] as const) {
+  const prefix = scope ? `${scope}:` : "";
+  for (const [bucket, max] of [[`${prefix}wallet:${actor}:${day}`, userLimit], [`${prefix}global:${day}`, globalLimit]] as const) {
     const rows = await db.insert(limits).values({ bucket, used: "1" }).onConflictDoUpdate({
       target: limits.bucket, set: { used: sql`${limits.used} + 1` }, setWhere: lt(limits.used, String(max)),
     }).returning({ bucket: limits.bucket });
@@ -46,4 +47,10 @@ export async function finishSponsorJob(id: string, state: "confirmed" | "failed"
 
 export async function releaseUnbroadcastJob(id: string) {
   await db.delete(jobs).where(and(eq(jobs.id, id), eq(jobs.state, "reserved"), isNull(jobs.transactionHash)));
+}
+
+/** One registration deposit grant per verified provider identity, for its lifetime. */
+export async function takeCompanyRegistrationGrant(principalHash: string) {
+  const rows = await db.insert(limits).values({ bucket: `company-registration-grant:${principalHash}`, used: "1" }).onConflictDoNothing().returning({ bucket: limits.bucket });
+  if (!rows.length) throw new Error("This owner has already used their one sponsored company registration. Contact the operator if the previous attempt was not confirmed.");
 }

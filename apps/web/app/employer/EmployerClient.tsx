@@ -1,7 +1,10 @@
 "use client";
 
+import { useDashboardData, useAccountScope } from "@/hooks/use-account-queries";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { withTimeout } from "@/lib/request-timeout";
 import { toast } from "sonner";
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useMemo, useState, useTransition } from "react";
 import {
   LoaderCircleIcon,
   ShieldCheckIcon,
@@ -13,29 +16,24 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { CHAIN_ID, TOKEN_SYMBOL, getAddressExplorerUrl, getTxExplorerUrl } from "@/lib/chain";
+import { TOKEN_SYMBOL, getAddressExplorerUrl, getTxExplorerUrl } from "@/lib/chain";
 import { isValidWalletAddress, formatWalletAddress } from "@/lib/wallet";
 import { parseTreasuryReference, type PermissionSpec } from "@allocard/delegation-sdk";
 import {
-  createNearWalletCaller,
   getUnifiedNearCaller,
   createNearRpcCaller,
-  fundTreasury,
   getTreasuryClient,
   parseTokenAmount,
   formatTokenAmount,
-  getNearAccountBalance,
 } from "@/lib/near";
 import {
   updateCompanyPolicy,
   activateDelegation,
   createAgentDelegation,
   prepareReimbursementBudget,
-  prepareAgoraRemittanceBudget,
   createEmployeeDelegation,
   addEmployeeByEmail,
   getCompanyDashboardState,
-  getWalletProfile,
   setWorkspaceContext,
   removePendingDelegation,
   revokeDelegation,
@@ -53,7 +51,7 @@ import { DelegationCardsView } from "@/components/delegation-cards-view";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { isReimbursementAgent } from "@/lib/reimbursements/shared";
-import { isAgoraAgent } from "@/lib/agora/shared";
+import { ReimbursementsCard } from "@/components/reimbursements-card";
 import { SectionCards } from "@/components/section-cards";
 import { SmartAccountActivationButton } from "@/components/smart-account-activation-button";
 import { Badge } from "@/components/ui/badge";
@@ -98,10 +96,10 @@ import { generateEmployeeReferenceId } from "@/lib/wallet";
 
 type DelegationRow = CompanyDashboardState["delegations"][number];
 type CaveatForm = {
-  maxAmountEth: string;
+  maxAmountNear: string;
   period: "none" | "hourly" | "daily" | "weekly" | "monthly";
-  periodAmountEth: string;
-  perTransactionCapEth: string;
+  periodAmountNear: string;
+  perTransactionCapNear: string;
   allowedTargets: string;
   limitedCallsEnabled: boolean;
   limitedCalls: string;
@@ -109,10 +107,10 @@ type CaveatForm = {
 };
 
 const emptyCaveatForm: CaveatForm = {
-  maxAmountEth: "",
+  maxAmountNear: "",
   period: "none",
-  periodAmountEth: "",
-  perTransactionCapEth: "",
+  periodAmountNear: "",
+  perTransactionCapNear: "",
   allowedTargets: "",
   limitedCallsEnabled: false,
   limitedCalls: "1",
@@ -148,8 +146,8 @@ function formFromDelegation(delegation: DelegationRow | null): CaveatForm {
     const value = caveatRecord(caveat);
 
     if (caveat.caveatType === "nativeTokenTransferAmount") {
-      const wei = value.maxAmount ?? value.amount;
-      nextForm.maxAmountEth = typeof wei === "string" ? weiToEthInput(wei) : "";
+      const yocto = value.maxAmount ?? value.amount;
+      nextForm.maxAmountNear = typeof yocto === "string" ? yoctoToNearInput(yocto) : "";
     }
 
     if (caveat.caveatType === "nativeTokenPeriodTransfer") {
@@ -162,14 +160,14 @@ function formFromDelegation(delegation: DelegationRow | null): CaveatForm {
         period === "monthly"
           ? period
           : "daily";
-      nextForm.periodAmountEth =
-        typeof amount === "string" ? weiToEthInput(amount) : "";
+      nextForm.periodAmountNear =
+        typeof amount === "string" ? yoctoToNearInput(amount) : "";
     }
 
     if (caveat.caveatType === "valueLte") {
-      const maxValue = value.maxValue ?? value.valueWei;
-      nextForm.perTransactionCapEth =
-        typeof maxValue === "string" ? weiToEthInput(maxValue) : "";
+      const maxValue = value.maxValue ?? value.valueYocto;
+      nextForm.perTransactionCapNear =
+        typeof maxValue === "string" ? yoctoToNearInput(maxValue) : "";
     }
 
     if (caveat.caveatType === "allowedTargets" && Array.isArray(value.targets)) {
@@ -188,8 +186,8 @@ function formFromDelegation(delegation: DelegationRow | null): CaveatForm {
   return nextForm;
 }
 
-function weiToEthInput(wei: string) {
-  const value = BigInt(wei);
+function yoctoToNearInput(yocto: string) {
+  const value = BigInt(yocto);
   const whole = value / 1_000_000_000_000_000_000_000_000n;
   const fractional = value % 1_000_000_000_000_000_000_000_000n;
 
@@ -200,7 +198,7 @@ function weiToEthInput(wei: string) {
   return `${whole}.${fractional.toString().padStart(24, "0").replace(/0+$/, "")}`;
 }
 
-function formatAllowanceEth(raw: string): string {
+function formatAllowanceNear(raw: string): string {
   try {
     const formatted = BigInt(raw) > 10n ** 15n ? formatTokenAmount(raw, 24) : raw;
     // Trim trailing zeros: "0.010000000000000000" -> "0.01"
@@ -221,10 +219,10 @@ function formatDelegationStatus(status: string) {
 
 function buildServerCaveats(form: CaveatForm) {
   return {
-    maxAmountEth: form.maxAmountEth,
+    maxAmountNear: form.maxAmountNear,
     period: form.period,
-    periodAmountEth: form.periodAmountEth || form.maxAmountEth,
-    perTransactionCapEth: form.perTransactionCapEth,
+    periodAmountNear: form.periodAmountNear || form.maxAmountNear,
+    perTransactionCapNear: form.perTransactionCapNear,
     allowedTargets: splitAddresses(form.allowedTargets),
     redeemers: [],
     limitedCalls: form.limitedCallsEnabled ? Number(form.limitedCalls) : null,
@@ -232,12 +230,12 @@ function buildServerCaveats(form: CaveatForm) {
   };
 }
 
-const ETH_AMOUNT_RE = /^\d+(\.\d+)?$/;
+const NEAR_AMOUNT_RE = /^\d+(\.\d+)?$/;
 
 type FormErrors = {
-  maxAmountEth?: string;
-  periodAmountEth?: string;
-  perTransactionCapEth?: string;
+  maxAmountNear?: string;
+  periodAmountNear?: string;
+  perTransactionCapNear?: string;
   limitedCalls?: string;
   allowedTargets?: string;
   allowedTargetsWarning?: string;
@@ -245,55 +243,55 @@ type FormErrors = {
 
 function validateCaveatForm(
   form: CaveatForm,
-  _availableBalanceEth: number | null,
+  _availableBalanceNear: number | null,
 ): FormErrors {
   const errors: FormErrors = {};
 
   // --- Lifetime Spending Limit ---
-  if (!ETH_AMOUNT_RE.test(form.maxAmountEth.trim())) {
-    errors.maxAmountEth = `Enter a valid ${TOKEN_SYMBOL} amount (e.g. 0.05).`;
+  if (!NEAR_AMOUNT_RE.test(form.maxAmountNear.trim())) {
+    errors.maxAmountNear = `Enter a valid ${TOKEN_SYMBOL} amount (e.g. 0.05).`;
   } else {
-    const max = parseFloat(form.maxAmountEth);
+    const max = parseFloat(form.maxAmountNear);
     if (max <= 0) {
-      errors.maxAmountEth = "Spending limit must be greater than 0.";
+      errors.maxAmountNear = "Spending limit must be greater than 0.";
     }
   }
 
   // --- Periodic Allowance ---
   if (form.period !== "none") {
-    const raw = form.periodAmountEth.trim();
+    const raw = form.periodAmountNear.trim();
     if (!raw) {
-      errors.periodAmountEth = "Enter a period allowance when a recurring period is selected.";
-    } else if (!ETH_AMOUNT_RE.test(raw)) {
-      errors.periodAmountEth = `Enter a valid ${TOKEN_SYMBOL} amount (e.g. 0.01).`;
+      errors.periodAmountNear = "Enter a period allowance when a recurring period is selected.";
+    } else if (!NEAR_AMOUNT_RE.test(raw)) {
+      errors.periodAmountNear = `Enter a valid ${TOKEN_SYMBOL} amount (e.g. 0.01).`;
     } else {
       const period = parseFloat(raw);
-      const max = parseFloat(form.maxAmountEth);
+      const max = parseFloat(form.maxAmountNear);
       if (period <= 0) {
-        errors.periodAmountEth = "Period allowance must be greater than 0.";
-      } else if (!errors.maxAmountEth && period > max) {
-        errors.periodAmountEth = `Period allowance (${raw} ${TOKEN_SYMBOL}) cannot exceed the lifetime limit (${form.maxAmountEth} ${TOKEN_SYMBOL}).`;
+        errors.periodAmountNear = "Period allowance must be greater than 0.";
+      } else if (!errors.maxAmountNear && period > max) {
+        errors.periodAmountNear = `Period allowance (${raw} ${TOKEN_SYMBOL}) cannot exceed the lifetime limit (${form.maxAmountNear} ${TOKEN_SYMBOL}).`;
       }
     }
   }
 
   // --- Per-Transaction Cap ---
-  const perTxRaw = form.perTransactionCapEth.trim();
+  const perTxRaw = form.perTransactionCapNear.trim();
   if (perTxRaw) {
-    if (!ETH_AMOUNT_RE.test(perTxRaw)) {
-      errors.perTransactionCapEth = `Enter a valid ${TOKEN_SYMBOL} amount (e.g. 0.005).`;
+    if (!NEAR_AMOUNT_RE.test(perTxRaw)) {
+      errors.perTransactionCapNear = `Enter a valid ${TOKEN_SYMBOL} amount (e.g. 0.005).`;
     } else {
       const perTx = parseFloat(perTxRaw);
       if (perTx <= 0) {
-        errors.perTransactionCapEth = "Per-transaction cap must be greater than 0.";
+        errors.perTransactionCapNear = "Per-transaction cap must be greater than 0.";
       } else {
         const ceiling =
-          form.period !== "none" && form.periodAmountEth.trim()
-            ? parseFloat(form.periodAmountEth)
-            : parseFloat(form.maxAmountEth);
+          form.period !== "none" && form.periodAmountNear.trim()
+            ? parseFloat(form.periodAmountNear)
+            : parseFloat(form.maxAmountNear);
         if (!isNaN(ceiling) && perTx > ceiling) {
-          const label = form.period !== "none" ? `the period allowance (${form.periodAmountEth} ${TOKEN_SYMBOL})` : `the lifetime limit (${form.maxAmountEth} ${TOKEN_SYMBOL})`;
-          errors.perTransactionCapEth = `Per-transaction cap cannot exceed ${label}.`;
+          const label = form.period !== "none" ? `the period allowance (${form.periodAmountNear} ${TOKEN_SYMBOL})` : `the lifetime limit (${form.maxAmountNear} ${TOKEN_SYMBOL})`;
+          errors.perTransactionCapNear = `Per-transaction cap cannot exceed ${label}.`;
         }
       }
     }
@@ -328,11 +326,9 @@ export function EmployerClient({
 } = {}) {
   const router = useRouter();
   const auth = useAuth();
-  const currentAuthAddress = auth.status === "authenticated" ? (auth.address as `0x${string}`) : undefined;
-  const didLoadDashboard = useRef(Boolean(initialProfile && initialDashboardState));
-  const [profile, setProfile] = useState<WalletProfile | null>(initialProfile ?? null);
-  const [dashboardState, setDashboardState] =
-    useState<CompanyDashboardState | null>(initialDashboardState ?? null);
+  const currentAuthAddress = auth.status === "authenticated" ? (auth.address) : undefined;
+  const { profile, setProfile, dashboardState, setDashboardState, mutate: mutateDashboard, refresh: refreshDashboard, error: queryError } =
+    useDashboardData("employer", getCompanyDashboardState, initialProfile, initialDashboardState);
   const [selectedDelegationId, setSelectedDelegationId] = useState<string | null>(
     null,
   );
@@ -340,60 +336,10 @@ export function EmployerClient({
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [isPending, startTransition] = useTransition();
   const [isRefreshing, startRefreshTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  const [policyDraft, setPolicyDraft] = useState<string>(
-    initialDashboardState?.companyPolicy ?? DEFAULT_COMPANY_POLICY,
-  );
-  const [policyHasChanges, setPolicyHasChanges] = useState(false);
+  const [actionError, setError] = useState<string | null>(null);
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
 
-  useEffect(() => {
-    if (auth.status !== "authenticated") {
-      didLoadDashboard.current = false;
-      setDashboardState(null);
-      return;
-    }
-    if (didLoadDashboard.current) {
-      void auth.establishSession().catch(() => {});
-      return;
-    }
-    didLoadDashboard.current = true;
-    const addr = auth.address;
-
-    startTransition(async () => {
-      try {
-        await auth.establishSession();
-        const nextProfile = await getWalletProfile(addr);
-
-        if (nextProfile.status === "new") {
-          router.replace("/onboarding");
-          return;
-        }
-
-        if (nextProfile.status === "picker") {
-          router.replace("/onboarding");
-          return;
-        }
-
-        if (nextProfile.status === "employee") {
-          router.replace("/employee");
-          return;
-        }
-
-        setProfile(nextProfile);
-        const dashState = await getCompanyDashboardState(addr);
-        setDashboardState(dashState);
-        setPolicyDraft(dashState.companyPolicy ?? DEFAULT_COMPANY_POLICY);
-        setError(null);
-      } catch (caughtError) {
-        setError(
-          caughtError instanceof Error
-            ? caughtError.message
-            : "Failed to load dashboard. Please refresh."
-        );
-      }
-    });
-  }, [auth.status, router]);
+  const error = actionError ?? queryError?.message;
 
   const company = dashboardState?.company ?? profile?.company ?? null;
   const companyName = company?.name ?? "Allocard";
@@ -403,31 +349,20 @@ export function EmployerClient({
 
   const isMobile = useIsMobile();
   const [viewMode, setViewMode] = useState<"cards" | "canvas">("cards");
-  const [ethBalance, setEthBalance] = useState<string | undefined>(undefined);
   const [isToppingUp, setIsToppingUp] = useState(false);
-
-  const fetchBalance = useCallback(async () => {
-    if (!company?.smartAccountAddress) return;
-    try {
-      const client = getTreasuryClient(createNearRpcCaller(), company.smartAccountAddress);
+  const { key: accountKey } = useAccountScope();
+  const treasuryBalance = useQuery({
+    queryKey: [...accountKey, "treasury", company?.id, company?.smartAccountAddress],
+    enabled: !!currentAuthAddress && !!company?.smartAccountAddress,
+    queryFn: () => withTimeout((async () => {
+      const client = getTreasuryClient(createNearRpcCaller(), company!.smartAccountAddress!);
       const ledger = await client.getAssetLedger({ type: "NativeNear" });
-      setEthBalance(formatTokenAmount(ledger?.available ?? "0", 24));
-    } catch (err) {
-      console.error("Failed to fetch NEAR balance", err);
-    }
-  }, [company?.smartAccountAddress]);
-
-  useEffect(() => {
-    let isMounted = true;
-    fetchBalance();
-    const interval = setInterval(() => {
-      if (isMounted) fetchBalance();
-    }, 15_000);
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
-  }, [fetchBalance]);
+      return formatTokenAmount(ledger?.available ?? "0", 24);
+    })(), "Treasury balance took too long to load."),
+    refetchInterval: 15_000,
+  });
+  const ethBalance = treasuryBalance.data;
+  const fetchBalance = useCallback(async () => { await treasuryBalance.refetch(); }, [treasuryBalance.refetch]);
 
   const handleTopUpTreasury = useCallback(async () => {
     if (!company?.smartAccountAddress) return;
@@ -436,8 +371,7 @@ export function EmployerClient({
       if (auth.status === "authenticated") {
         const caller = await getUnifiedNearCaller(auth);
         if (caller.functionCall) {
-          if (auth.selector) await fundTreasury(auth.selector, auth.accountId, company.smartAccountAddress);
-          else if (auth.sendActions) {
+          if (auth.sendActions) {
             const { functionCall } = await import("near-api-js/lib/transaction");
             const scope = parseTreasuryReference(company.smartAccountAddress);
             const args = scope.companyId ? { company_id: scope.companyId } : {};
@@ -455,15 +389,15 @@ export function EmployerClient({
         }
       }
       window.open("https://near-faucet.io", "_blank");
-    } catch (err: any) {
+    } catch (err) {
       toast.error("Treasury funding did not complete", { description: err instanceof Error ? err.message : "Check the transaction before retrying" });
     } finally {
       setIsToppingUp(false);
     }
-  }, [company?.smartAccountAddress, auth, fetchBalance]);
+  }, [company, auth, fetchBalance]);
 
   // Unused allowances do not reserve treasury capital.
-  const availableBalanceEth = useMemo(() => {
+  const availableBalanceNear = useMemo(() => {
     if (ethBalance === undefined) return null;
     const balance = Number(ethBalance);
     return Number.isFinite(balance) ? balance : null;
@@ -497,10 +431,10 @@ export function EmployerClient({
       let allowance: string | undefined;
       if (delegation.status === "active" && allowanceCaveat) {
         const val = allowanceCaveat.caveatValue as Record<string, unknown>;
-        const weiStr = String(val.maxAmount ?? val.amount ?? "");
-        if (weiStr) allowance = formatAllowanceEth(weiStr);
+        const yoctoStr = String(val.maxAmount ?? val.amount ?? "");
+        if (yoctoStr) allowance = formatAllowanceNear(yoctoStr);
       }
-      return { ...delegation, allowance, remainingEth: delegation.remainingEth };
+      return { ...delegation, allowance, remainingNear: delegation.remainingNear };
     });
   }, [dashboardState]);
 
@@ -511,13 +445,14 @@ export function EmployerClient({
 
   const updateDashboard = useCallback((state: CompanyDashboardState) => {
     setDashboardState(state);
-  }, []);
+    void refreshDashboard();
+  }, [setDashboardState, refreshDashboard]);
 
   const runDashboardMutation = useCallback(
     (mutation: () => Promise<CompanyDashboardState>) => {
       startTransition(async () => {
         try {
-          updateDashboard(await mutation());
+          await mutateDashboard(mutation);
         } catch (caughtError) {
           toast.error(
             caughtError instanceof Error
@@ -527,8 +462,19 @@ export function EmployerClient({
         }
       });
     },
-    [updateDashboard],
+    [mutateDashboard],
   );
+
+  const reimbursementSetup = useMutation({
+    mutationFn: () => prepareReimbursementBudget(currentAuthAddress!), retry: false,
+    onSuccess: async result => {
+      await refreshDashboard();
+      setSelectedDelegationId(result.delegation.id);
+      setCaveatForm(formFromDelegation(result.delegation));
+      setFormErrors({});
+    },
+    onError: caught => toast.error(caught.message),
+  });
 
   const handleConfigureDelegation = useCallback(
     (delegationId: string) => {
@@ -547,9 +493,6 @@ export function EmployerClient({
     agent => agent.id === selectedDelegation.delegateeId && isReimbursementAgent(agent),
   ));
 
-  const isAgoraBudget = Boolean(selectedDelegation && dashboardState?.agents.some(
-    agent => agent.id === selectedDelegation.delegateeId && isAgoraAgent(agent),
-  ));
 
   const handleDropEmployee = useCallback(
     (input: {
@@ -748,7 +691,7 @@ export function EmployerClient({
     if (!selectedDelegation) return;
     if (selectedDelegation.status === "active") { toast.error("Revoke the existing permission before replacing it"); return; }
 
-    const errors = validateCaveatForm(caveatForm, availableBalanceEth);
+    const errors = validateCaveatForm(caveatForm, availableBalanceNear);
     setFormErrors(errors);
     const hasErrors = Object.keys(errors).some(
       (k) => k !== "allowedTargetsWarning" && errors[k as keyof FormErrors],
@@ -770,8 +713,8 @@ export function EmployerClient({
         }
 
         const delegateAddress = resolveDelegateAddress(selectedDelegation);
-        const parsedLimit = caveatForm.maxAmountEth ? parseTokenAmount(caveatForm.maxAmountEth, 24) : null;
-        const parsedPerTx = caveatForm.perTransactionCapEth ? parseTokenAmount(caveatForm.perTransactionCapEth, 24) : null;
+        const parsedLimit = caveatForm.maxAmountNear ? parseTokenAmount(caveatForm.maxAmountNear, 24) : null;
+        const parsedPerTx = caveatForm.perTransactionCapNear ? parseTokenAmount(caveatForm.perTransactionCapNear, 24) : null;
 
         const spec: PermissionSpec = {
           delegate: delegateAddress,
@@ -789,7 +732,7 @@ export function EmployerClient({
               lifetime_limit: parsedLimit,
               fixed_window: caveatForm.period && caveatForm.period !== "none"
                 ? {
-                    limit: parseTokenAmount(caveatForm.periodAmountEth || caveatForm.maxAmountEth, 24),
+                    limit: parseTokenAmount(caveatForm.periodAmountNear || caveatForm.maxAmountNear, 24),
                     duration_ms: (periodDurations[caveatForm.period] * 1000).toString(),
                     anchor_ms: Date.now().toString(),
                   }
@@ -832,15 +775,11 @@ export function EmployerClient({
 
         const toastTitle = isReimbursementBudget
           ? "Reimbursement budget authorized"
-          : isAgoraBudget
-          ? "Agora Remittance Pool authorized"
           : "Delegation Activated";
 
         const toastDesc = isReimbursementBudget
-          ? `Employees can now submit claims against the ${caveatForm.maxAmountEth} ${TOKEN_SYMBOL} reimbursement budget.`
-          : isAgoraBudget
-          ? `Global contractors can now settle invoices against the ${caveatForm.maxAmountEth} ${TOKEN_SYMBOL} remittance pool on NEAR Testnet.`
-          : `Assigned ${caveatForm.maxAmountEth} ${TOKEN_SYMBOL} spending limit to ${targetName} on NEAR Testnet`;
+          ? `Employees can now submit claims against the ${caveatForm.maxAmountNear} ${TOKEN_SYMBOL} reimbursement budget.`
+          : `Assigned ${caveatForm.maxAmountNear} ${TOKEN_SYMBOL} spending limit to ${targetName} on NEAR Testnet`;
 
         toast.success(toastTitle, {
           description: toastDesc,
@@ -865,16 +804,17 @@ export function EmployerClient({
       const addr = (currentAuthAddress || (profile && "user" in profile && profile.user ? profile.user.walletAddress : undefined)) as string;
       const result = await addEmployeeByEmail({ walletAddress: addr, email });
       if (result.status === "already_pending") {
-        toast.warning("Invitation Already Sent", {
-          description: "An invitation is already pending for this account.",
+        toast.warning("Employee email already added", {
+          description: "Share the Allocard link and ask them to sign in with this email.",
         });
       } else if (result.status === "already_active") {
         toast.info("Employee Already Active", {
           description: "This employee already has access to the workspace.",
         });
       } else {
-        toast.success("Employee Invited", {
-          description: "They can now sign in to access their corporate expense card.",
+        toast.success("Employee email added", {
+          description: "Share the Allocard link. They can sign in with the added email and accept access.",
+          action: { label: "Copy app link", onClick: () => { void navigator.clipboard.writeText(window.location.origin).catch(() => toast.info(window.location.origin)); } },
         });
       }
       updateDashboard(await getCompanyDashboardState(addr));
@@ -977,7 +917,7 @@ export function EmployerClient({
       }
       onRefreshEmployees={() => {
         startRefreshTransition(async () => {
-          updateDashboard(await getCompanyDashboardState(currentAuthAddress as string));
+          await refreshDashboard();
         });
       }}
       companyId={(profile && "user" in profile && profile.user && profile.user.companyId) || undefined}
@@ -1006,19 +946,21 @@ export function EmployerClient({
           <div className="flex items-center justify-center rounded-lg border border-border bg-muted/40 p-4">
             <SmartAccountActivationButton
               companyKey={company.id}
-              walletAddress={currentAuthAddress as `0x${string}`}
+              walletAddress={currentAuthAddress!}
               existingSmartAccountAddress={company.smartAccountAddress}
               onActivated={(result) => handleSmartAccountActivated(result.smartAccountAddress)}
             />
           </div>
         )}
 
+        <ReimbursementsCard role="employer" program={dashboardState.reimbursement} accountReady={!!company.smartAccountAddress}
+          busy={reimbursementSetup.isPending} onOpen={() => reimbursementSetup.mutate()} onRefresh={() => { void refreshDashboard(); }} />
         <SectionCards
           employeeCount={dashboardState.summary.employeeCount}
           smartAccountBalance={ethBalance ?? "—"}
           activeDelegationCount={dashboardState.summary.activeDelegationCount}
-          delegatedNativeEthAllowance={
-            dashboardState.summary.delegatedNativeEthAllowance
+          delegatedNativeNearAllowance={
+            dashboardState.summary.delegatedNativeNearAllowance
           }
           onTopUp={handleTopUpTreasury}
           isToppingUp={isToppingUp}
@@ -1054,7 +996,7 @@ export function EmployerClient({
                       className="h-8 text-xs"
                       onClick={() => {
                         startRefreshTransition(async () => {
-                          updateDashboard(await getCompanyDashboardState(currentAuthAddress as string));
+                          await refreshDashboard();
                         });
                       }}
                       disabled={isRefreshing}
@@ -1064,7 +1006,7 @@ export function EmployerClient({
                   </div>
                 }
                 employees={canvasEmployees}
-                agents={dashboardState.agents.filter(agent => !isReimbursementAgent(agent) && !isAgoraAgent(agent)).map((agent) => ({
+                agents={dashboardState.agents.filter(agent => !isReimbursementAgent(agent)).map((agent) => ({
                   id: agent.id,
                   name: agent.name,
                   smartAccountAddress: agent.smartAccountAddress,
@@ -1094,7 +1036,7 @@ export function EmployerClient({
               <DelegationCardsView
                 company={canvasCompany ?? company}
                 employees={canvasEmployees}
-                agents={dashboardState.agents.filter(agent => !isReimbursementAgent(agent) && !isAgoraAgent(agent)).map((agent) => ({
+                agents={dashboardState.agents.filter(agent => !isReimbursementAgent(agent)).map((agent) => ({
                   id: agent.id,
                   name: agent.name,
                   smartAccountAddress: agent.smartAccountAddress,
@@ -1110,7 +1052,7 @@ export function EmployerClient({
                     className="h-8 text-xs"
                     onClick={() => {
                       startRefreshTransition(async () => {
-                        updateDashboard(await getCompanyDashboardState(currentAuthAddress as string));
+                        await refreshDashboard();
                       });
                     }}
                     disabled={isRefreshing}
@@ -1141,15 +1083,12 @@ export function EmployerClient({
             <CompanyPolicyEditor
               companyPolicy={dashboardState?.companyPolicy ?? null}
               onSave={async (newPolicy) => {
-                await runDashboardMutation(async () => {
-                  const nextState = await updateCompanyPolicy({
-                    walletAddress: currentAuthAddress as string,
-                    companyPolicy: newPolicy,
-                  });
-                  toast.success("Company Policy Updated", {
-                    description: "AI guidelines and spending policy updated successfully.",
-                  });
-                  return nextState;
+                await mutateDashboard(() => updateCompanyPolicy({
+                  walletAddress: currentAuthAddress as string,
+                  companyPolicy: newPolicy,
+                }));
+                toast.success("Company Policy Updated", {
+                  description: "AI guidelines and spending policy updated successfully.",
                 });
               }}
             />
@@ -1172,17 +1111,11 @@ export function EmployerClient({
             <DrawerTitle>
               {isReimbursementBudget
                 ? "Reimbursement budget & policy"
-                : isAgoraBudget
-                ? "Agora Remittance Pool & Settlement Rules"
                 : "Spending Limits & Rules"}
             </DrawerTitle>
             <DrawerDescription>
               {isReimbursementBudget
                 ? "Authorize company funds for approved employee claims. To change an active budget, stop payouts and set up a new budget."
-                : isAgoraBudget
-                ? selectedDelegation?.status === "active"
-                  ? "This remittance pool is currently active on NEAR Testnet. International contractor invoices and cross-border expenses settle instantly from this authorized pool."
-                  : "Authorize a dedicated company pool for global contractor payouts and multi-currency expenses. Settles across borders in seconds with Agora AUSD."
                 : selectedDelegation?.status === "active"
                   ? "These rules are currently active and enforced on-chain."
                   : "Configure exactly what this delegatee is allowed to do with the company's funds."}
@@ -1205,8 +1138,6 @@ export function EmployerClient({
               <h4 className="text-sm font-semibold text-foreground">
                 {isReimbursementBudget
                   ? "1. Reimbursement budget"
-                  : isAgoraBudget
-                  ? "1. Remittance Pool Allocation"
                   : "1. Overall Spending Limits"}
               </h4>
 
@@ -1214,37 +1145,33 @@ export function EmployerClient({
                 <Label htmlFor="max-amount">
                   {isReimbursementBudget
                     ? "Total reimbursement budget"
-                    : isAgoraBudget
-                    ? "Total Remittance Pool Capacity"
                     : "Lifetime Spending Limit"}{" "}
                   ({TOKEN_SYMBOL})
                 </Label>
                 <Input
                   id="max-amount"
-                  value={caveatForm.maxAmountEth}
-                  className={formErrors.maxAmountEth ? "border-destructive" : ""}
+                  value={caveatForm.maxAmountNear}
+                  className={formErrors.maxAmountNear ? "border-destructive" : ""}
                   disabled={selectedDelegation?.status === "active"}
                   onChange={(event) =>
                     setCaveatForm((form) => ({
                       ...form,
-                      maxAmountEth: event.target.value,
+                      maxAmountNear: event.target.value,
                     }))
                   }
                 />
-                {formErrors.maxAmountEth ? (
-                  <p className="text-[0.8rem] text-destructive">{formErrors.maxAmountEth}</p>
+                {formErrors.maxAmountNear ? (
+                  <p className="text-[0.8rem] text-destructive">{formErrors.maxAmountNear}</p>
                 ) : (
                   <div className="text-[0.8rem] text-muted-foreground space-y-1">
                     <p>
                       {isReimbursementBudget
                         ? "The total amount available for employee claims under this authorization."
-                        : isAgoraBudget
-                        ? "The maximum AUSD allocated for international contractor settlements and foreign invoices under this pool authorization."
                         : <>The absolute maximum amount of {TOKEN_SYMBOL} this delegatee can spend in total over the lifetime of this delegation.</>}
                     </p>
-                    {availableBalanceEth !== null && selectedDelegation?.status !== "active" && (
+                    {availableBalanceNear !== null && selectedDelegation?.status !== "active" && (
                       <p>
-                        Current treasury liquidity (permissions do not reserve it): <span className="font-semibold text-foreground">{Number(availableBalanceEth.toFixed(4))} {TOKEN_SYMBOL}</span>
+                        Current treasury liquidity (permissions do not reserve it): <span className="font-semibold text-foreground">{Number(availableBalanceNear.toFixed(4))} {TOKEN_SYMBOL}</span>
                       </p>
                     )}
                   </div>
@@ -1254,7 +1181,7 @@ export function EmployerClient({
               {!isReimbursementBudget && (
                 <div className="flex flex-col gap-2 mt-2">
                   <Label>
-                    {isAgoraBudget ? "Pool Replenishment Schedule" : "Recurring Allowance"}
+                    {"Recurring Allowance"}
                   </Label>
                   <Select
                     value={caveatForm.period}
@@ -1280,9 +1207,7 @@ export function EmployerClient({
                     </SelectContent>
                   </Select>
                   <p className="text-[0.8rem] text-muted-foreground">
-                    {isAgoraBudget
-                      ? "Automatically replenish new AUSD allowance into the remittance pool on a recurring schedule."
-                      : "Automatically reset their spending limit on a recurring schedule."}
+                    {"Automatically reset their spending limit on a recurring schedule."}
                   </p>
                 </div>
               )}
@@ -1290,27 +1215,25 @@ export function EmployerClient({
               {!isReimbursementBudget && caveatForm.period !== "none" && (
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="period-amount">
-                    {isAgoraBudget ? `Replenishment per Period (${TOKEN_SYMBOL})` : `Allowance per Period (${TOKEN_SYMBOL})`}
+                    {`Allowance per Period (${TOKEN_SYMBOL})`}
                   </Label>
                   <Input
                     id="period-amount"
-                    value={caveatForm.periodAmountEth}
-                    className={formErrors.periodAmountEth ? "border-destructive" : ""}
+                    value={caveatForm.periodAmountNear}
+                    className={formErrors.periodAmountNear ? "border-destructive" : ""}
                     disabled={selectedDelegation?.status === "active"}
                     onChange={(event) =>
                       setCaveatForm((form) => ({
                         ...form,
-                        periodAmountEth: event.target.value,
+                        periodAmountNear: event.target.value,
                       }))
                     }
                   />
-                  {formErrors.periodAmountEth ? (
-                    <p className="text-[0.8rem] text-destructive">{formErrors.periodAmountEth}</p>
+                  {formErrors.periodAmountNear ? (
+                    <p className="text-[0.8rem] text-destructive">{formErrors.periodAmountNear}</p>
                   ) : (
                     <p className="text-[0.8rem] text-muted-foreground">
-                      {isAgoraBudget
-                        ? "How much AUSD is replenished into the remittance pool each period."
-                        : "How much they can spend within the selected timeframe."}
+                      {"How much they can spend within the selected timeframe."}
                     </p>
                   )}
                 </div>
@@ -1322,34 +1245,30 @@ export function EmployerClient({
             {/* Section 2: Transaction Restrictions */}
             <div className="flex flex-col gap-4">
               <h4 className="text-sm font-semibold text-foreground">
-                {isAgoraBudget ? "2. Settlement Safeguards" : "2. Transaction Restrictions"}
+                {"2. Transaction Restrictions"}
               </h4>
 
               <div className="flex flex-col gap-2">
                 <Label htmlFor="value-lte">
-                  {isAgoraBudget
-                    ? `Maximum Single Remittance Cap (${TOKEN_SYMBOL})`
-                    : `Maximum Per-Transaction (${TOKEN_SYMBOL})`}
+                  {`Maximum Per-Transaction (${TOKEN_SYMBOL})`}
                 </Label>
                 <Input
                   id="value-lte"
-                  value={caveatForm.perTransactionCapEth}
-                  className={formErrors.perTransactionCapEth ? "border-destructive" : ""}
+                  value={caveatForm.perTransactionCapNear}
+                  className={formErrors.perTransactionCapNear ? "border-destructive" : ""}
                   disabled={selectedDelegation?.status === "active"}
                   onChange={(event) =>
                     setCaveatForm((form) => ({
                       ...form,
-                      perTransactionCapEth: event.target.value,
+                      perTransactionCapNear: event.target.value,
                     }))
                   }
                 />
-                {formErrors.perTransactionCapEth ? (
-                  <p className="text-[0.8rem] text-destructive">{formErrors.perTransactionCapEth}</p>
+                {formErrors.perTransactionCapNear ? (
+                  <p className="text-[0.8rem] text-destructive">{formErrors.perTransactionCapNear}</p>
                 ) : (
                   <p className="text-[0.8rem] text-muted-foreground">
-                    {isAgoraBudget
-                      ? "The most that can be remitted in any single contractor payout. Leave blank for no per-invoice cap."
-                      : "The most they can spend in any single transaction. Leave blank for no per-transaction cap."}
+                    {"The most they can spend in any single transaction. Leave blank for no per-transaction cap."}
                   </p>
                 )}
               </div>
@@ -1369,7 +1288,7 @@ export function EmployerClient({
                       }
                     />
                     <Label htmlFor="limited-calls-enabled">
-                      {isAgoraBudget ? "Cap Total Remittance Payouts" : "Limit Total Transactions"}
+                      {"Limit Total Transactions"}
                     </Label>
                   </div>
                   {caveatForm.limitedCallsEnabled && (
@@ -1389,9 +1308,7 @@ export function EmployerClient({
                         <p className="text-[0.8rem] text-destructive">{formErrors.limitedCalls}</p>
                       ) : (
                         <p className="text-[0.8rem] text-muted-foreground">
-                          {isAgoraBudget
-                            ? "Restrict this pool to a specific number of contractor payouts."
-                            : "Restrict the delegatee to a specific number of total transactions."}
+                          {"Restrict the delegatee to a specific number of total transactions."}
                         </p>
                       )}
                     </>
@@ -1406,12 +1323,12 @@ export function EmployerClient({
             {!isReimbursementBudget && (
               <div className="flex flex-col gap-4">
                 <h4 className="text-sm font-semibold text-foreground">
-                  {isAgoraBudget ? "3. Pre-Approved Contractor Whitelist" : "3. Address Whitelist"}
+                  {"3. Address Whitelist"}
                 </h4>
 
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="targets">
-                    {isAgoraBudget ? "Approved Contractor Wallet Addresses" : "Permitted Addresses"}
+                    {"Permitted Addresses"}
                   </Label>
                   <Input
                     id="targets"
@@ -1425,9 +1342,7 @@ export function EmployerClient({
                       }))
                     }
                     placeholder={
-                      isAgoraBudget
-                        ? "vendor.testnet (one account per line or comma-separated)"
-                        : "One address per line or comma-separated"
+                      "One address per line or comma-separated"
                     }
                   />
                   {formErrors.allowedTargets ? (
@@ -1436,9 +1351,7 @@ export function EmployerClient({
                     <p className="text-[0.8rem] text-amber-500">{formErrors.allowedTargetsWarning}</p>
                   ) : (
                     <p className="text-[0.8rem] text-muted-foreground">
-                      {isAgoraBudget
-                        ? "Only permit remittances to these verified contractor wallets. Leave blank to allow payouts to any contractor invoice (default)."
-                        : "Only allow sends to these addresses. Leave blank to allow any destination (less secure)."}
+                      {"Only allow sends to these addresses. Leave blank to allow any destination (less secure)."}
                     </p>
                   )}
                 </div>
@@ -1452,18 +1365,14 @@ export function EmployerClient({
               <div className="flex flex-col gap-4">
                 <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
                   <BotIcon className="h-4 w-4 text-chart-5" />
-                  {isAgoraBudget
-                    ? "4. Remittance Compliance Guidelines"
-                    : isReimbursementBudget
+                  {isReimbursementBudget
                       ? "3. Reimbursement Policy Rules"
                       : "4. AI Policy Prompt"}
                 </h4>
 
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="policy-prompt">
-                    {isAgoraBudget
-                      ? "Remittance Policy Rules"
-                      : isReimbursementBudget
+                    {isReimbursementBudget
                         ? "Policy Guidelines"
                         : "Natural Language Rules"}
                   </Label>
@@ -1478,18 +1387,14 @@ export function EmployerClient({
                       }))
                     }
                     placeholder={
-                      isAgoraBudget
-                        ? "e.g. Approve software development, design, and infrastructure contractor invoices. Require verified deliverable links or invoice numbers. Exclude personal or non-business wires."
-                        : isReimbursementBudget
+                      isReimbursementBudget
                           ? "e.g. Do not reimburse alcohol. Limit meals to $50. Flights must be economy."
                           : "e.g. Only allow cloud infrastructure purchases. Reject any request over $500 without manager approval."
                     }
                     className="min-h-[100px] resize-none"
                   />
                   <p className="text-[0.8rem] text-muted-foreground">
-                    {isAgoraBudget
-                      ? "Compliance guidelines verified during cross-border remittance evaluation. Authorized pool payment limits apply."
-                      : "These additional rules are used with your company policy to assess expenses. The authorized payment limits still apply."}
+                    {"These additional rules are used with your company policy to assess expenses. The authorized payment limits still apply."}
                   </p>
                 </div>
               </div>
@@ -1504,9 +1409,7 @@ export function EmployerClient({
                   <AlertDialogTrigger asChild>
                     <Button variant="destructive" disabled={isPending}>
                       <BanIcon className="size-4 mr-2" />
-                      {isAgoraBudget
-                        ? "Pause remittance pool"
-                        : isReimbursementBudget
+                      {isReimbursementBudget
                           ? "Stop reimbursement payouts"
                           : "Revoke delegation"}
                     </Button>
@@ -1515,9 +1418,7 @@ export function EmployerClient({
                     <AlertDialogHeader>
                       <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
                       <AlertDialogDescription>
-                        {isAgoraBudget
-                          ? "This pauses contractor settlements from this remittance pool on NEAR Testnet. No new remittance payouts will be processed until re-authorized. Existing settled transactions remain recorded."
-                          : isReimbursementBudget
+                        {isReimbursementBudget
                             ? "This stops new reimbursement payouts under the current budget. Previous payments stay in your activity log. Authorize a new budget to resume payouts."
                             : "This will permanently revoke this active delegation on NEAR Testnet. All child AI agents under this delegation will also lose spending authority immediately."}
                       </AlertDialogDescription>
@@ -1532,9 +1433,7 @@ export function EmployerClient({
                         }}
                         className="bg-red-600 text-white hover:bg-red-700"
                       >
-                        {isAgoraBudget
-                          ? "Pause remittance pool"
-                          : isReimbursementBudget
+                        {isReimbursementBudget
                             ? "Stop payouts"
                             : "Yes, revoke delegation"}
                       </AlertDialogAction>
@@ -1548,9 +1447,7 @@ export function EmployerClient({
                   ) : (
                     <ShieldCheckIcon className="size-4 mr-2" />
                   )}
-                  {isAgoraBudget
-                    ? "Authorize Remittance Pool"
-                    : isReimbursementBudget
+                  {isReimbursementBudget
                       ? "Authorize reimbursement budget"
                       : "Activate delegation"}
                 </Button>
@@ -1575,15 +1472,19 @@ function CompanyPolicyEditor({
   const [draft, setDraft] = useState(companyPolicy ?? DEFAULT_COMPANY_POLICY);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const hasChanges = draft !== (companyPolicy ?? DEFAULT_COMPANY_POLICY);
 
   const handleSave = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       await onSave(draft);
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
+    } catch (caught) {
+      setSaveError(caught instanceof Error ? caught.message : "Could not save company policy.");
     } finally {
       setSaving(false);
     }
@@ -1603,6 +1504,7 @@ function CompanyPolicyEditor({
         </p>
       </div>
 
+      {saveError && <p role="alert" className="mb-3 text-sm text-destructive">{saveError}</p>}
       <Textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}

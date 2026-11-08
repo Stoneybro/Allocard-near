@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Building2, Loader2, RefreshCw } from "lucide-react";
+import { useWorkspaceOptions, useAccountScope } from "@/hooks/use-account-queries";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/components/AuthProvider";
 import { ConnectRequiredCard } from "@/components/auth-state";
-import { acceptEmployeeMembership, createEmployerAccount, getWorkspaceOptions, setWorkspaceContext, type WorkspaceOption } from "@/app/actions/identity";
+import { acceptEmployeeMembership, createEmployerAccount, setWorkspaceContext } from "@/app/actions/identity";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -17,47 +19,28 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 
-type PendingMembership = { id: string; companyId: string; companyName: string; createdAt: string };
+
 
 export default function OnboardingPage() {
   const auth = useAuth();
   const router = useRouter();
-  const [memberships, setMemberships] = useState<WorkspaceOption[]>([]);
-  const [pending, setPending] = useState<PendingMembership[]>([]);
   const [companyName, setCompanyName] = useState("");
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [activeAction, setActiveAction] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const actionInFlight = useRef(false);
-  const [loadedRequest, setLoadedRequest] = useState<string | null>(null);
-  const [refresh, setRefresh] = useState(0);
   const address = auth.status === "authenticated" ? auth.address : null;
-  const establishSession = auth.status === "authenticated" ? auth.establishSession : null;
-
-  const requestKey = address ? address + ":" + refresh : null;
-  const loading = !requestKey || loadedRequest !== requestKey;
-
-  useEffect(() => {
-    if (!address || !establishSession) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        await establishSession();
-        const result = await getWorkspaceOptions(address);
-        if (!cancelled) {
-          setLoadError(null);
-          setMemberships(result.memberships);
-          setPending(result.pending);
-        }
-      } catch (error) {
-        if (!cancelled) setLoadError(error instanceof Error ? error.message : "Could not load your workspaces.");
-      } finally {
-        if (!cancelled) setLoadedRequest(requestKey);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [address, establishSession, requestKey]);
+  const workspaces = useWorkspaceOptions();
+  const memberships = workspaces.data?.memberships ?? [];
+  const pending = workspaces.data?.pending ?? [];
+  const loading = !!address && workspaces.isPending;
+  const loadError = workspaces.error?.message ?? null;
+  const queryClient = useQueryClient();
+  const { key } = useAccountScope();
+  const actionMutation = useMutation({
+    mutationFn: (action: () => Promise<void>) => action(), retry: false,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: key }),
+  });
 
   const performAction = (key: string, action: () => Promise<void>) => {
     if (actionInFlight.current) return;
@@ -66,7 +49,7 @@ export default function OnboardingPage() {
     setActionError(null);
     startTransition(async () => {
       try {
-        await action();
+        await actionMutation.mutateAsync(action);
       } catch (error) {
         setActionError(error instanceof Error ? error.message : "Something went wrong. Please try again.");
       } finally {
@@ -97,7 +80,7 @@ export default function OnboardingPage() {
                 {auth.address.length > 24 ? `${auth.address.slice(0, 8)}...${auth.address.slice(-6)}` : auth.address}
               </span>
               <Badge variant="secondary" className="text-[11px] font-normal text-zinc-600 bg-zinc-100">
-                {auth.authMethod === "fast-auth" ? "NEAR Auth" : "NEAR Wallet"}
+                {"Privy NEAR wallet"}
               </Badge>
               <Button variant="ghost" size="sm" onClick={auth.disconnect} className="text-xs text-zinc-500 hover:text-zinc-900">
                 Disconnect
@@ -224,7 +207,7 @@ export default function OnboardingPage() {
                 </CardContent>
               </div>
               <CardFooter className="pt-2">
-                <Button variant="ghost" disabled={busy} onClick={() => setRefresh((value) => value + 1)}>
+                <Button variant="ghost" disabled={busy} onClick={() => { void workspaces.refetch(); }}>
                   <RefreshCw data-icon="inline-start" />
                   {loadError ? "Try again" : "Refresh access"}
                 </Button>

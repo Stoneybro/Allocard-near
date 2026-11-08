@@ -72,7 +72,7 @@ export function HelpModal() {
                   <li>Switch to the employer window. The employee now appears in the sidebar.</li>
                   <li>Drag the employee from the sidebar onto the canvas.</li>
                   <li>Click <strong>Configure</strong> on the pending node.</li>
-                  <li>Set the spending limits (e.g., 100 AUSD) and click <strong>Activate Delegation</strong>.</li>
+                  <li>Set the spending limits (e.g., 100 NEAR) and click <strong>Activate Delegation</strong>.</li>
                 </ol>
               </AccordionContent>
             </AccordionItem>

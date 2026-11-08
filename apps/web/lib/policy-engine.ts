@@ -1,3 +1,4 @@
+import { isNativeNearAccount } from "./wallet";
 import {
   type PermissionSpec,
   type AssetRule,
@@ -7,7 +8,6 @@ import {
   formatTokenAmount,
 } from "@allocard/delegation-sdk";
 import { aiChat, getTextModel, getApiKey } from "./ai";
-import { SPONSOR_MERCHANTS } from "./merchants";
 
 export type PolicyPeriod = "none" | "hourly" | "daily" | "weekly" | "monthly";
 
@@ -29,16 +29,16 @@ export interface ParsePolicyInput {
 }
 
 export interface CaveatFormValues {
-  maxAmountEth: string;
+  maxAmountNear: string;
   period: PolicyPeriod;
-  periodAmountEth: string;
-  perTransactionCapEth: string;
+  periodAmountNear: string;
+  perTransactionCapNear: string;
   limitedCallsEnabled: boolean;
   limitedCalls: string;
   allowedTargets: string;
   approvalEnabled: boolean;
   approvalApprover: string;
-  approvalAboveAmountEth: string;
+  approvalAboveAmountNear: string;
   expiresAt: string | null;
   policyPrompt: string;
 }
@@ -69,37 +69,7 @@ export interface ValidatePolicyResult {
  * - Implicit accounts: 64 hex characters
  */
 export function isValidNearAccountId(accountId: string): boolean {
-  if (!accountId || typeof accountId !== "string") return false;
-  const trimmed = accountId.trim();
-  if (trimmed.length < 2 || trimmed.length > 64) return false;
-  // Must be strictly lowercase per NEAR specification
-  if (/[A-Z]/.test(trimmed)) return false;
-  // Implicit 64-char hex account
-  if (trimmed.length === 64 && /^[0-9a-f]{64}$/.test(trimmed)) return true;
-  // Standard named account
-  return /^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/.test(trimmed);
-}
-
-/**
- * Known merchant to testnet/mainnet NEAR account mapping
- */
-const KNOWN_MERCHANTS: Record<string, string> = {
-  chainstack: "chainstack.testnet",
-  crouton: "crouton.testnet",
-  ack3: "ack3.testnet",
-  envio: "envio.testnet",
-  aws: "aws.testnet",
-  vercel: "vercel.testnet",
-  googlecloud: "googlecloud.testnet",
-  github: "github.testnet",
-};
-
-// Also populate from SPONSOR_MERCHANTS if present
-for (const m of SPONSOR_MERCHANTS) {
-  if (m.id && m.merchantAddress) {
-    KNOWN_MERCHANTS[m.id.toLowerCase()] = m.merchantAddress.toLowerCase();
-    KNOWN_MERCHANTS[m.name.toLowerCase()] = m.merchantAddress.toLowerCase();
-  }
+  return typeof accountId === "string" && isNativeNearAccount(accountId.trim());
 }
 
 /**
@@ -380,9 +350,9 @@ function buildPolicyResultFromRaw(params: {
   const warnings = Array.isArray(raw.warnings) ? [...raw.warnings] : [];
 
   // Parse amounts
-  const maxAmountEth = cleanDecimalAmount(raw.lifetimeLimitNear);
-  const periodAmountEth = cleanDecimalAmount(raw.periodLimitNear);
-  const perTransactionCapEth = cleanDecimalAmount(raw.perTransactionCapNear);
+  const maxAmountNear = cleanDecimalAmount(raw.lifetimeLimitNear);
+  const periodAmountNear = cleanDecimalAmount(raw.periodLimitNear);
+  const perTransactionCapNear = cleanDecimalAmount(raw.perTransactionCapNear);
 
   // Period
   let period: PolicyPeriod = "none";
@@ -397,7 +367,7 @@ function buildPolicyResultFromRaw(params: {
     for (const item of raw.allowedTargets) {
       const cleaned = item.trim().toLowerCase();
       // Check known merchant alias
-      const mapped = KNOWN_MERCHANTS[cleaned] || cleaned;
+      const mapped = cleaned;
       if (isValidNearAccountId(mapped)) {
         if (!targets.includes(mapped)) targets.push(mapped);
       } else {
@@ -409,7 +379,7 @@ function buildPolicyResultFromRaw(params: {
   // Approval rule
   let approvalRule: ApprovalRule | null = null;
   let approvalApprover = "";
-  let approvalAboveAmountEth = "";
+  let approvalAboveAmountNear = "";
   let approvalEnabled = false;
 
   if (raw.approval && raw.approval.approver && cleanDecimalAmount(raw.approval.aboveAmountNear)) {
@@ -421,7 +391,7 @@ function buildPolicyResultFromRaw(params: {
         above_amount: parseTokenAmount(aboveClean, 24),
       };
       approvalApprover = approverClean;
-      approvalAboveAmountEth = aboveClean;
+      approvalAboveAmountNear = aboveClean;
       approvalEnabled = true;
     } else {
       warnings.push(`Approver account "${raw.approval.approver}" was invalid; approval rule omitted.`);
@@ -451,14 +421,14 @@ function buildPolicyResultFromRaw(params: {
   }
 
   // On-Chain AssetRule construction
-  const parsedLifetime = maxAmountEth ? parseTokenAmount(maxAmountEth, 24) : null;
-  const parsedPerTx = perTransactionCapEth ? parseTokenAmount(perTransactionCapEth, 24) : null;
+  const parsedLifetime = maxAmountNear ? parseTokenAmount(maxAmountNear, 24) : null;
+  const parsedPerTx = perTransactionCapNear ? parseTokenAmount(perTransactionCapNear, 24) : null;
 
   let fixedWindow: FixedWindowLimit | null = null;
-  if (period !== "none" && (periodAmountEth || maxAmountEth)) {
-    const windowLimitEth = periodAmountEth || maxAmountEth;
+  if (period !== "none" && (periodAmountNear || maxAmountNear)) {
+    const windowLimitNear = periodAmountNear || maxAmountNear;
     fixedWindow = {
-      limit: parseTokenAmount(windowLimitEth, 24),
+      limit: parseTokenAmount(windowLimitNear, 24),
       duration_ms: PERIOD_DURATIONS_MS[period].toString(),
       anchor_ms: nowMs.toString(),
     };
@@ -497,27 +467,27 @@ function buildPolicyResultFromRaw(params: {
 
   const semanticGuardrails = raw.semanticGuardrails?.trim() || "";
   const summary = raw.summary?.trim() || formatDefaultSummary({
-    maxAmountEth,
+    maxAmountNear,
     period,
-    periodAmountEth,
-    perTransactionCapEth,
+    periodAmountNear,
+    perTransactionCapNear,
     targets,
     approvalApprover,
-    approvalAboveAmountEth,
+    approvalAboveAmountNear,
     delegate,
   });
 
   const formValues: CaveatFormValues = {
-    maxAmountEth,
+    maxAmountNear,
     period,
-    periodAmountEth,
-    perTransactionCapEth,
+    periodAmountNear,
+    perTransactionCapNear,
     limitedCallsEnabled: maxExecutions !== null,
     limitedCalls: maxExecutions ? String(maxExecutions) : "",
     allowedTargets: targets.join(", "),
     approvalEnabled,
     approvalApprover,
-    approvalAboveAmountEth,
+    approvalAboveAmountNear,
     expiresAt: expiresAtIso,
     policyPrompt: semanticGuardrails,
   };
@@ -625,13 +595,6 @@ export function parsePolicyDeterministicFallback(
     }
   }
 
-  // Check for known merchant keywords
-  for (const [alias, accountId] of Object.entries(KNOWN_MERCHANTS)) {
-    if (lower.includes(alias) && !allowedTargets.includes(accountId)) {
-      allowedTargets.push(accountId);
-    }
-  }
-
   // 5. Expirations & limits
   let maxExecutions: number | null = null;
   const execMatch = lower.match(/(?:limit\s+(?:of|to)|up\s+to|max(?:imum)?)\s*(\d+)\s*(?:transactions|txs|payments|calls)/);
@@ -690,30 +653,30 @@ export function parsePolicyDeterministicFallback(
 }
 
 function formatDefaultSummary(p: {
-  maxAmountEth: string;
+  maxAmountNear: string;
   period: PolicyPeriod;
-  periodAmountEth: string;
-  perTransactionCapEth: string;
+  periodAmountNear: string;
+  perTransactionCapNear: string;
   targets: string[];
   approvalApprover: string;
-  approvalAboveAmountEth: string;
+  approvalAboveAmountNear: string;
   delegate: string;
 }): string {
   const parts: string[] = [`Spending permission for ${p.delegate}.`];
-  if (p.period !== "none" && p.periodAmountEth) {
-    parts.push(`Allowance of ${p.periodAmountEth} NEAR per ${p.period}.`);
+  if (p.period !== "none" && p.periodAmountNear) {
+    parts.push(`Allowance of ${p.periodAmountNear} NEAR per ${p.period}.`);
   }
-  if (p.maxAmountEth) {
-    parts.push(`Lifetime budget capped at ${p.maxAmountEth} NEAR.`);
+  if (p.maxAmountNear) {
+    parts.push(`Lifetime budget capped at ${p.maxAmountNear} NEAR.`);
   }
-  if (p.perTransactionCapEth) {
-    parts.push(`Single transaction limit of ${p.perTransactionCapEth} NEAR.`);
+  if (p.perTransactionCapNear) {
+    parts.push(`Single transaction limit of ${p.perTransactionCapNear} NEAR.`);
   }
   if (p.targets.length > 0) {
     parts.push(`Whitelisted recipients: ${p.targets.join(", ")}.`);
   }
-  if (p.approvalApprover && p.approvalAboveAmountEth) {
-    parts.push(`Payments above ${p.approvalAboveAmountEth} NEAR require approval from ${p.approvalApprover}.`);
+  if (p.approvalApprover && p.approvalAboveAmountNear) {
+    parts.push(`Payments above ${p.approvalAboveAmountNear} NEAR require approval from ${p.approvalApprover}.`);
   }
   return parts.join(" ");
 }
@@ -726,24 +689,24 @@ export function specToCaveatFormValues(
   policyPrompt?: string,
 ): CaveatFormValues {
   const rule = spec.rules[0];
-  let maxAmountEth = "";
-  let perTransactionCapEth = "";
+  let maxAmountNear = "";
+  let perTransactionCapNear = "";
   let period: PolicyPeriod = "none";
-  let periodAmountEth = "";
+  let periodAmountNear = "";
   let allowedTargets = "";
   let approvalEnabled = false;
   let approvalApprover = "";
-  let approvalAboveAmountEth = "";
+  let approvalAboveAmountNear = "";
 
   if (rule) {
     if (rule.lifetime_limit) {
-      maxAmountEth = formatTokenAmount(rule.lifetime_limit, 24);
+      maxAmountNear = formatTokenAmount(rule.lifetime_limit, 24);
     }
     if (rule.max_per_action) {
-      perTransactionCapEth = formatTokenAmount(rule.max_per_action, 24);
+      perTransactionCapNear = formatTokenAmount(rule.max_per_action, 24);
     }
     if (rule.fixed_window) {
-      periodAmountEth = formatTokenAmount(rule.fixed_window.limit, 24);
+      periodAmountNear = formatTokenAmount(rule.fixed_window.limit, 24);
       const dur = parseInt(rule.fixed_window.duration_ms, 10);
       if (dur === PERIOD_DURATIONS_MS.hourly) period = "hourly";
       else if (dur === PERIOD_DURATIONS_MS.daily) period = "daily";
@@ -756,7 +719,7 @@ export function specToCaveatFormValues(
     if (rule.approval) {
       approvalEnabled = true;
       approvalApprover = rule.approval.approver;
-      approvalAboveAmountEth = formatTokenAmount(rule.approval.above_amount, 24);
+      approvalAboveAmountNear = formatTokenAmount(rule.approval.above_amount, 24);
     }
   }
 
@@ -766,16 +729,16 @@ export function specToCaveatFormValues(
   }
 
   return {
-    maxAmountEth,
+    maxAmountNear,
     period,
-    periodAmountEth,
-    perTransactionCapEth,
+    periodAmountNear,
+    perTransactionCapNear,
     limitedCallsEnabled: Boolean(spec.max_executions),
     limitedCalls: spec.max_executions ? String(spec.max_executions) : "",
     allowedTargets,
     approvalEnabled,
     approvalApprover,
-    approvalAboveAmountEth,
+    approvalAboveAmountNear,
     expiresAt,
     policyPrompt: policyPrompt || "",
   };

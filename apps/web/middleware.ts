@@ -1,33 +1,11 @@
-import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
-import { jwtVerify } from "jose";
+import { NextResponse, type NextRequest } from "next/server";
 
-/**
- * This guard improves navigation by redirecting requests without a valid
- * Allocard session. API handlers and server actions must still authorize their
- * own data access and mutations.
- */
-export async function middleware(request: NextRequest) {
+/** Navigation hint only; every protected read/write validates the revocable server session. */
+export function middleware(request: NextRequest) {
   const token = request.cookies.get("allocard_session")?.value;
-  const secret = process.env.SESSION_SECRET;
-  // Development sessions use a process-local secret; server guards verify them.
-  if (process.env.NODE_ENV !== "production" && (!secret || secret.length < 32)) return NextResponse.next();
-  if (token && secret && secret.length >= 32) {
-    try {
-      const { payload } = await jwtVerify(token, new TextEncoder().encode(secret));
-      if (payload.authVersion === 2 && typeof payload.sub === "string" && typeof payload.walletAddress === "string") {
-        return NextResponse.next();
-      }
-    } catch {
-      // Treat an invalid or expired session the same as a missing session.
-    }
-  }
-
+  if (token && /^[A-Za-z0-9_-]{43}$/.test(token)) return NextResponse.next();
   const destination = new URL("/", request.url);
   destination.searchParams.set("redirect", request.nextUrl.pathname);
   return NextResponse.redirect(destination);
 }
-
-export const config = {
-  matcher: ["/employer/:path*", "/employee/:path*"],
-};
+export const config = { matcher: ["/employer/:path*", "/employee/:path*"] };

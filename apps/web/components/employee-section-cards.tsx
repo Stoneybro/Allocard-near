@@ -16,15 +16,15 @@ import {
 import { TOKEN_SYMBOL } from "@/lib/chain";
 
 export function EmployeeSectionCards({
-  approvedLimitEth,
-  redelegatedEth,
-  remainingEth,
-  spentEth = "0",
+  approvedLimitNear,
+  redelegatedNear,
+  remainingNear,
+  spentNear = "0",
 }: {
-  approvedLimitEth: string;
-  redelegatedEth: string;
-  remainingEth: string;
-  spentEth?: string;
+  approvedLimitNear: string;
+  redelegatedNear: string;
+  remainingNear: string;
+  spentNear?: string;
 }) {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -35,7 +35,7 @@ export function EmployeeSectionCards({
             Available Allowance
           </CardDescription>
           <CardTitle className="text-xl font-bold tracking-tight tabular-nums @[250px]/card:text-2xl text-foreground">
-            {remainingEth} {TOKEN_SYMBOL}
+            {remainingNear} {TOKEN_SYMBOL}
           </CardTitle>
           <CardAction>
             <Badge variant="secondary" className="px-1.5 py-0.5 text-xs">
@@ -55,7 +55,7 @@ export function EmployeeSectionCards({
             Authorized Spending Limit
           </CardDescription>
           <CardTitle className="text-xl font-bold tracking-tight tabular-nums @[250px]/card:text-2xl text-foreground">
-            {approvedLimitEth} {TOKEN_SYMBOL}
+            {approvedLimitNear} {TOKEN_SYMBOL}
           </CardTitle>
           <CardAction>
             <Badge variant="outline" className="px-1.5 py-0.5 text-xs">
@@ -75,7 +75,7 @@ export function EmployeeSectionCards({
             Utilized Spend
           </CardDescription>
           <CardTitle className="text-xl font-bold tracking-tight tabular-nums @[250px]/card:text-2xl text-foreground">
-            {spentEth} {TOKEN_SYMBOL}
+            {spentNear} {TOKEN_SYMBOL}
           </CardTitle>
           <CardAction>
             <Badge variant="outline" className="px-1.5 py-0.5 text-xs">
@@ -95,7 +95,7 @@ export function EmployeeSectionCards({
             Allocated to Agents
           </CardDescription>
           <CardTitle className="text-xl font-bold tracking-tight tabular-nums @[250px]/card:text-2xl text-foreground">
-            {redelegatedEth} {TOKEN_SYMBOL}
+            {redelegatedNear} {TOKEN_SYMBOL}
           </CardTitle>
           <CardAction>
             <Badge variant="outline" className="px-1.5 py-0.5 text-xs">

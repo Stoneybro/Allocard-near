@@ -9,11 +9,11 @@ import { advisoryPolicyCheck } from "@/lib/ai";
 export async function POST(req: NextRequest) {
   try {
     const user = await requireSessionUser();
-    const { purpose, amountEth, delegationId } = await req.json();
+    const { purpose, amountNear, delegationId } = await req.json();
 
-    if (!purpose || !amountEth || !delegationId) {
+    if (!purpose || !amountNear || !delegationId) {
       return NextResponse.json(
-        { error: "Missing required fields: purpose, amountEth, delegationId" },
+        { error: "Missing required fields: purpose, amountNear, delegationId" },
         { status: 400 }
       );
     }
@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
     // Call Qwen AI advisory check
     const result = await advisoryPolicyCheck({
       purpose,
-      amountEth,
+      amountNear,
       caveats,
       policyPrompt: delegation?.policyPrompt ?? null,
       companyPolicy,

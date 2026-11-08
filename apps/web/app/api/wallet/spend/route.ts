@@ -10,8 +10,8 @@ import { treasuryReader, assertSettledPayment, verifyPaymentTransaction } from "
 export async function POST(req: NextRequest) {
   try {
     const user = await requireSessionUser();
-    const { companyId, employeeId, delegationId, toAddress, amountEth, purpose, txHash, executionId } = await req.json();
-    if (typeof companyId !== "string" || typeof delegationId !== "string" || !isNativeNearAccount(toAddress) || typeof amountEth !== "string" || typeof txHash !== "string" || typeof executionId !== "string" || !/^[0-9]+$/.test(executionId)) {
+    const { companyId, employeeId, delegationId, toAddress, amountNear, purpose, txHash, executionId } = await req.json();
+    if (typeof companyId !== "string" || typeof delegationId !== "string" || !isNativeNearAccount(toAddress) || typeof amountNear !== "string" || typeof txHash !== "string" || typeof executionId !== "string" || !/^[0-9]+$/.test(executionId)) {
       return NextResponse.json({ error: "A settled NEAR execution and valid payment fields are required" }, { status: 400 });
     }
     if (employeeId !== user.id) return NextResponse.json({ error: "You can only record your own payments" }, { status: 403 });
@@ -25,9 +25,9 @@ export async function POST(req: NextRequest) {
     // Revocation after dispatch does not erase a successful payment. Verify the
     // execution itself rather than requiring that permission to still be active.
     const record = await treasuryReader(company.smartAccountAddress).getExecution(executionId);
-    assertSettledPayment(record, { actor: user.embeddedWalletAddress, permissionId: delegation.delegationHash, receiver: toAddress, amount: parseTokenAmount(amountEth, 24) });
+    assertSettledPayment(record, { actor: user.embeddedWalletAddress, permissionId: delegation.delegationHash, receiver: toAddress, amount: parseTokenAmount(amountNear, 24) });
     await verifyPaymentTransaction(txHash, record.actor, company.smartAccountAddress, record.request_id);
-    const values = { companyId, employeeId: user.id, delegationId, toAddress, amountEth, purpose: typeof purpose === "string" ? purpose.trim().slice(0, 2000) : "Company payment", isFlagged: false,
+    const values = { assetNetwork: "near:testnet", companyId, employeeId: user.id, delegationId, toAddress, amountNear, purpose: typeof purpose === "string" ? purpose.trim().slice(0, 2000) : "Company payment", isFlagged: false,
       txHash, executionId, treasuryContractId: company.smartAccountAddress };
     const [inserted] = await db.insert(manualTransactions).values(values).onConflictDoNothing({ target: [manualTransactions.treasuryContractId, manualTransactions.executionId] }).returning();
     if (inserted) return NextResponse.json({ success: true, transaction: inserted });

@@ -36,7 +36,7 @@ export async function requireSessionUser() {
     .limit(1), "auth:session-user");
 
   if (!user) throw new Error("Forbidden: create an Allocard profile before continuing.");
-  if ((user.nearAccountId ?? user.embeddedWalletAddress).toLowerCase() !== identity.walletAddress.toLowerCase()) {
+  if (user.privyUserId !== identity.providerUserId || (user.nearAccountId ?? user.embeddedWalletAddress).toLowerCase() !== identity.walletAddress.toLowerCase()) {
     throw new Error("Forbidden: session wallet does not match the Allocard profile.");
   }
   return { ...user, embeddedWalletAddress: user.nearAccountId ?? user.embeddedWalletAddress };

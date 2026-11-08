@@ -12,6 +12,13 @@ try {
   // Keep Drizzle's existing journal, hashes, and migration tracking format.
   const migrations = readMigrationFiles({ migrationsFolder: "./drizzle" });
   const sql = neon(process.env[key]);
+  if (process.argv.includes("--plan")) {
+    const rows = await sql`SELECT created_at FROM drizzle.__drizzle_migrations ORDER BY created_at DESC LIMIT 1`;
+    const last = rows[0] ? Number(rows[0].created_at) : null;
+    const pending = migrations.filter(migration => last === null || migration.folderMillis > last);
+    console.log(JSON.stringify(pending.map(migration => ({ timestamp: migration.folderMillis, destructive: migration.sql.some(statement => /\bDROP\s+(TABLE|COLUMN|TYPE)\b/i.test(statement)) }))));
+    process.exit(0);
+  }
   await sql`CREATE SCHEMA IF NOT EXISTS drizzle`;
   await sql`CREATE TABLE IF NOT EXISTS drizzle.__drizzle_migrations (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at bigint)`;
   const rows = await sql`SELECT created_at FROM drizzle.__drizzle_migrations ORDER BY created_at DESC LIMIT 1`;

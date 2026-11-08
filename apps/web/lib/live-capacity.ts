@@ -29,7 +29,7 @@ export async function readLiveNativeCapacity(reader: AllocardTreasuryClient, act
   const remaining = await nativeSpendingCapacity({ actor, path, config, available: ledger?.enabled ? ledger.available : "0", now: BigInt(Date.now()), usage, blocked, executionCount });
   const lifetime = await usage(permissionId, { type: "Lifetime" });
   const rule = path[0]?.rules.find(rule => rule.asset.type === "NativeNear");
-  return { remainingEth: formatTokenAmount(remaining, 24), approvedEth: formatTokenAmount(rule?.lifetime_limit ?? "0", 24), spentEth: formatTokenAmount(lifetime.settled, 24) };
+  return { remainingNear: formatTokenAmount(remaining, 24), approvedNear: formatTokenAmount(rule?.lifetime_limit ?? "0", 24), spentNear: formatTokenAmount(lifetime.settled, 24) };
 }
 export function capacityReadError(caught: unknown): string {
   const detail = caught instanceof NearReadError ? caught.message : "The treasury returned an unexpected response.";

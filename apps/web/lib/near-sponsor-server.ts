@@ -3,18 +3,19 @@ import { KeyPair, utils } from "near-api-js";
 import { Action, createTransaction, Signature, SignedTransaction, transfer } from "near-api-js/lib/transaction";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { parseTreasuryReference } from "@allocard/delegation-sdk";
+import { computeCompanyId, parseTreasuryReference, treasuryReference } from "@allocard/delegation-sdk";
 import { requireEmployeeCompany, requireSessionUser } from "./auth-guard";
 import { db } from "./db";
-import { companies, delegations, users } from "./db/schema";
+import { companies, companyMemberships, delegations, users } from "./db/schema";
 import { withRetry } from "./db/withRetry";
 import { getSessionIdentity } from "./session";
 import { nearQuery, treasuryReader, verifyTreasuryOwner, assertEmployeePermission } from "./near-server";
+import { verifiedSharedConfig } from "./shared-server";
 import { NearReadError } from "./near-read-error";
 import { nearRpcServerUrl } from "./near-rpc-server";
 import { nextAccessKeyNonce } from "./near-nonce";
-import { canonicalSponsorJson, sponsoredDelegate, sponsoredSigningBytes, SPONSORED_VALID_BLOCKS, type SponsoredPayment, type SponsoredProof } from "./near-sponsored-action";
-import { acquireSponsorKey, allocateSponsorNonce, claimSponsorJob, findSponsorJob, finishSponsorJob, releaseSponsorKey, releaseUnbroadcastJob, saveSponsorTransaction, takeSponsorQuota, type SponsorJob } from "./near-sponsor-store";
+import { MAX_SPONSORED_COMPANY_DEPOSIT, canonicalSponsorJson, sponsoredCompanyDelegate, sponsoredDelegate, sponsoredSigningBytes, SPONSORED_VALID_BLOCKS, type SponsoredCompany, type SponsoredCompanyProof, type SponsoredPayment, type SponsoredProof } from "./near-sponsored-action";
+import { acquireSponsorKey, allocateSponsorNonce, claimSponsorJob, findSponsorJob, finishSponsorJob, releaseSponsorKey, releaseUnbroadcastJob, saveSponsorTransaction, takeCompanyRegistrationGrant, takeSponsorQuota, type SponsorJob } from "./near-sponsor-store";
 import { invalidateNearReadCache } from "./near-read-coordinator";
 
 const decimal = z.string().regex(/^(0|[1-9][0-9]*)$/).max(39);
@@ -27,10 +28,16 @@ const requestSchema = z.object({
 export const sponsoredPaymentSchema = z.object({ treasury: z.string().min(2).max(130), request: requestSchema }).strict();
 export const sponsoredProofSchema = sponsoredPaymentSchema.extend({ nonce: decimal.max(20), maxBlockHeight: decimal.max(20), signature: z.string().regex(/^0x[0-9a-fA-F]{128}$/) });
 
+export const sponsoredCompanySchema = z.object({ companyKey: z.uuid(), contractId: account, deposit: decimal }).strict();
+export const sponsoredCompanyProofSchema = sponsoredCompanySchema.extend({ nonce: decimal.max(20), maxBlockHeight: decimal.max(20), signature: z.string().regex(/^0x[0-9a-fA-F]{128}$/) });
+export function companySponsorshipEnabled() { return sponsorshipEnabled() && process.env.NEAR_SPONSOR_COMPANY_ENABLED === "true"; }
+
 function sponsorConfig() {
   const accountId = process.env.NEAR_RELAYER_ACCOUNT_ID;
   const secret = process.env.NEAR_RELAYER_PRIVATE_KEY;
-  if (!accountId || !accountId.endsWith(".testnet") || !account.safeParse(accountId).success || !secret?.startsWith("ed25519:")) throw new Error("Configure a dedicated funded testnet NEAR relayer account and Ed25519 key on the server.");
+  if (!accountId || !accountId.endsWith(".testnet") || !account.safeParse(accountId).success) throw new Error("NEAR_RELAYER_ACCOUNT_ID must be a valid .testnet account ID on the server.");
+  if (!secret) throw new Error("NEAR_RELAYER_PRIVATE_KEY is empty or missing on the server. Remove duplicate blank entries in apps/web/.env.local and restart the web server.");
+  if (!secret.startsWith("ed25519:")) throw new Error("NEAR_RELAYER_PRIVATE_KEY must be an Ed25519 secret starting with ed25519:.");
   let key: KeyPair;
   try { key = KeyPair.fromString(secret as `ed25519:${string}`); } catch { throw new Error("The NEAR relayer key configuration is invalid."); }
   const bound = (value: string | undefined, fallback: number, max: number) => {
@@ -88,7 +95,7 @@ async function relayRpc(method: string, params: object, txHash?: string): Promis
     if (!response.ok || payload.error || !payload.result) throw new Error("RPC rejected request");
     return payload.result;
   } catch {
-    throw new Error(txHash ? `Sponsored transaction ${txHash} is not yet confirmed. Retry this same payment to check its status; it will not be submitted again.` : "The gas sponsor could not reach NEAR testnet. Retry shortly.");
+    throw new Error(txHash ? `Sponsored transaction ${txHash} is not yet confirmed. Retry this same action to check its status; it will not be submitted again.` : "The gas sponsor could not reach NEAR testnet. Retry shortly.");
   }
 }
 async function assertTestnet() {
@@ -98,18 +105,18 @@ async function assertTestnet() {
 function assertOutcome(result: Record<string, unknown>, transactionHash: string): RpcOutcome {
   const outcome = result as unknown as RpcOutcome;
   if (!outcome.transaction || outcome.transaction.hash !== transactionHash || (!outcome.status || typeof outcome.status !== "object" || !("SuccessValue" in outcome.status))) {
-    throw new Error(`Sponsored transaction ${transactionHash} did not succeed. Check its execution before starting a new payment.`);
+    throw new Error(`Sponsored transaction ${transactionHash} did not succeed. Check its execution before starting a new attempt.`);
   }
   return outcome;
 }
 async function recover(job: SponsorJob, intentHash: string) {
   if (job.intentHash !== intentHash) throw new Error("This payment request ID was already used for different payment details");
-  if (!job.transactionHash) throw new Error("This sponsorship attempt is reserved but has no transaction reference. Contact the operator before starting a new payment.");
+  if (!job.transactionHash) throw new Error("This sponsorship attempt is reserved but has no transaction reference. Contact the operator before starting a new attempt.");
   const result = await relayRpc("tx", { tx_hash: job.transactionHash, sender_account_id: job.relayerId, wait_until: "FINAL" }, job.transactionHash);
   return assertOutcome(result, job.transactionHash);
 }
 
-async function submitOuter(id: string, actor: string, intentHash: string, receiverId: string, actions: Action[]) {
+async function submitOuter(id: string, actor: string, intentHash: string, receiverId: string, actions: Action[], registrationPrincipal?: string) {
   const config = sponsorConfig();
   const existing = await findSponsorJob(id);
   if (existing) return recover(existing, intentHash);
@@ -127,9 +134,23 @@ async function submitOuter(id: string, actor: string, intentHash: string, receiv
     }
     ownsJob = true;
     await takeSponsorQuota(actor, config.globalLimit, config.userLimit);
+    if (registrationPrincipal) await takeSponsorQuota(actor, 5, 1, "company-registration");
     const gasPrice = await relayRpc("gas_price", [null]);
     if (typeof gasPrice.gas_price !== "string" || BigInt(gasPrice.gas_price) > 1_000_000_000n) throw new Error("Gas price exceeds the sponsor's configured safety ceiling");
-    const access = await nearQuery({ request_type: "view_access_key", account_id: config.accountId, public_key: config.key.getPublicKey().toString() });
+    const [access, relayerAccount] = await Promise.all([
+      nearQuery({ request_type: "view_access_key", account_id: config.accountId, public_key: config.key.getPublicKey().toString() }),
+      nearQuery({ request_type: "view_account", account_id: config.accountId }),
+    ]).catch(caught => {
+      if (caught instanceof NearReadError && caught.code === "UNKNOWN_ACCESS_KEY") throw new Error(`The configured relayer signing key is not registered on ${config.accountId}. Set NEAR_RELAYER_PRIVATE_KEY to a registered regular FullAccess key for that account.`);
+      if (caught instanceof NearReadError && caught.code === "UNKNOWN_ACCOUNT") throw new Error(`The relayer account ${config.accountId} does not exist on NEAR testnet.`);
+      throw caught;
+    });
+    const attachedDeposit = actions[0]?.signedDelegate?.delegateAction.actions[0]?.functionCall?.deposit ?? actions[0]?.transfer?.deposit ?? 0n;
+    const storageBytes = relayerAccount.storage_usage;
+    if (typeof relayerAccount.amount !== "string" || !/^[0-9]+$/.test(relayerAccount.amount) || !Number.isSafeInteger(storageBytes) || storageBytes < 0) throw new Error("Could not verify the relayer's available balance");
+    // Conservative storage and 200-TGas reserve, before consuming a one-time grant.
+    const requiredBalance = attachedDeposit + 200000000000000n * BigInt(gasPrice.gas_price) + BigInt(storageBytes) * 10000000000000000000n;
+    if (BigInt(relayerAccount.amount) < requiredBalance) throw new Error("Fund the relayer account before retrying: its balance cannot cover sponsorship gas, storage and the required attached deposit");
     if (access.permission !== "FullAccess" || typeof access.block_hash !== "string") throw new Error("The dedicated relayer requires a registered regular FullAccess key");
     const nonce = await allocateSponsorNonce(keyId, nextAccessKeyNonce(access.nonce).toString(), lease.leaseUntil);
     const transaction = createTransaction(config.accountId, config.key.getPublicKey(), receiverId, BigInt(nonce), actions, utils.serialize.base_decode(access.block_hash));
@@ -139,6 +160,7 @@ async function submitOuter(id: string, actor: string, intentHash: string, receiv
     const transactionHash = utils.serialize.base_encode(digest);
     const serialized = Buffer.from(signed.encode()).toString("base64");
     // Never broadcast before the exact signed transaction and hash are durable.
+    if (registrationPrincipal) await takeCompanyRegistrationGrant(hash(registrationPrincipal));
     await saveSponsorTransaction(id, transactionHash, serialized);
     invalidateNearReadCache();
     const result = await relayRpc("send_tx", { signed_tx_base64: serialized, wait_until: "FINAL" }, transactionHash);
@@ -157,7 +179,7 @@ async function submitOuter(id: string, actor: string, intentHash: string, receiv
   }
 }
 
-async function ensureEmployeeAccount(actor: string) {
+async function ensureSigningAccount(actor: string) {
   try { await nearQuery({ request_type: "view_account", account_id: actor }); }
   catch (caught) {
     if (!(caught instanceof NearReadError) || caught.code !== "UNKNOWN_ACCOUNT") throw caught;
@@ -167,7 +189,7 @@ async function ensureEmployeeAccount(actor: string) {
   }
   const publicKey = utils.PublicKey.fromString(`ed25519:${utils.serialize.base_encode(Buffer.from(actor, "hex"))}`);
   const access = await nearQuery({ request_type: "view_access_key", account_id: actor, public_key: publicKey.toString() });
-  if (access.permission !== "FullAccess") throw new Error("The employee wallet needs its original regular FullAccess key. Sponsorship cannot replace a removed key.");
+  if (access.permission !== "FullAccess") throw new Error("This wallet needs its original regular FullAccess key. Sponsorship cannot replace a removed key.");
   return access;
 }
 
@@ -179,7 +201,7 @@ export async function prepareSponsoredPayment(payment: SponsoredPayment) {
   const existing = await findSponsorJob(paymentJobId(identity.walletAddress, payment));
   if (existing) return { enabled: true, outcome: await recover(existing, intentHash) };
   await previewPayment(identity.walletAddress, company, payment);
-  const access = await ensureEmployeeAccount(identity.walletAddress);
+  const access = await ensureSigningAccount(identity.walletAddress);
   if (!Number.isSafeInteger(access.block_height)) throw new Error("NEAR returned an invalid block height");
   return { enabled: true, nonce: nextAccessKeyNonce(access.nonce).toString(), maxBlockHeight: String(access.block_height + SPONSORED_VALID_BLOCKS) };
 }
@@ -203,4 +225,65 @@ export async function submitSponsoredPayment(proof: SponsoredProof) {
   await previewPayment(identity.walletAddress, company, payment);
   const action = new Action({ signedDelegate: { delegateAction: delegate, signature: new Signature({ keyType: delegate.publicKey.keyType, data: Buffer.from(proof.signature.slice(2), "hex") }) } });
   return { enabled: true, outcome: await submitOuter(id, identity.walletAddress, intentHash, identity.walletAddress, [action]) };
+}
+
+
+async function authorizeCompanyOwner(company: SponsoredCompany) {
+  if (!companySponsorshipEnabled()) throw new Error("Company registration sponsorship is not enabled");
+  const identity = await getSessionIdentity();
+  if (!identity || !/^[0-9a-f]{64}$/.test(identity.walletAddress) || identity.providerUserId.startsWith("near:")) throw new Error("Sign in with your verified owner email wallet to sponsor company registration");
+  const user = await requireSessionUser();
+  if (user.privyUserId !== identity.providerUserId) throw new Error("Company owner identity does not match the signing wallet");
+  const [workspace] = await withRetry(() => db.select().from(companies).where(and(eq(companies.id, company.companyKey), eq(companies.ownerId, user.id))).limit(1), "sponsor:owner-workspace");
+  if (!workspace || workspace.ownerId !== user.id) throw new Error("Only this workspace's owner can sponsor company registration");
+  const [membership] = await withRetry(() => db.select().from(companyMemberships).where(and(
+    eq(companyMemberships.companyId, workspace.id), eq(companyMemberships.userId, user.id),
+    eq(companyMemberships.canEmployer, true), eq(companyMemberships.status, "active"),
+  )).limit(1), "sponsor:owner-membership");
+  if (!membership) throw new Error("Active employer membership is required to sponsor company registration");
+  const config = await verifiedSharedConfig();
+  if (company.contractId !== config.contractId || company.deposit !== config.creation_deposit || BigInt(company.deposit) > BigInt(MAX_SPONSORED_COMPANY_DEPOSIT)) throw new Error("Company sponsorship must use the verified shared contract and its exact registration deposit, up to 0.2 NEAR");
+  const id = computeCompanyId(identity.walletAddress, company.companyKey);
+  if (workspace.smartAccountAddress && workspace.smartAccountAddress !== treasuryReference(company.contractId, id)) throw new Error("This workspace already uses a different treasury");
+  return { identity, companyId: id };
+}
+function companyJobId(actor: string, company: SponsoredCompany) {
+  return hash(`create_company\0${company.contractId}\0${actor}\0${company.companyKey}`);
+}
+async function companyRegistered(company: SponsoredCompany, companyId: string): Promise<boolean> {
+  const result = await nearQuery({ request_type: "call_function", account_id: company.contractId, method_name: "company_exists", args_base64: Buffer.from(JSON.stringify({ company_id: companyId })).toString("base64") });
+  const exists = JSON.parse(Buffer.from(result.result).toString("utf8"));
+  if (typeof exists !== "boolean") throw new Error("Could not verify company registration state");
+  return exists;
+}
+export async function prepareSponsoredCompany(company: SponsoredCompany) {
+  sponsorConfig();
+  const { identity, companyId } = await authorizeCompanyOwner(company);
+  await assertTestnet();
+  if (await companyRegistered(company, companyId)) return { enabled: true, registered: true };
+  const intentHash = hash(canonicalSponsorJson(company));
+  const existing = await findSponsorJob(companyJobId(identity.walletAddress, company));
+  if (existing) return { enabled: true, outcome: await recover(existing, intentHash) };
+  const access = await ensureSigningAccount(identity.walletAddress);
+  if (!Number.isSafeInteger(access.block_height)) throw new Error("NEAR returned an invalid block height");
+  return { enabled: true, nonce: nextAccessKeyNonce(access.nonce).toString(), maxBlockHeight: String(access.block_height + SPONSORED_VALID_BLOCKS) };
+}
+export async function submitSponsoredCompany(proof: SponsoredCompanyProof) {
+  const company = sponsoredCompanySchema.parse({ companyKey: proof.companyKey, contractId: proof.contractId, deposit: proof.deposit });
+  const { identity, companyId } = await authorizeCompanyOwner(company);
+  await assertTestnet();
+  if (await companyRegistered(company, companyId)) return { enabled: true, registered: true };
+  const intentHash = hash(canonicalSponsorJson(company));
+  const id = companyJobId(identity.walletAddress, company);
+  const existing = await findSponsorJob(id);
+  if (existing) return { enabled: true, outcome: await recover(existing, intentHash) };
+  const delegate = sponsoredCompanyDelegate(identity.walletAddress, company, proof.nonce, proof.maxBlockHeight);
+  const digest = createHash("sha256").update(sponsoredSigningBytes(delegate)).digest();
+  const publicKey = createPublicKey({ key: Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), Buffer.from(identity.walletAddress, "hex")]), format: "der", type: "spki" });
+  if (!verify(null, digest, publicKey, Buffer.from(proof.signature.slice(2), "hex"))) throw new Error("Invalid company owner meta-transaction signature");
+  const access = await nearQuery({ request_type: "view_access_key", account_id: identity.walletAddress, public_key: delegate.publicKey.toString() });
+  if (access.permission !== "FullAccess" || delegate.nonce !== nextAccessKeyNonce(access.nonce)) throw new Error("The owner signing nonce changed. Retry company registration with a fresh signature.");
+  if (!Number.isSafeInteger(access.block_height) || delegate.maxBlockHeight <= BigInt(access.block_height) || delegate.maxBlockHeight > BigInt(access.block_height + SPONSORED_VALID_BLOCKS)) throw new Error("The owner meta-transaction expired or has an excessive validity window");
+  const action = new Action({ signedDelegate: { delegateAction: delegate, signature: new Signature({ keyType: delegate.publicKey.keyType, data: Buffer.from(proof.signature.slice(2), "hex") }) } });
+  return { enabled: true, outcome: await submitOuter(id, identity.walletAddress, intentHash, identity.walletAddress, [action], identity.providerUserId) };
 }

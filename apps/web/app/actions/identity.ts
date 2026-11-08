@@ -1,4 +1,6 @@
 "use server";
+import { reimbursementSigner } from "@/lib/reimbursements/config";
+import { REIMBURSEMENT_SERVICE_NAME } from "@/lib/reimbursements/shared";
 
 import { readLiveNativeCapacity, capacityReadError } from "@/lib/live-capacity";
 
@@ -8,22 +10,19 @@ import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { formatTokenAmount, parseTokenAmount } from "@allocard/delegation-sdk";
 import { db } from "@/lib/db";
 import {
-  agentBookings,
   agents,
-  claimRedemptions,
   companies,
   delegationCaveats,
   delegations,
   companyMemberships,
   employeeProfiles,
-  manualTransactions,
   pendingEmployees,
   workspacePreferences,
   users,
 } from "@/lib/db/schema";
 import {
-  isValidWalletAddress,
   isNativeNearAccount,
+  isValidWalletAddress,
   normalizeWalletAddress,
   validateCompanyName,
 } from "@/lib/wallet";
@@ -32,9 +31,6 @@ import { requireSession } from "@/lib/auth-guard";
 import { getSessionIdentity } from "@/lib/session";
 import { loadReimbursementProgram } from "@/lib/reimbursements/server";
 import { isReimbursementAgent, type ReimbursementProgram } from "@/lib/reimbursements/shared";
-import { loadAgoraProgram } from "@/lib/agora/server";
-import { isAgoraAgent, type AgoraProgram } from "@/lib/agora/shared";
-export { isAgoraAgent, type AgoraProgram };
 import { verifyTreasuryOwner, treasuryReader, assertEmployeePermission } from "@/lib/near-server";
 import { TOKEN_SYMBOL } from "@/lib/chain";
 
@@ -125,8 +121,21 @@ type CompanyDelegation = {
   createdAt: string;
   activatedAt: string | null;
   revokedAt: string | null;
-  remainingEth?: string;
+  remainingNear?: string;
+  capacityError?: string;
 };
+
+async function fillLiveDelegationCapacity(rows: CompanyDelegation[], treasury: string | null) {
+  await Promise.all(rows.map(async row => {
+    if (!treasury || !/^[0-9]+$/.test(row.delegationHash ?? "")) { row.capacityError = "No verified NEAR permission"; return; }
+    try {
+      const reader = treasuryReader(treasury, { cacheMs: 2000 });
+      const permission = await reader.getPermission(row.delegationHash!);
+      if (!permission) throw new Error("Permission not found");
+      row.remainingNear = (await readLiveNativeCapacity(reader, permission.delegate, row.delegationHash!)).remainingNear;
+    } catch (caught) { row.capacityError = capacityReadError(caught); }
+  }));
+}
 
 export type CompanyDelegationCaveat = {
   id: string;
@@ -144,10 +153,10 @@ export type CompanyDelegationCaveat = {
 };
 
 type DelegationCaveatInput = {
-  maxAmountEth: string;
+  maxAmountNear: string;
   period?: "none" | "hourly" | "daily" | "weekly" | "monthly";
-  periodAmountEth?: string;
-  perTransactionCapEth?: string;
+  periodAmountNear?: string;
+  perTransactionCapNear?: string;
   allowedTargets?: string[];
   redeemers?: string[];
   limitedCalls?: number | null;
@@ -173,13 +182,12 @@ export type CompanyDashboardState = {
   /** Company-wide expense policy — the single source of truth for Qwen AI checks. */
   companyPolicy: string | null;
   reimbursement: ReimbursementProgram;
-  agora: AgoraProgram;
   summary: {
     employeeCount: number;
     /** Number of active company → agent delegations (not total agent count). */
     activeAgentCount: number;
     activeDelegationCount: number;
-    delegatedNativeEthAllowance: string;
+    delegatedNativeNearAllowance: string;
   };
 };
 
@@ -339,7 +347,7 @@ function toCompanyDelegationCaveat(
   };
 }
 
-function extractNativeAllowanceWei(value: unknown): bigint {
+function extractNativeAllowanceYocto(value: unknown): bigint {
   if (typeof value === "bigint") {
     return value;
   }
@@ -363,13 +371,13 @@ function extractNativeAllowanceWei(value: unknown): bigint {
     record.allowance ??
     record.limit ??
     record.value ??
-    record.valueWei;
+    record.valueYocto;
 
-  return extractNativeAllowanceWei(amount);
+  return extractNativeAllowanceYocto(amount);
 }
 
-function formatEthAllowance(wei: bigint) {
-  const formatted = formatTokenAmount(wei.toString(), 24);
+function formatNearAllowance(yocto: bigint) {
+  const formatted = formatTokenAmount(yocto.toString(), 24);
 
   if (!formatted.includes(".")) {
     return formatted;
@@ -385,24 +393,24 @@ const periodDurations = {
   monthly: 60 * 60 * 24 * 30,
 } as const;
 
-function parsePositiveEthToWei(value: string, fieldName: string) {
+function parsePositiveNearToYocto(value: string, fieldName: string) {
   const trimmed = value.trim();
 
-  const wei = BigInt(parseTokenAmount(trimmed, 24));
+  const yocto = BigInt(parseTokenAmount(trimmed, 24));
 
-  if (wei <= 0n) {
+  if (yocto <= 0n) {
     throw new Error(`${fieldName} must be greater than 0`);
   }
 
-  return wei;
+  return yocto;
 }
 
-function parseOptionalEthToWei(value: string | undefined, fieldName: string) {
+function parseOptionalNearToYocto(value: string | undefined, fieldName: string) {
   if (!value?.trim()) {
     return null;
   }
 
-  return parsePositiveEthToWei(value, fieldName);
+  return parsePositiveNearToYocto(value, fieldName);
 }
 
 function normalizeAddressList(addresses: string[] | undefined, fieldName: string) {
@@ -431,28 +439,28 @@ function normalizeHex(value: string, fieldName: string) {
 }
 
 function buildCaveatRows(input: DelegationCaveatInput) {
-  const maxAmountWei = parsePositiveEthToWei(input.maxAmountEth, "Maximum amount");
+  const maxAmountYocto = parsePositiveNearToYocto(input.maxAmountNear, "Maximum amount");
   const rows: CaveatRowWithoutDelegationId[] = [
     {
       caveatType: "nativeTokenTransferAmount",
       caveatValue: {
-        maxAmount: maxAmountWei.toString(),
-        amount: maxAmountWei.toString(),
+        maxAmount: maxAmountYocto.toString(),
+        amount: maxAmountYocto.toString(),
       },
     },
   ];
 
   if (input.period && input.period !== "none") {
-    const periodAmountWei = parsePositiveEthToWei(
-      input.periodAmountEth ?? input.maxAmountEth,
+    const periodAmountYocto = parsePositiveNearToYocto(
+      input.periodAmountNear ?? input.maxAmountNear,
       "Period amount",
     );
 
     rows.push({
       caveatType: "nativeTokenPeriodTransfer",
       caveatValue: {
-        periodAmount: periodAmountWei.toString(),
-        amount: periodAmountWei.toString(),
+        periodAmount: periodAmountYocto.toString(),
+        amount: periodAmountYocto.toString(),
         periodDuration: periodDurations[input.period],
         period: input.period,
         startDate: Math.floor(Date.now() / 1000),
@@ -460,17 +468,17 @@ function buildCaveatRows(input: DelegationCaveatInput) {
     });
   }
 
-  const perTransactionCapWei = parseOptionalEthToWei(
-    input.perTransactionCapEth,
+  const perTransactionCapYocto = parseOptionalNearToYocto(
+    input.perTransactionCapNear,
     "Per-transaction cap",
   );
 
-  if (perTransactionCapWei) {
+  if (perTransactionCapYocto) {
     rows.push({
       caveatType: "valueLte",
       caveatValue: {
-        maxValue: perTransactionCapWei.toString(),
-        valueWei: perTransactionCapWei.toString(),
+        maxValue: perTransactionCapYocto.toString(),
+        valueYocto: perTransactionCapYocto.toString(),
       },
     });
   }
@@ -729,7 +737,7 @@ function normalizeVerifiedEmail(email?: string | null) {
 export async function getPendingCompanyMemberships() {
   const identity = await getSessionIdentity();
   if (!identity) throw new Error("Sign in again to continue");
-  const normalizedEmail = identity.email.endsWith("@near") ? identity.email : normalizeVerifiedEmail(identity.email);
+  const normalizedEmail = normalizeVerifiedEmail(identity.email);
   const rows = await db.select({
     id: pendingEmployees.id,
     companyId: companies.id,
@@ -737,7 +745,7 @@ export async function getPendingCompanyMemberships() {
     createdAt: pendingEmployees.createdAt,
   }).from(pendingEmployees).innerJoin(companies, eq(pendingEmployees.companyId, companies.id))
     .where(and(
-      inArray(pendingEmployees.normalizedEmail, [normalizedEmail, `${identity.walletAddress}@near`]),
+      eq(pendingEmployees.normalizedEmail, normalizedEmail),
       eq(pendingEmployees.status, "pending"),
     ));
   return rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() }));
@@ -749,7 +757,7 @@ export async function addEmployeeByEmail(input: { walletAddress: string; email: 
   const profile = await getWalletProfile(normalizedAddress);
   if (profile.status !== "employer" || !profile.company) throw new Error("Employer access is required");
   const inviteInput = input.email.trim().toLowerCase();
-  const email = isNativeNearAccount(inviteInput) ? `${inviteInput}@near` : normalizeVerifiedEmail(inviteInput);
+  const email = normalizeVerifiedEmail(inviteInput);
   const identity = await getSessionIdentity();
   if (identity && email === identity.email.toLowerCase()) {
     throw new Error("You cannot add your own employer account as an employee. To test delegation and card access, enter a colleague or secondary email address.");
@@ -778,10 +786,10 @@ export async function acceptEmployeeMembership(input: { walletAddress: string; c
   await validateSessionWallet(normalizedAddress);
   const identity = await getSessionIdentity();
   if (!identity) throw new Error("Sign in again to continue");
-  const normalizedEmail = identity.email.endsWith("@near") ? identity.email : normalizeVerifiedEmail(identity.email);
+  const normalizedEmail = normalizeVerifiedEmail(identity.email);
   const [pending] = await db.select().from(pendingEmployees).where(and(
     eq(pendingEmployees.companyId, input.companyId),
-    inArray(pendingEmployees.normalizedEmail, [normalizedEmail, `${identity.walletAddress}@near`]),
+    eq(pendingEmployees.normalizedEmail, normalizedEmail),
   )).limit(1);
   if (!pending || (pending.status !== "pending" && pending.status !== "accepted")) {
     throw new Error("No pending company access was found for this verified email");
@@ -1016,8 +1024,8 @@ export async function createAgentDelegation(input: {
     .where(and(eq(agents.id, input.agentId), eq(agents.isActive, true)))
     .limit(1);
 
-  if (!agent) {
-    throw new Error("Agent not found or is inactive");
+  if (!agent || !isNativeNearAccount(agent.smartAccountAddress) || agent.name !== REIMBURSEMENT_SERVICE_NAME) {
+    throw new Error("This agent has no supported NEAR execution integration");
   }
 
   // Prevent duplicate active/pending-config delegations to the same agent.
@@ -1059,7 +1067,7 @@ export async function prepareReimbursementBudget(walletAddress: string): Promise
   await validateSessionWallet(walletAddress);
   const profile = await getEmployerProfileOrThrow(walletAddress);
   const { agent, delegation: existingDelegation, program } = await loadReimbursementProgram(profile.company.id);
-  if (!agent) throw new Error("Reimbursements are temporarily unavailable. Check the service configuration.");
+  if (!agent || program.status === "unavailable") throw new Error("Reimbursements are temporarily unavailable. Check the service configuration.");
 
   let targetDelegation = existingDelegation && existingDelegation.status !== "revoked" ? existingDelegation : null;
 
@@ -1099,54 +1107,6 @@ export async function prepareReimbursementBudget(walletAddress: string): Promise
   return { delegation: companyDelegation, reimbursement: updatedProgram };
 }
 
-/** Prepare the built-in Agora Cross-Border remittance pool without adding a canvas node. */
-export async function prepareAgoraRemittanceBudget(walletAddress: string): Promise<{
-  delegation: CompanyDelegation;
-  agora: AgoraProgram;
-}> {
-  await validateSessionWallet(walletAddress);
-  const profile = await getEmployerProfileOrThrow(walletAddress);
-  const { agent, delegation: existingDelegation, program } = await loadAgoraProgram(profile.company.id);
-  if (!agent) throw new Error("Agora remittance service is temporarily unavailable. Check the service configuration.");
-
-  let targetDelegation = existingDelegation && existingDelegation.status !== "revoked" ? existingDelegation : null;
-
-  if (!targetDelegation) {
-    const [inserted] = await db
-      .insert(delegations)
-      .values({
-        delegatorType: "company",
-        delegatorId: profile.company.id,
-        delegateeType: "agent",
-        delegateeId: agent.id,
-        canvasPositionX: 0,
-        canvasPositionY: 0,
-      })
-      .returning();
-    targetDelegation = inserted;
-  }
-
-  const caveats = await db
-    .select()
-    .from(delegationCaveats)
-    .where(eq(delegationCaveats.delegationId, targetDelegation.id));
-
-  const companyDelegation = toCompanyDelegation(
-    targetDelegation,
-    caveats.map(toCompanyDelegationCaveat),
-  );
-
-  const updatedProgram: AgoraProgram = {
-    ...program,
-    delegationId: targetDelegation.id,
-    status: targetDelegation.status === "active" && Boolean(targetDelegation.signedDelegation)
-      ? "ready"
-      : "pending",
-  };
-
-  return { delegation: companyDelegation, agora: updatedProgram };
-}
-
 export async function updateDelegationPosition(input: {
   walletAddress: string;
   delegationId: string;
@@ -1178,6 +1138,7 @@ export async function saveDelegationCaveats(input: {
     input.walletAddress,
     input.delegationId,
   );
+  if (delegation.status === "active") throw new Error("Revoke the active NEAR permission before editing its caveats.");
 
   if (delegation.status === "revoked") {
     throw new Error("Revoked delegations cannot be edited");
@@ -1198,16 +1159,11 @@ export async function saveDelegationCaveats(input: {
     );
   }
 
-  const updatePayload: any = {
+  const updatePayload: Partial<typeof delegations.$inferInsert> = {
     policyPrompt: input.policyPrompt ?? null,
   };
 
-  if (delegation.status === "active") {
-    updatePayload.status = "pending_config";
-    updatePayload.delegationHash = null;
-    updatePayload.signedDelegation = null;
-    updatePayload.activatedAt = null;
-  }
+
 
   await db
     .update(delegations)
@@ -1312,7 +1268,10 @@ export async function activateDelegation(input: {
     if (!employee) throw new Error("Employee not found");
     assertEmployeePermission(permission, employee.account, input.walletAddress, config.authority_epoch);
   } else {
-    throw new Error("Agent activation requires a separate verified agent signing integration");
+    const signer = reimbursementSigner();
+    const [agent] = await db.select().from(agents).where(eq(agents.id, delegation.delegateeId!)).limit(1);
+    if (!signer || agent?.name !== REIMBURSEMENT_SERVICE_NAME || agent.smartAccountAddress !== signer.accountId || agent.signerAddress !== signer.accountId) throw new Error("The reimbursement executor is not configured for this NEAR account");
+    assertEmployeePermission(permission, signer.accountId, input.walletAddress, config.authority_epoch);
   }
 
   await db
@@ -1474,7 +1433,7 @@ export async function getCompanyDashboardState(
           () => db.select().from(agents).where(eq(agents.isActive, true)),
           "getCompanyDashboardState:agents"
         );
-        const mapped = rows.map((agent) => ({
+        const mapped = rows.filter(agent => isNativeNearAccount(agent.smartAccountAddress) && agent.name === REIMBURSEMENT_SERVICE_NAME && agent.smartAccountAddress === reimbursementSigner()?.accountId).map((agent) => ({
           id: agent.id,
           name: agent.name,
           description: agent.description,
@@ -1519,7 +1478,7 @@ export async function getCompanyDashboardState(
     (d) => d.delegateeType === "agent",
   ).length;
 
-  let delegatedNativeEthAllowanceWei = 0n;
+  let delegatedNativeNearAllowanceYocto = 0n;
 
   if (activeDelegations.length > 0) {
     const activeDelegationIds = activeDelegations.map(
@@ -1541,8 +1500,8 @@ export async function getCompanyDashboardState(
       "getCompanyDashboardState:allowanceCaveats"
     );
 
-    delegatedNativeEthAllowanceWei = nativeAllowanceCaveats.reduce(
-      (total, caveat) => total + extractNativeAllowanceWei(caveat.caveatValue),
+    delegatedNativeNearAllowanceYocto = nativeAllowanceCaveats.reduce(
+      (total, caveat) => total + extractNativeAllowanceYocto(caveat.caveatValue),
       0n,
     );
   }
@@ -1554,66 +1513,7 @@ export async function getCompanyDashboardState(
     ),
   );
 
-  // ── Calculate remaining ETH for each company → agent delegation ───────────
-  for (const d of delegationsWithCaveats) {
-    if (d.delegateeType !== "agent" || d.status !== "active") continue;
-    const limitCaveat = d.caveats.find(
-      (c) => c.caveatType === "nativeTokenTransferAmount",
-    );
-    if (!limitCaveat) continue;
-    const limitWei = extractNativeAllowanceWei(limitCaveat.caveatValue);
-
-    const bookingCondition = d.delegatorType === "company" 
-      ? eq(agentBookings.agentId, d.delegateeId ?? "")
-      : eq(agentBookings.delegationId, d.id);
-
-    const [bookingResult] = await withRetry(
-      () =>
-        db
-          .select({
-            total: sql<string>`COALESCE(SUM(${agentBookings.amountEth}::numeric), 0)`,
-          })
-          .from(agentBookings)
-          .where(bookingCondition),
-      "getCompanyDashboardState:remainingBooking"
-    );
-    const bookingSpentWei = (() => {
-      try {
-        return bookingResult?.total ? BigInt(parseTokenAmount(bookingResult.total, 24)) : 0n;
-      } catch {
-        return 0n;
-      }
-    })();
-
-    const claimCondition = d.delegatorType === "company"
-      ? eq(claimRedemptions.agentId, d.delegateeId ?? "")
-      : and(
-          eq(claimRedemptions.employeeId, d.delegatorId ?? ""),
-          eq(claimRedemptions.agentId, d.delegateeId ?? "")
-        );
-
-    const [claimResult] = await withRetry(
-      () =>
-        db
-          .select({
-            total: sql<string>`COALESCE(SUM(${claimRedemptions.amountEth}::numeric), 0)`,
-          })
-          .from(claimRedemptions)
-          .where(claimCondition),
-      "getCompanyDashboardState:remainingClaim"
-    );
-    const claimSpentWei = (() => {
-      try {
-        return claimResult?.total ? BigInt(parseTokenAmount(claimResult.total, 24)) : 0n;
-      } catch {
-        return 0n;
-      }
-    })();
-
-    const totalSpentWei = bookingSpentWei + claimSpentWei;
-    const remainingWei = limitWei > totalSpentWei ? limitWei - totalSpentWei : 0n;
-    d.remainingEth = formatEthAllowance(remainingWei);
-  }
+  await fillLiveDelegationCapacity(delegationsWithCaveats, company.smartAccountAddress);
 
   return {
     company,
@@ -1626,13 +1526,12 @@ export async function getCompanyDashboardState(
     agents: platformAgents,
     delegations: delegationsWithCaveats,
     reimbursement: (await loadReimbursementProgram(company.id)).program,
-    agora: (await loadAgoraProgram(company.id)).program,
     summary: {
       employeeCount: companyEmployees.length,
       activeAgentCount: activeAgentDelegationCount,
       activeDelegationCount: activeDelegations.length,
-      delegatedNativeEthAllowance: formatEthAllowance(
-        delegatedNativeEthAllowanceWei,
+      delegatedNativeNearAllowance: formatNearAllowance(
+        delegatedNativeNearAllowanceYocto,
       ),
     },
   };
@@ -1658,17 +1557,16 @@ export type EmployeeDashboardState = {
   /** Company-wide expense policy — passed through to Qwen AI checks. */
   companyPolicy: string | null;
   reimbursement: ReimbursementProgram;
-  agora: AgoraProgram;
   summary: {
-    /** ETH limit approved by the company (from the inbound delegation caveats). */
-    approvedLimitEth: string;
+    /** NEAR limit approved by the company (from the inbound delegation caveats). */
+    approvedLimitNear: string;
     /** Sum of nativeTokenTransferAmount across active outbound delegations. */
-    redelegatedEth: string;
+    redelegatedNear: string;
     /** Number of active outbound agent delegations. */
     activeAgentCount: number;
-    /** Total ETH already spent via direct delegate spends. */
-    spentEth: string;
-    remainingEth: string;
+    /** Total NEAR already spent via direct delegate spends. */
+    spentNear: string;
+    remainingNear: string;
     capacityError?: string;
   };
   /** List of agent IDs that the company has activated (delegated to). */
@@ -1773,115 +1671,21 @@ export async function getEmployeeDashboardState(
     toCompanyDelegation(d, caveatsByDelegationId.get(d.id) ?? []),
   );
 
-  // ── Calculate remaining ETH for each outbound delegation ──────────────────
-  for (const d of outboundDelegations) {
-    const limitCaveat = d.caveats.find(
-      (c) => c.caveatType === "nativeTokenTransferAmount",
-    );
-    if (!limitCaveat) continue;
-    const limitWei = extractNativeAllowanceWei(limitCaveat.caveatValue);
-
-    // Sum of agent bookings for this delegation
-    const [bookingResult] = await withRetry(
-      () =>
-        db
-          .select({
-            total: sql<string>`COALESCE(SUM(${agentBookings.amountEth}::numeric), 0)`,
-          })
-          .from(agentBookings)
-          .where(eq(agentBookings.delegationId, d.id)),
-      "getEmployeeDashboardState:remainingBooking"
-    );
-    const bookingSpentWei = (() => {
-      try {
-        return bookingResult?.total ? BigInt(parseTokenAmount(bookingResult.total, 24)) : 0n;
-      } catch {
-        return 0n;
-      }
-    })();
-
-    // Sum of claim redemptions for this employee + agent
-    const [claimResult] = await withRetry(
-      () =>
-        db
-          .select({
-            total: sql<string>`COALESCE(SUM(${claimRedemptions.amountEth}::numeric), 0)`,
-          })
-          .from(claimRedemptions)
-          .where(
-            and(
-              eq(claimRedemptions.employeeId, user.id),
-              eq(claimRedemptions.agentId, d.delegateeId ?? ""),
-            ),
-          ),
-      "getEmployeeDashboardState:remainingClaim"
-    );
-    const claimSpentWei = (() => {
-      try {
-        return claimResult?.total ? BigInt(parseTokenAmount(claimResult.total, 24)) : 0n;
-      } catch {
-        return 0n;
-      }
-    })();
-
-    const totalSpentWei = bookingSpentWei + claimSpentWei;
-    
-    // Store spentWei on the delegation object to be able to extract it for revoked ones
-    (d as any).spentWei = totalSpentWei;
-
-    const remainingWei = limitWei > totalSpentWei ? limitWei - totalSpentWei : 0n;
-    d.remainingEth = formatEthAllowance(remainingWei);
-  }
+  await fillLiveDelegationCapacity(outboundDelegations, company.smartAccountAddress);
 
   // ── Summary metrics ───────────────────────────────────────────────────────
-  const approvedLimitWei = inboundDelegation
-    ? (inboundDelegation.caveats
-        .filter((c) => c.caveatType === "nativeTokenTransferAmount")
-        .reduce((sum, c) => sum + extractNativeAllowanceWei(c.caveatValue), 0n))
-    : 0n;
-
   const activeOutbound = outboundDelegations.filter((d) => d.status === "active");
 
-  const redelegatedWei = activeOutbound.reduce((sum, d) => {
+  const redelegatedYocto = activeOutbound.reduce((sum, d) => {
     const limitCaveat = d.caveats.find(
       (c) => c.caveatType === "nativeTokenTransferAmount",
     );
-    return sum + (limitCaveat ? extractNativeAllowanceWei(limitCaveat.caveatValue) : 0n);
+    return sum + (limitCaveat ? extractNativeAllowanceYocto(limitCaveat.caveatValue) : 0n);
   }, 0n);
 
   const activeAgentCount = activeOutbound.filter(
     (d) => d.delegateeType === "agent",
   ).length;
-
-  // ── Amount already spent via direct delegate spends ────────────────────────
-  const spentWei = inboundRow
-    ? (await withRetry(
-        () =>
-          db
-            .select()
-            .from(manualTransactions)
-            .where(
-              and(
-                eq(manualTransactions.delegationId, inboundRow.id),
-                eq(manualTransactions.employeeId, user.id),
-              ),
-            ),
-        "getEmployeeDashboardState:spent"
-      )).reduce((sum, tx) => {
-        try {
-          return sum + BigInt(parseTokenAmount(tx.amountEth, 24));
-        } catch {
-          return sum;
-        }
-      }, 0n)
-    : 0n;
-
-  // Add the spent amounts of REVOKED delegations
-  const revokedSpentWei = outboundDelegations
-    .filter((d) => d.status !== "active")
-    .reduce((sum, d) => sum + ((d as any).spentWei || 0n), 0n);
-
-  const totalEmployeeSpentWei = spentWei + revokedSpentWei;
 
   // ── Platform agent catalog ────────────────────────────────────────────────
   let platformAgents = getCachedAgents();
@@ -1890,7 +1694,7 @@ export async function getEmployeeDashboardState(
       () => db.select().from(agents).where(eq(agents.isActive, true)),
       "getEmployeeDashboardState:agents"
     );
-    platformAgents = rows.map((agent) => ({
+    platformAgents = rows.filter(agent => isNativeNearAccount(agent.smartAccountAddress) && agent.name === REIMBURSEMENT_SERVICE_NAME && agent.smartAccountAddress === reimbursementSigner()?.accountId).map((agent) => ({
       id: agent.id,
       name: agent.name,
       description: agent.description,
@@ -1902,16 +1706,16 @@ export async function getEmployeeDashboardState(
     setCachedAgents(platformAgents);
   }
 
-  let remainingEth = "0";
-  let liveApprovedEth = "0";
-  let liveSpentEth = "0";
+  let remainingNear = "0";
+  let liveApprovedNear = "0";
+  let liveSpentNear = "0";
   let capacityError: string | undefined;
   if (company.smartAccountAddress && inboundRow?.delegationHash) {
     try {
       const capacity = await readLiveNativeCapacity(treasuryReader(company.smartAccountAddress, { cacheMs: 2000 }), user.walletAddress, inboundRow.delegationHash);
-      remainingEth = capacity.remainingEth;
-      liveApprovedEth = capacity.approvedEth;
-      liveSpentEth = capacity.spentEth;
+      remainingNear = capacity.remainingNear;
+      liveApprovedNear = capacity.approvedNear;
+      liveSpentNear = capacity.spentNear;
     } catch (caught) {
       capacityError = capacityReadError(caught);
       console.error("Employee capacity read failed", { companyId: company.id, permissionId: inboundRow.delegationHash, reason: capacityError });
@@ -1931,12 +1735,11 @@ export async function getEmployeeDashboardState(
     agents: platformAgents,
     activeCompanyAgentIds,
     reimbursement: (await loadReimbursementProgram(company.id)).program,
-    agora: (await loadAgoraProgram(company.id)).program,
     summary: {
-      approvedLimitEth: liveApprovedEth,
-      redelegatedEth: formatEthAllowance(redelegatedWei),
-      spentEth: liveSpentEth,
-      remainingEth,
+      approvedLimitNear: liveApprovedNear,
+      redelegatedNear: formatNearAllowance(redelegatedYocto),
+      spentNear: liveSpentNear,
+      remainingNear,
       capacityError,
       activeAgentCount,
     },
@@ -1947,7 +1750,7 @@ export async function getEmployeeDashboardState(
 // Agent smart account lookup (used by employee signing flow)
 // ---------------------------------------------------------------------------
 
-export async function getAgentSmartAccountAddress(agentId: string): Promise<`0x${string}`> {
+export async function getAgentSmartAccountAddress(agentId: string): Promise<string> {
   const [agent] = await withRetry(
     () =>
       db
@@ -1962,7 +1765,8 @@ export async function getAgentSmartAccountAddress(agentId: string): Promise<`0x$
     throw new Error("Agent not found");
   }
 
-  return agent.smartAccountAddress as `0x${string}`;
+  if (!isNativeNearAccount(agent.smartAccountAddress)) throw new Error("Agent requires a verified NEAR signing account");
+  return agent.smartAccountAddress;
 }
 
 // ---------------------------------------------------------------------------
@@ -1982,11 +1786,11 @@ function validateChildCaveats(
     (c) => c.caveatType === "nativeTokenTransferAmount",
   );
   if (parentAmountCaveat) {
-    const parentMaxWei = extractNativeAllowanceWei(parentAmountCaveat.caveatValue);
-    const childMaxWei = parsePositiveEthToWei(childCaveats.maxAmountEth, "Maximum amount");
-    if (childMaxWei > parentMaxWei) {
+    const parentMaxYocto = extractNativeAllowanceYocto(parentAmountCaveat.caveatValue);
+    const childMaxYocto = parsePositiveNearToYocto(childCaveats.maxAmountNear, "Maximum amount");
+    if (childMaxYocto > parentMaxYocto) {
       throw new Error(
-        `Spending limit (${formatEthAllowance(childMaxWei)} ${TOKEN_SYMBOL}) cannot exceed the parent delegation limit (${formatEthAllowance(parentMaxWei)} ${TOKEN_SYMBOL}).`,
+        `Spending limit (${formatNearAllowance(childMaxYocto)} ${TOKEN_SYMBOL}) cannot exceed the parent delegation limit (${formatNearAllowance(parentMaxYocto)} ${TOKEN_SYMBOL}).`,
       );
     }
   }
@@ -1998,16 +1802,16 @@ function validateChildCaveats(
     );
     if (parentPeriodCaveat) {
       const parentVal = parentPeriodCaveat.caveatValue as Record<string, unknown>;
-      const parentPeriodWei = extractNativeAllowanceWei(
+      const parentPeriodYocto = extractNativeAllowanceYocto(
         parentVal.periodAmount ?? parentVal.amount ?? "0",
       );
-      const childPeriodWei = parsePositiveEthToWei(
-        childCaveats.periodAmountEth ?? childCaveats.maxAmountEth,
+      const childPeriodYocto = parsePositiveNearToYocto(
+        childCaveats.periodAmountNear ?? childCaveats.maxAmountNear,
         "Period amount",
       );
-      if (childPeriodWei > parentPeriodWei) {
+      if (childPeriodYocto > parentPeriodYocto) {
         throw new Error(
-          `Period allowance (${formatEthAllowance(childPeriodWei)} ${TOKEN_SYMBOL}) cannot exceed the parent period limit (${formatEthAllowance(parentPeriodWei)} ${TOKEN_SYMBOL}).`,
+          `Period allowance (${formatNearAllowance(childPeriodYocto)} ${TOKEN_SYMBOL}) cannot exceed the parent period limit (${formatNearAllowance(parentPeriodYocto)} ${TOKEN_SYMBOL}).`,
         );
       }
 
@@ -2024,20 +1828,20 @@ function validateChildCaveats(
   }
 
   // ── Per-transaction cap ─────────────────────────────────────────────────────
-  if (childCaveats.perTransactionCapEth?.trim()) {
+  if (childCaveats.perTransactionCapNear?.trim()) {
     const parentCapCaveat = parentCaveats.find((c) => c.caveatType === "valueLte");
     if (parentCapCaveat) {
       const parentCapVal = parentCapCaveat.caveatValue as Record<string, unknown>;
-      const parentCapWei = extractNativeAllowanceWei(
-        parentCapVal.maxValue ?? parentCapVal.valueWei ?? "0",
+      const parentCapYocto = extractNativeAllowanceYocto(
+        parentCapVal.maxValue ?? parentCapVal.valueYocto ?? "0",
       );
-      const childCapWei = parsePositiveEthToWei(
-        childCaveats.perTransactionCapEth,
+      const childCapYocto = parsePositiveNearToYocto(
+        childCaveats.perTransactionCapNear,
         "Per-transaction cap",
       );
-      if (childCapWei > parentCapWei) {
+      if (childCapYocto > parentCapYocto) {
         throw new Error(
-          `Per-transaction cap (${formatEthAllowance(childCapWei)} ${TOKEN_SYMBOL}) cannot exceed the parent cap (${formatEthAllowance(parentCapWei)} ${TOKEN_SYMBOL}).`,
+          `Per-transaction cap (${formatNearAllowance(childCapYocto)} ${TOKEN_SYMBOL}) cannot exceed the parent cap (${formatNearAllowance(parentCapYocto)} ${TOKEN_SYMBOL}).`,
         );
       }
     }
@@ -2167,65 +1971,11 @@ export async function createAgentRedelegation(input: {
   canvasPositionX?: number;
   canvasPositionY?: number;
 }): Promise<EmployeeDashboardState> {
-  const profile = await getEmployeeProfileOrThrow(input.walletAddress);
+  await getEmployeeProfileOrThrow(input.walletAddress);
   await validateSessionWallet(input.walletAddress);
-  const { user, company } = profile;
-
-  // Verify the agent exists
-  const [agent] = await db
-    .select()
-    .from(agents)
-    .where(eq(agents.id, input.agentId))
-    .limit(1);
-
-  if (!agent) {
-    throw new Error("Agent not found");
-  }
-
-  if (isReimbursementAgent(agent)) {
-    throw new Error("Reimbursements use the company budget. Open Reimbursements to submit a claim.");
-  }
-
-  // Verify active inbound delegation exists (employee must have received authority)
-  const inboundRow = await getEmployeeInboundDelegationOrThrow(user.id, company.id);
-
-  // Prevent duplicate active/pending-config redelegations to the same agent
-  const [existing] = await db
-    .select()
-    .from(delegations)
-    .where(
-      and(
-        eq(delegations.delegatorType, "user"),
-        eq(delegations.delegatorId, user.id),
-        eq(delegations.delegateeType, "agent"),
-        eq(delegations.delegateeId, input.agentId),
-        inArray(delegations.status, ["pending_config", "active"]),
-      ),
-    )
-    .limit(1);
-
-  if (existing) {
-    // Already exists — just return current state
-    return getEmployeeDashboardState(input.walletAddress);
-  }
-
-  const offset = Math.floor(Math.random() * 80) - 40; // stagger to avoid collision
-  await db.insert(delegations).values({
-    delegatorType: "user",
-    delegatorId: user.id,
-    delegateeType: "agent",
-    delegateeId: input.agentId,
-    parentDelegationId: inboundRow.id,
-    canvasPositionX: input.canvasPositionX ?? 420 + offset,
-    canvasPositionY: input.canvasPositionY ?? 120 + offset,
-  });
-
-  return getEmployeeDashboardState(input.walletAddress);
+  throw new Error("Additional automated agents are unavailable. Use employee payments or the company reimbursement service.");
 }
 
-// ---------------------------------------------------------------------------
-// Task 2a: saveEmployeeRedelegationCaveats
-// ---------------------------------------------------------------------------
 
 export async function saveEmployeeRedelegationCaveats(input: {
   walletAddress: string;
@@ -2237,6 +1987,8 @@ export async function saveEmployeeRedelegationCaveats(input: {
   const { user, company } = profile;
 
   const delegation = await getEmployeeOwnDelegationOrThrow(user.id, input.delegationId);
+
+  if (delegation.status === "active") throw new Error("Revoke the active NEAR permission before editing its caveats.");
 
   if (delegation.status === "revoked") {
     throw new Error("Revoked delegations cannot be edited");
@@ -2264,17 +2016,7 @@ export async function saveEmployeeRedelegationCaveats(input: {
     );
   }
 
-  if (delegation.status === "active") {
-    await db
-      .update(delegations)
-      .set({
-        status: "pending_config",
-        delegationHash: null,
-        signedDelegation: null,
-        activatedAt: null,
-      })
-      .where(eq(delegations.id, input.delegationId));
-  }
+
 
   return getEmployeeDashboardState(input.walletAddress);
 }
@@ -2294,6 +2036,8 @@ export async function activateEmployeeDelegation(input: {
   const { user } = profile;
 
   const delegation = await getEmployeeOwnDelegationOrThrow(user.id, input.delegationId);
+
+  if (delegation.status === "active" && delegation.delegationHash !== input.delegationHash) throw new Error("Revoke the existing permission before replacing it.");
 
   if (delegation.status === "revoked") {
     throw new Error("Revoked delegations cannot be activated");
@@ -2323,7 +2067,7 @@ export async function activateEmployeeDelegation(input: {
     .set({
       delegationHash: input.delegationHash,
       treasuryReference: treasury,
-      signedDelegation: input.signedDelegation,
+      signedDelegation: permission,
       status: "active",
       activatedAt: new Date(),
       revokedAt: null,

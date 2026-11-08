@@ -24,7 +24,7 @@ describe("live employee capacity from a shared treasury",()=>{
  it("verifies scoped policies and reuses lifetime usage for the dashboard totals",async()=>{
   const counts=healthyRpc();
   const result=await readLiveNativeCapacity(treasuryReader(`shared.testnet#${company}`),"employee.testnet","1");
-  expect(result.remainingEth).toBe("0.00000000000000000000085");
+  expect(result.remainingNear).toBe("0.00000000000000000000085");
   expect(counts.get_usage).toBe(1);
   expect(counts.is_principal_blocked).toBe(2);
  });

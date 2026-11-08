@@ -51,8 +51,8 @@ describe("Deterministic Fallback Policy Parser", () => {
       nowMs: fixedNow,
     });
 
-    expect(result.formValues.maxAmountEth).toBe("100");
-    expect(result.formValues.perTransactionCapEth).toBe("20");
+    expect(result.formValues.maxAmountNear).toBe("100");
+    expect(result.formValues.perTransactionCapNear).toBe("20");
     expect(result.onChainSpec.delegate).toBe("alice.testnet");
 
     const rule = result.onChainSpec.rules[0];
@@ -70,7 +70,7 @@ describe("Deterministic Fallback Policy Parser", () => {
     });
 
     expect(result.formValues.period).toBe("monthly");
-    expect(result.formValues.periodAmountEth).toBe("50");
+    expect(result.formValues.periodAmountNear).toBe("50");
 
     const rule = result.onChainSpec.rules[0];
     expect(rule.fixed_window).toBeDefined();
@@ -88,7 +88,7 @@ describe("Deterministic Fallback Policy Parser", () => {
 
     expect(result.formValues.approvalEnabled).toBe(true);
     expect(result.formValues.approvalApprover).toBe("finance.near");
-    expect(result.formValues.approvalAboveAmountEth).toBe("25");
+    expect(result.formValues.approvalAboveAmountNear).toBe("25");
 
     const rule = result.onChainSpec.rules[0];
     expect(rule.approval).toBeDefined();
@@ -96,7 +96,7 @@ describe("Deterministic Fallback Policy Parser", () => {
     expect(rule.approval?.above_amount).toBe(parseTokenAmount("25", 24));
   });
 
-  it("resolves approved contractor accounts and partner keywords", () => {
+  it("uses explicit accounts and never invents merchant destinations", () => {
     const text = "Permit spending on chainstack and ack3, or payments to vendor.testnet.";
     const result = parsePolicyDeterministicFallback({
       text,
@@ -107,8 +107,8 @@ describe("Deterministic Fallback Policy Parser", () => {
     const rule = result.onChainSpec.rules[0];
     expect(rule.recipients.type).toBe("Only");
     if (rule.recipients.type === "Only") {
-      expect(rule.recipients.accounts).toContain("chainstack.testnet");
-      expect(rule.recipients.accounts).toContain("ack3.testnet");
+      expect(rule.recipients.accounts).not.toContain("chainstack.testnet");
+      expect(rule.recipients.accounts).not.toContain("ack3.testnet");
       expect(rule.recipients.accounts).toContain("vendor.testnet");
     }
   });
@@ -289,14 +289,14 @@ describe("specToCaveatFormValues", () => {
     };
 
     const form = specToCaveatFormValues(spec, "Custom guardrail");
-    expect(form.maxAmountEth).toBe("250");
-    expect(form.perTransactionCapEth).toBe("7.5");
+    expect(form.maxAmountNear).toBe("250");
+    expect(form.perTransactionCapNear).toBe("7.5");
     expect(form.period).toBe("monthly");
-    expect(form.periodAmountEth).toBe("50");
+    expect(form.periodAmountNear).toBe("50");
     expect(form.allowedTargets).toBe("v1.near, v2.near");
     expect(form.approvalEnabled).toBe(true);
     expect(form.approvalApprover).toBe("lead.near");
-    expect(form.approvalAboveAmountEth).toBe("15");
+    expect(form.approvalAboveAmountNear).toBe("15");
     expect(form.limitedCalls).toBe("3");
     expect(form.policyPrompt).toBe("Custom guardrail");
   });
@@ -342,8 +342,8 @@ describe("NEAR AI Cloud Integration", () => {
 
     expect(result.provider).toBe("near-ai");
     expect(result.formValues.period).toBe("monthly");
-    expect(result.formValues.periodAmountEth).toBe("45");
-    expect(result.formValues.maxAmountEth).toBe("150");
+    expect(result.formValues.periodAmountNear).toBe("45");
+    expect(result.formValues.maxAmountNear).toBe("150");
     expect(result.formValues.allowedTargets).toContain("chainstack.testnet");
     expect(result.formValues.approvalApprover).toBe("audit.testnet");
     expect(result.confidence).toBe(0.95);
@@ -364,7 +364,7 @@ describe("NEAR AI Cloud Integration", () => {
 
     expect(result.provider).toBe("fallback-rules");
     expect(result.formValues.period).toBe("monthly");
-    expect(result.formValues.periodAmountEth).toBe("30");
+    expect(result.formValues.periodAmountNear).toBe("30");
     expect(result.success).toBe(true);
   });
 });

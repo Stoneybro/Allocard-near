@@ -1,76 +1,30 @@
 import { cookies } from "next/headers";
-import { SignJWT, jwtVerify } from "jose";
 import { cache } from "react";
-import { sessionSecret } from "./session-secret";
-import { normalizeWalletAddress } from "@/lib/wallet";
+import { issueSession, readSession, revokeSession, SESSION_ABSOLUTE_SECONDS, type StoredIdentity } from "./session-store";
 
 const SESSION_COOKIE_NAME = "allocard_session";
-const SESSION_MAX_AGE_SEC = 60 * 60 * 24;
+export type SessionIdentity = StoredIdentity;
 
-export type SessionIdentity = {
-  providerUserId: string;
-  email: string;
-  walletAddress: string;
-};
-
-export async function createNearSession(accountId: string, verifiedIdentity?: { providerUserId: string; email: string }): Promise<SessionIdentity> {
-  const normalizedAddress = normalizeWalletAddress(accountId);
-  const userEmail = verifiedIdentity?.email ?? `${normalizedAddress}@near`;
-
-  const identity: SessionIdentity = {
-    providerUserId: verifiedIdentity?.providerUserId ?? `near:${normalizedAddress}`,
-    email: userEmail,
-    walletAddress: normalizedAddress,
-  };
-
-  const token = await new SignJWT({ ...identity, authVersion: 2 })
-    .setProtectedHeader({ alg: "HS256" })
-    .setSubject(identity.providerUserId)
-    .setIssuedAt()
-    .setExpirationTime("24h")
-    .sign(sessionSecret());
-
-  const cookieStore = await cookies();
-  cookieStore.set(SESSION_COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    maxAge: SESSION_MAX_AGE_SEC,
-    path: "/",
+export async function createNearSession(accountId: string, verifiedIdentity: { providerUserId: string; email: string; providerSessionId: string }): Promise<SessionIdentity> {
+  const identity = { providerUserId: verifiedIdentity.providerUserId, email: verifiedIdentity.email, walletAddress: accountId };
+  const token = await issueSession(identity, verifiedIdentity.providerSessionId);
+  (await cookies()).set(SESSION_COOKIE_NAME, token, {
+    httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", maxAge: SESSION_ABSOLUTE_SECONDS, path: "/",
   });
-
   return identity;
 }
 
-export async function getSessionIdentity(): Promise<SessionIdentity | null> {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
-  if (!token) return null;
-
-  try {
-    const { payload } = await jwtVerify(token, sessionSecret());
-    if (payload.authVersion !== 2 || typeof payload.sub !== "string" || typeof payload.walletAddress !== "string") return null;
-
-    const email = typeof payload.email === "string" ? payload.email : `${payload.walletAddress}@near`;
-
-    return {
-      providerUserId: payload.sub,
-      email,
-      walletAddress: payload.walletAddress.toLowerCase(),
-    };
-  } catch {
-    return null;
-  }
-}
-
-export async function getSessionWalletAddress(): Promise<string | null> {
-  return (await getSessionIdentity())?.walletAddress ?? null;
-}
-
+export const getSessionIdentity = cache(async (): Promise<SessionIdentity | null> => {
+  const token = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
+  return token ? readSession(token) : null;
+});
+export async function getSessionWalletAddress() { return (await getSessionIdentity())?.walletAddress ?? null; }
 export async function clearSession() {
-  const cookieStore = await cookies();
-  cookieStore.delete(SESSION_COOKIE_NAME);
+  const store = await cookies();
+  const token = store.get(SESSION_COOKIE_NAME)?.value;
+  // Report failure rather than pretending a copied token was revoked.
+  if (token) await revokeSession(token);
+  store.delete(SESSION_COOKIE_NAME);
 }
-
 export const getCachedSessionWalletAddress = cache(getSessionWalletAddress);
-export const getCachedSessionIdentity = cache(getSessionIdentity);
+export const getCachedSessionIdentity = getSessionIdentity;

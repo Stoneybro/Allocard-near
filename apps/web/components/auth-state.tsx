@@ -74,9 +74,9 @@ export function ConnectRequiredCard({
         </div>
         <div className="flex flex-col gap-3 w-full max-w-sm mt-2">
           {auth.error && <p role="alert" className="text-sm text-red-600">{auth.error}</p>}
-          {/* Primary onboarding: FastAuth / Email / Social */}
+          {/* Privy email and Google sign-in */}
           <button
-            onClick={() => auth.loginFastAuth()}
+            onClick={() => auth.connect()}
             title="Sign in with email or Google"
             disabled={auth.connecting}
             className="h-12 w-full rounded-md bg-[#111] text-white text-base font-medium hover:bg-[#27272a] transition-all disabled:opacity-40 cursor-pointer flex items-center justify-center gap-3 shadow-sm hover:shadow"
@@ -92,28 +92,6 @@ export function ConnectRequiredCard({
             Your NEAR wallet is created securely when you sign in.
           </span>
 
-          <div className="relative my-2 flex items-center justify-center">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t border-[#eaeaea]" />
-            </div>
-            <span className="relative bg-white px-2 text-[11px] uppercase tracking-wider text-[#999]">
-              or existing wallet
-            </span>
-          </div>
-
-          {/* Secondary / Optional: Existing Web3 Wallet (Meteor, MyNearWallet) */}
-          <button
-            onClick={auth.connectExistingWallet}
-            disabled={auth.connecting}
-            className="h-11 w-full rounded-md border border-[#e4e4e7] bg-white text-[#18181b] text-sm font-medium hover:bg-[#fafafa] hover:border-[#d4d4d8] transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs"
-          >
-            <svg className="w-4 h-4 text-[#52525b]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="2" y="6" width="20" height="12" rx="2" />
-              <circle cx="16" cy="12" r="1.5" />
-            </svg>
-            Connect existing NEAR wallet
-          </button>
-
           <Link
             href="/"
             className="mt-1 h-10 w-full rounded-md text-[#71717a] text-sm font-medium hover:text-[#18181b] transition-colors flex items-center justify-center"
@@ -126,29 +104,4 @@ export function ConnectRequiredCard({
   }
 
   return null;
-}
-
-// ── useConnectedWalletAddress (legacy compat — thin wrapper over useAuth) ────
-
-/**
- * @deprecated Prefer useAuth() directly.
- */
-export function useConnectedWalletAddress() {
-  const auth = useAuth();
-
-  if (auth.status === "authenticated") {
-    return {
-      address: auth.address,
-      isConnected: true,
-      isAuthLoading: false,
-      shouldPromptConnect: false,
-    };
-  }
-
-  return {
-    address: undefined,
-    isConnected: false,
-    isAuthLoading: auth.status === "connecting",
-    shouldPromptConnect: auth.status === "unauthenticated",
-  };
 }

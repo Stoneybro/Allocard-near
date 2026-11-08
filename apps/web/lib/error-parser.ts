@@ -1,9 +1,13 @@
-export function parseUserOpError(err: any): string {
+export function parseUserOpError(err: unknown): string {
   if (!err) return "Transaction declined: An unknown error occurred.";
   
-  const msg = typeof err === "string" ? err : (err.message || err.details || "");
+  const error = typeof err === "object" ? err as { message?: unknown; details?: unknown } : null;
+  const msg = typeof err === "string" ? err : typeof error?.message === "string" ? error.message : typeof error?.details === "string" ? error.details : "";
   const lowerMsg = msg.toLowerCase();
   
+  // Sponsor setup and availability errors are independent of company spending policy.
+  if (lowerMsg.includes("relayer") || lowerMsg.includes("gas sponsor") || lowerMsg.includes("near_sponsor_")) return msg;
+
   // Specific MetaMask Delegation & ERC-7710 On-Chain Caveat Enforcer Patterns
   if (lowerMsg.includes("transferamount") || lowerMsg.includes("exceeds limit") || lowerMsg.includes("amount exceeds") || lowerMsg.includes("lifetime")) {
     return "Card declined: Lifetime spending limit exceeded. The requested amount exceeds your card's total authorized limit.";
@@ -38,10 +42,6 @@ export function parseUserOpError(err: any): string {
     return "Network configuration mismatch: Active RPC endpoint does not match NEAR Testnet.";
   }
 
-  // Clean fallback
-  if (msg.length > 150) {
-    return "Card declined by policy: " + msg.slice(0, 150) + "...";
-  }
-
-  return msg || "Transaction declined: The requested spend violated company delegation rules.";
+  // Preserve unknown errors without claiming an on-chain policy rejected them.
+  return msg || "Transaction could not be completed. Please check its status before retrying.";
 }
