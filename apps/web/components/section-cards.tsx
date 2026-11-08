@@ -1,3 +1,4 @@
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   NetworkIcon,
   ShieldCheckIcon,
@@ -19,6 +20,8 @@ import {
 import { TOKEN_SYMBOL } from "@/lib/chain";
 
 export function SectionCards({
+  loading = false,
+  balanceLoading = false,
   employeeCount,
   smartAccountBalance,
   activeDelegationCount,
@@ -26,10 +29,12 @@ export function SectionCards({
   onTopUp,
   isToppingUp,
 }: {
-  employeeCount: number;
-  smartAccountBalance: string;
-  activeDelegationCount: number;
-  delegatedNativeNearAllowance: string;
+  loading?: boolean;
+  balanceLoading?: boolean;
+  employeeCount?: number;
+  smartAccountBalance?: string;
+  activeDelegationCount?: number;
+  delegatedNativeNearAllowance?: string;
   onTopUp?: () => void;
   isToppingUp?: boolean;
 }) {
@@ -39,7 +44,7 @@ export function SectionCards({
         <CardHeader>
           <CardDescription>Employees</CardDescription>
           <CardTitle className="text-xl font-semibold tabular-nums @[250px]/card:text-2xl">
-            {employeeCount}
+            {loading ? <Skeleton className="h-7 w-16" /> : employeeCount}
           </CardTitle>
           <CardAction>
             <Badge variant="outline" className="px-1 py-0">
@@ -56,16 +61,16 @@ export function SectionCards({
         <CardHeader>
           <CardDescription>Treasury Balance</CardDescription>
           <CardTitle className="text-xl font-semibold tabular-nums @[250px]/card:text-2xl">
-            {smartAccountBalance} {TOKEN_SYMBOL}
+            {loading || balanceLoading ? <Skeleton className="h-7 w-28" /> : <>{smartAccountBalance} {TOKEN_SYMBOL}</>}
           </CardTitle>
           <CardAction>
             {onTopUp ? (
               <Button
                 variant="outline"
                 size="sm"
-                className="h-6 text-[11px] gap-1 px-2 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10 cursor-pointer"
+                className="h-6 text-[11px] gap-1 px-2 border-border text-foreground hover:bg-muted cursor-pointer"
                 onClick={onTopUp}
-                disabled={isToppingUp}
+                disabled={loading || isToppingUp}
               >
                 {isToppingUp ? (
                   <Loader2 className="h-3 w-3 animate-spin" />
@@ -90,7 +95,7 @@ export function SectionCards({
         <CardHeader>
           <CardDescription>Active Delegations</CardDescription>
           <CardTitle className="text-xl font-semibold tabular-nums @[250px]/card:text-2xl">
-            {activeDelegationCount}
+            {loading ? <Skeleton className="h-7 w-16" /> : activeDelegationCount}
           </CardTitle>
           <CardAction>
             <Badge variant="outline" className="px-1 py-0">
@@ -107,7 +112,7 @@ export function SectionCards({
         <CardHeader>
           <CardDescription>Budgeted {TOKEN_SYMBOL}</CardDescription>
           <CardTitle className="text-xl font-semibold tabular-nums @[250px]/card:text-2xl">
-            {delegatedNativeNearAllowance} {TOKEN_SYMBOL}
+            {loading ? <Skeleton className="h-7 w-28" /> : <>{delegatedNativeNearAllowance} {TOKEN_SYMBOL}</>}
           </CardTitle>
           <CardAction>
             <Badge variant="outline" className="px-1 py-0">

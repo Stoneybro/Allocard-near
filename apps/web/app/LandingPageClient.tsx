@@ -9,6 +9,7 @@ import { accountQueryKey } from "@/lib/query-keys";
 import { getWalletProfile } from "@/app/actions/identity";
 import { withTimeout } from "@/lib/request-timeout";
 import Image from "next/image";
+import { Button } from "@/components/ui/button";
 
 function routeForStatus(status?: "new" | "picker" | "employer" | "employee" | null) {
   if (status === "employer") return "/employer";
@@ -25,6 +26,7 @@ export function LandingPageClient({
   const auth = useAuth();
   const queryClient = useQueryClient();
   const requestedLogin = useRef(false);
+  const queuedConnect = useRef(false);
   const [routeError, setRouteError] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "routing">("idle");
   const [activeTarget, setActiveTarget] = useState<"nav" | "hero">("hero");
@@ -58,7 +60,7 @@ export function LandingPageClient({
       const profile = await queryClient.fetchQuery({
         queryKey: [...accountQueryKey(principal, address), "profile"],
         queryFn: () => withTimeout(getWalletProfile(address), "Could not open your workspace. Please try again."),
-        staleTime: 0,
+        staleTime: 15_000,
       });
       router.push(routeForStatus(profile.status));
     } catch (caught) {
@@ -68,8 +70,15 @@ export function LandingPageClient({
     }
   }, [address, principal, queryClient, router]);
   useEffect(() => {
-    if (address && requestedLogin.current) void openWorkspace();
-  }, [address, openWorkspace]);
+    if (!requestedLogin.current) return;
+    // Navigation follows the external Privy authentication event.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (address) void openWorkspace();
+    else if (auth.status === "unauthenticated" && queuedConnect.current) {
+      queuedConnect.current = false;
+      auth.connect();
+    }
+  }, [address, openWorkspace, auth]);
   const handleGetStarted = (target: "nav" | "hero" = "hero") => {
     setActiveTarget(target);
     if (auth.status === "unauthenticated") {
@@ -78,9 +87,12 @@ export function LandingPageClient({
       auth.connect();
     } else if (auth.status === "authenticated") {
       void openWorkspace();
+    } else {
+      queuedConnect.current = true;
+      requestedLogin.current = true;
     }
   };
-  const isBusy = phase !== "idle" || auth.status === "connecting";
+  const isBusy = phase !== "idle";
 
   const renderNavButtonContent = () => {
     if (phase === "routing" && activeTarget === "nav") {
@@ -151,7 +163,7 @@ export function LandingPageClient({
               GitHub
             </a>
           </div>
-          <button
+          <Button
             id="nav-cta"
             onClick={() => handleGetStarted("nav")}
             disabled={isBusy}
@@ -162,7 +174,7 @@ export function LandingPageClient({
             }`}
           >
             {renderNavButtonContent()}
-          </button>
+          </Button>
         </div>
       </nav>
 
@@ -183,14 +195,14 @@ export function LandingPageClient({
           </p>
 
           <div className="flex flex-col sm:flex-row gap-3 mb-6">
-            <button
+            <Button
               id="hero-try-demo"
               onClick={() => handleGetStarted("hero")}
               disabled={isBusy}
               className="h-10 px-6 rounded-md bg-[#111] text-white text-sm font-medium hover:bg-[#333] transition-colors disabled:opacity-60 cursor-pointer shadow-xs min-w-[170px]"
             >
               {renderHeroButtonContent()}
-            </button>
+            </Button>
             <a
               id="hero-view-github"
               href="https://github.com/Stoneybro/Allocard"
@@ -475,14 +487,14 @@ export function LandingPageClient({
               Connect your NEAR account, deploy your company treasury contract, and issue your first spending permission in under sixty seconds.
             </p>
             <div className="flex flex-col sm:flex-row gap-3">
-              <button
+              <Button
                 id="closing-try-demo"
                 onClick={() => handleGetStarted("hero")}
                 disabled={isBusy}
                 className="h-10 px-6 rounded-md bg-[#111] text-white text-sm font-medium hover:bg-[#333] transition-colors disabled:opacity-60 cursor-pointer shadow-xs min-w-[170px]"
               >
                 {renderHeroButtonContent()}
-              </button>
+              </Button>
               <a
                 id="closing-view-github"
                 href="https://github.com/Stoneybro/Allocard"

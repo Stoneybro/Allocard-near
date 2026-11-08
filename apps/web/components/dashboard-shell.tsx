@@ -11,6 +11,7 @@ import { SiteHeader } from "@/components/site-header";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 
 export function DashboardShell({
+  loading = false,
   children,
   companyName,
   companyId,
@@ -31,6 +32,7 @@ export function DashboardShell({
   title,
   roleLabel,
 }: {
+  loading?: boolean;
   children: ReactNode;
   companyName: string;
   companyId?: string;
@@ -61,6 +63,7 @@ export function DashboardShell({
       }
     >
       <AppSidebar
+        loading={loading}
         variant="inset"
         companyName={companyName}
         companyId={companyId ?? ""}

@@ -31,6 +31,7 @@ function signIn() {
 }
 beforeEach(() => {
   vi.clearAllMocks(); localStorage.clear(); seen.length = 0;
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
   vi.stubEnv("NEXT_PUBLIC_PRIVY_APP_ID", "test-app");
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   Object.assign(mocks.privy, { ready: true, authenticated: false, user: null });
@@ -39,13 +40,32 @@ beforeEach(() => {
   mocks.baseCall.mockResolvedValue({ success: true }); mocks.baseSend.mockResolvedValue({ success: true });
   root = createRoot(document.createElement("div"));
 });
-afterEach(async () => { await act(async () => root.unmount()); vi.unstubAllEnvs(); });
+afterEach(async () => { await act(async () => root.unmount()); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 describe("Privy-only authentication", () => {
   it("opens Privy and ignores the obsolete wallet-selector preference", async () => {
     localStorage.setItem("allocard_auth_method", "wallet");
     await render();
     await act(async () => { if (state.status === "unauthenticated") state.connect(); });
     expect(mocks.privy.login).toHaveBeenCalledTimes(1);
+  });
+  it("reuses a matching server session without another Privy exchange", async () => {
+    signIn();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(identity)));
+    await render();
+    expect(state.status).toBe("authenticated");
+    expect(mocks.createPrivySession).not.toHaveBeenCalled();
+  });
+  it("never reuses another user's server session", async () => {
+    signIn();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ ...identity, providerUserId: "did:privy:bob" })));
+    await render();
+    expect(mocks.createPrivySession).toHaveBeenCalledTimes(1);
+  });
+  it("returns a confirmed transaction without waiting for dashboard reads", async () => {
+    signIn(); await render();
+    vi.spyOn(queryClient, "invalidateQueries").mockImplementation(() => new Promise(() => {}));
+    if (state.status !== "authenticated") throw new Error("Expected authentication");
+    await expect(state.sendActions({ receiverId: "treasury.testnet", actions: [] })).resolves.toEqual({ success: true });
   });
   it("fails clearly when Privy is not configured", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRIVY_APP_ID", ""); await render();

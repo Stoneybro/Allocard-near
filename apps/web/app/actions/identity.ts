@@ -1,6 +1,4 @@
 "use server";
-import { reimbursementSigner } from "@/lib/reimbursements/config";
-import { REIMBURSEMENT_SERVICE_NAME } from "@/lib/reimbursements/shared";
 
 import { readLiveNativeCapacity, capacityReadError } from "@/lib/live-capacity";
 
@@ -29,10 +27,12 @@ import {
 import { withRetry } from "@/lib/db/withRetry";
 import { requireSession } from "@/lib/auth-guard";
 import { getSessionIdentity } from "@/lib/session";
-import { loadReimbursementProgram } from "@/lib/reimbursements/server";
-import { isReimbursementAgent, type ReimbursementProgram } from "@/lib/reimbursements/shared";
 import { verifyTreasuryOwner, treasuryReader, assertEmployeePermission } from "@/lib/near-server";
 import { TOKEN_SYMBOL } from "@/lib/chain";
+
+export type ReimbursementProgram = {
+  status: "unavailable";
+};
 
 
 // ── Module-level caches (serverless-safe: each cold start resets) ───────────
@@ -1024,7 +1024,7 @@ export async function createAgentDelegation(input: {
     .where(and(eq(agents.id, input.agentId), eq(agents.isActive, true)))
     .limit(1);
 
-  if (!agent || !isNativeNearAccount(agent.smartAccountAddress) || agent.name !== REIMBURSEMENT_SERVICE_NAME) {
+  if (!agent || !isNativeNearAccount(agent.smartAccountAddress)) {
     throw new Error("This agent has no supported NEAR execution integration");
   }
 
@@ -1059,52 +1059,12 @@ export async function createAgentDelegation(input: {
   return getCompanyDashboardState(input.walletAddress);
 }
 
-/** Prepare the built-in reimbursement budget without adding a canvas node. */
-export async function prepareReimbursementBudget(walletAddress: string): Promise<{
+/** Deprecated reimbursement budget stub */
+export async function prepareReimbursementBudget(_walletAddress: string): Promise<{
   delegation: CompanyDelegation;
   reimbursement: ReimbursementProgram;
 }> {
-  await validateSessionWallet(walletAddress);
-  const profile = await getEmployerProfileOrThrow(walletAddress);
-  const { agent, delegation: existingDelegation, program } = await loadReimbursementProgram(profile.company.id);
-  if (!agent || program.status === "unavailable") throw new Error("Reimbursements are temporarily unavailable. Check the service configuration.");
-
-  let targetDelegation = existingDelegation && existingDelegation.status !== "revoked" ? existingDelegation : null;
-
-  if (!targetDelegation) {
-    const [inserted] = await db
-      .insert(delegations)
-      .values({
-        delegatorType: "company",
-        delegatorId: profile.company.id,
-        delegateeType: "agent",
-        delegateeId: agent.id,
-        canvasPositionX: 0,
-        canvasPositionY: 0,
-      })
-      .returning();
-    targetDelegation = inserted;
-  }
-
-  const caveats = await db
-    .select()
-    .from(delegationCaveats)
-    .where(eq(delegationCaveats.delegationId, targetDelegation.id));
-
-  const companyDelegation = toCompanyDelegation(
-    targetDelegation,
-    caveats.map(toCompanyDelegationCaveat),
-  );
-
-  const updatedProgram: ReimbursementProgram = {
-    ...program,
-    delegationId: targetDelegation.id,
-    status: targetDelegation.status === "active" && Boolean(targetDelegation.signedDelegation)
-      ? "ready"
-      : "pending",
-  };
-
-  return { delegation: companyDelegation, reimbursement: updatedProgram };
+  throw new Error("Reimbursements feature has been retired.");
 }
 
 export async function updateDelegationPosition(input: {
@@ -1268,10 +1228,10 @@ export async function activateDelegation(input: {
     if (!employee) throw new Error("Employee not found");
     assertEmployeePermission(permission, employee.account, input.walletAddress, config.authority_epoch);
   } else {
-    const signer = reimbursementSigner();
     const [agent] = await db.select().from(agents).where(eq(agents.id, delegation.delegateeId!)).limit(1);
-    if (!signer || agent?.name !== REIMBURSEMENT_SERVICE_NAME || agent.smartAccountAddress !== signer.accountId || agent.signerAddress !== signer.accountId) throw new Error("The reimbursement executor is not configured for this NEAR account");
-    assertEmployeePermission(permission, signer.accountId, input.walletAddress, config.authority_epoch);
+    const targetAccount = agent?.smartAccountAddress || agent?.signerAddress;
+    if (!targetAccount) throw new Error("Agent target account is not configured");
+    assertEmployeePermission(permission, targetAccount, input.walletAddress, config.authority_epoch);
   }
 
   await db
@@ -1433,7 +1393,7 @@ export async function getCompanyDashboardState(
           () => db.select().from(agents).where(eq(agents.isActive, true)),
           "getCompanyDashboardState:agents"
         );
-        const mapped = rows.filter(agent => isNativeNearAccount(agent.smartAccountAddress) && agent.name === REIMBURSEMENT_SERVICE_NAME && agent.smartAccountAddress === reimbursementSigner()?.accountId).map((agent) => ({
+        const mapped = rows.filter(agent => isNativeNearAccount(agent.smartAccountAddress)).map((agent) => ({
           id: agent.id,
           name: agent.name,
           description: agent.description,
@@ -1525,7 +1485,7 @@ export async function getCompanyDashboardState(
     companyPolicy: company.companyPolicy,
     agents: platformAgents,
     delegations: delegationsWithCaveats,
-    reimbursement: (await loadReimbursementProgram(company.id)).program,
+    reimbursement: { status: "unavailable" },
     summary: {
       employeeCount: companyEmployees.length,
       activeAgentCount: activeAgentDelegationCount,
@@ -1694,7 +1654,7 @@ export async function getEmployeeDashboardState(
       () => db.select().from(agents).where(eq(agents.isActive, true)),
       "getEmployeeDashboardState:agents"
     );
-    platformAgents = rows.filter(agent => isNativeNearAccount(agent.smartAccountAddress) && agent.name === REIMBURSEMENT_SERVICE_NAME && agent.smartAccountAddress === reimbursementSigner()?.accountId).map((agent) => ({
+    platformAgents = rows.filter(agent => isNativeNearAccount(agent.smartAccountAddress)).map((agent) => ({
       id: agent.id,
       name: agent.name,
       description: agent.description,
@@ -1734,7 +1694,7 @@ export async function getEmployeeDashboardState(
     outboundDelegations,
     agents: platformAgents,
     activeCompanyAgentIds,
-    reimbursement: (await loadReimbursementProgram(company.id)).program,
+    reimbursement: { status: "unavailable" },
     summary: {
       approvedLimitNear: liveApprovedNear,
       redelegatedNear: formatNearAllowance(redelegatedYocto),

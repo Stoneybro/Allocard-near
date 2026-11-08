@@ -28,6 +28,29 @@ describe("landing sign-in routing", () => {
     await render();
     expect(mocks.push).toHaveBeenCalledWith("/employer");
   });
+  it("queues a click during SDK initialization without disabling entry", async () => {
+    mocks.auth = { status: "connecting" };
+    await render();
+    expect(host.querySelector<HTMLButtonElement>("#nav-cta")!.disabled).toBe(false);
+    await act(async () => host.querySelector<HTMLButtonElement>("#nav-cta")!.click());
+    mocks.auth = { status: "unauthenticated", connect: mocks.connect };
+    await render();
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
+    await render();
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
+    mocks.auth = { status: "authenticated", address: "a".repeat(64), providerUserId: "did:privy:alice" };
+    await render();
+    expect(mocks.push).toHaveBeenCalledWith("/employer");
+  });
+  it("reuses a fresh account-scoped profile for navigation", async () => {
+    const address = "a".repeat(64);
+    client.setQueryData(["allocard", "testnet", "did:privy:alice", address, "profile"], { status: "employee" });
+    mocks.auth = { status: "authenticated", address, providerUserId: "did:privy:alice" };
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>("#nav-cta")!.click());
+    expect(mocks.push).toHaveBeenCalledWith("/employee");
+    expect(mocks.profile).not.toHaveBeenCalled();
+  });
   it("routes a new user to company onboarding after signing in", async () => {
     mocks.profile.mockResolvedValue({ status: "new" });
     await render(); await act(async () => host.querySelector<HTMLButtonElement>("#nav-cta")!.click());

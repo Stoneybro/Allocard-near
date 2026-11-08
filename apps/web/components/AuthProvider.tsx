@@ -79,7 +79,16 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
         address = (await creation.current.promise).wallet.address;
       }
       if (cancelled) return;
-      const identity = await withTimeout(createPrivySession(address, () => sdk.current.getAccessToken()), "Sign-in timed out. Please try again.", 60_000);
+      const identity = await withTimeout((async () => {
+        try {
+          const response = await fetch("/api/auth/session", { cache: "no-store", credentials: "same-origin", signal: AbortSignal.timeout(5000) });
+          if (response.ok) {
+            const existing = await response.json() as SessionIdentity;
+            if (existing.providerUserId === principal && existing.walletAddress === address && existing.email) return existing;
+          }
+        } catch { /* Recover with a fresh Privy proof. */ }
+        return createPrivySession(address, () => sdk.current.getAccessToken());
+      })(), "Sign-in timed out. Please try again.", 60_000);
       if (identity.providerUserId !== principal) throw new Error("Your account changed. Please sign in again.");
       if (!cancelled) setSession(current => current?.principal === principal && current.identity.walletAddress === identity.walletAddress && current.identity.email === identity.email ? current : { principal, identity });
     })().catch(caught => {
@@ -123,7 +132,7 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
       }
       else if (!response.ok) throw new Error("Session service is temporarily unavailable");
       return true;
-    }, refetchInterval: 5 * 60_000, staleTime: 60_000, retry: false,
+    }, initialData: true, refetchInterval: 5 * 60_000, staleTime: 60_000, retry: false,
   });
   const transport = useMemo(() => {
     if (!address || !principal) return null;
@@ -132,12 +141,12 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
     return {
       caller: { ...base.caller, functionCall: async (...args: Parameters<NonNullable<NearCaller["functionCall"]>>) => {
         const result = await base.caller.functionCall!(...args);
-        await invalidate();
+        void invalidate().catch(() => undefined);
         return result;
       } },
       sendActions: (async request => {
         const result = await base.sendActions(request);
-        await invalidate();
+        void invalidate().catch(() => undefined);
         return result;
       }) as NearActionSender,
     };

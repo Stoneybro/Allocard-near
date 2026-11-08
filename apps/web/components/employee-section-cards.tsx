@@ -1,3 +1,4 @@
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   ShieldCheckIcon,
   TrendingDownIcon,
@@ -16,14 +17,16 @@ import {
 import { TOKEN_SYMBOL } from "@/lib/chain";
 
 export function EmployeeSectionCards({
+  loading = false,
   approvedLimitNear,
   redelegatedNear,
   remainingNear,
   spentNear = "0",
 }: {
-  approvedLimitNear: string;
-  redelegatedNear: string;
-  remainingNear: string;
+  loading?: boolean;
+  approvedLimitNear?: string;
+  redelegatedNear?: string;
+  remainingNear?: string;
   spentNear?: string;
 }) {
   return (
@@ -35,7 +38,7 @@ export function EmployeeSectionCards({
             Available Allowance
           </CardDescription>
           <CardTitle className="text-xl font-bold tracking-tight tabular-nums @[250px]/card:text-2xl text-foreground">
-            {remainingNear} {TOKEN_SYMBOL}
+            {loading ? <Skeleton className="h-7 w-28" /> : <>{remainingNear} {TOKEN_SYMBOL}</>}
           </CardTitle>
           <CardAction>
             <Badge variant="secondary" className="px-1.5 py-0.5 text-xs">
@@ -55,7 +58,7 @@ export function EmployeeSectionCards({
             Authorized Spending Limit
           </CardDescription>
           <CardTitle className="text-xl font-bold tracking-tight tabular-nums @[250px]/card:text-2xl text-foreground">
-            {approvedLimitNear} {TOKEN_SYMBOL}
+            {loading ? <Skeleton className="h-7 w-28" /> : <>{approvedLimitNear} {TOKEN_SYMBOL}</>}
           </CardTitle>
           <CardAction>
             <Badge variant="outline" className="px-1.5 py-0.5 text-xs">
@@ -75,7 +78,7 @@ export function EmployeeSectionCards({
             Utilized Spend
           </CardDescription>
           <CardTitle className="text-xl font-bold tracking-tight tabular-nums @[250px]/card:text-2xl text-foreground">
-            {spentNear} {TOKEN_SYMBOL}
+            {loading ? <Skeleton className="h-7 w-28" /> : <>{spentNear} {TOKEN_SYMBOL}</>}
           </CardTitle>
           <CardAction>
             <Badge variant="outline" className="px-1.5 py-0.5 text-xs">
@@ -95,7 +98,7 @@ export function EmployeeSectionCards({
             Allocated to Agents
           </CardDescription>
           <CardTitle className="text-xl font-bold tracking-tight tabular-nums @[250px]/card:text-2xl text-foreground">
-            {redelegatedNear} {TOKEN_SYMBOL}
+            {loading ? <Skeleton className="h-7 w-28" /> : <>{redelegatedNear} {TOKEN_SYMBOL}</>}
           </CardTitle>
           <CardAction>
             <Badge variant="outline" className="px-1.5 py-0.5 text-xs">

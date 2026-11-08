@@ -5,7 +5,6 @@ import {
   specToCaveatFormValues,
   isValidNearAccountId,
   parseNaturalLanguagePolicy,
-  synthesizeCompanyPolicy,
   PERIOD_DURATIONS_MS,
 } from "../lib/policy-engine";
 import { parseTokenAmount } from "@allocard/delegation-sdk";
@@ -369,42 +368,4 @@ describe("NEAR AI Cloud Integration", () => {
   });
 });
 
-describe("synthesizeCompanyPolicy", () => {
-  it("synthesizes company policy with NEAR AI when key is present", async () => {
-    vi.stubEnv("NEAR_AI_API_KEY", "test-near-key");
-    const mockAiResponse = {
-      policy: "Allowed: Cloud hosting, developer tools.\nProhibited: Luxury goods, gaming.",
-      summary: "Developer focused startup policy.",
-    };
-
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            choices: [{ message: { content: JSON.stringify(mockAiResponse) } }],
-          }),
-          { status: 200 },
-        ),
-      ),
-    );
-
-    const result = await synthesizeCompanyPolicy({
-      prompt: "Only developer tools and cloud hosting, no personal spending",
-      companyName: "Web3 Labs",
-    });
-
-    expect(result.policy).toContain("Allowed: Cloud hosting");
-    expect(result.summary).toContain("Developer focused");
-  });
-
-  it("returns formatted fallback when API key is missing", async () => {
-    const result = await synthesizeCompanyPolicy({
-      prompt: "Only allow developer subscriptions",
-    });
-
-    expect(result.policy).toContain("Allowed:");
-    expect(result.policy).toContain("Only allow developer subscriptions");
-  });
-});
 

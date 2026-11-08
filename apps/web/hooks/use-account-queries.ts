@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, type SetStateAction } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
@@ -65,7 +65,7 @@ export function useDashboardData<T extends { company: { id: string } }>(
     [client, key]);
   const mutation = useMutation({
     mutationFn: (operation: () => Promise<T>) => operation(), retry: false,
-    onSuccess: async result => { setDashboardState(result); await invalidate(); },
+    onSuccess: result => { setDashboardState(result); void invalidate().catch(() => undefined); },
   });
   return {
     profile, setProfile, dashboardState: address ? dashboardQuery.data ?? null : null,
@@ -73,4 +73,18 @@ export function useDashboardData<T extends { company: { id: string } }>(
     isFetching: profileQuery.isFetching || dashboardQuery.isFetching,
     error: profileQuery.error ?? dashboardQuery.error,
   };
+}
+
+/** A finalized transaction can precede execution visibility on a read RPC. */
+export function useSettlementRefresh() {
+  const client = useQueryClient();
+  const { key } = useAccountScope();
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  useEffect(() => () => { timers.current.forEach(clearTimeout); timers.current = []; }, [key]);
+  return useCallback(() => {
+    timers.current.forEach(clearTimeout);
+    const refresh = () => { void client.invalidateQueries({ queryKey: key }).catch(() => undefined); };
+    refresh();
+    timers.current = [2000, 5000, 10_000].map(delay => setTimeout(refresh, delay));
+  }, [client, key]);
 }

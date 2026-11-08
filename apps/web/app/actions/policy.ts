@@ -7,7 +7,6 @@ import { eq } from "drizzle-orm";
 import {
   parseNaturalLanguagePolicy,
   validatePermissionSpec,
-  synthesizeCompanyPolicy,
   type ParsedPolicyResult,
   type ValidatePolicyResult,
 } from "@/lib/policy-engine";
@@ -18,7 +17,7 @@ export async function parsePolicyWithNearAI(input: {
   delegateAccount?: string;
   companyId?: string;
 }): Promise<ParsedPolicyResult> {
-  const user = await requireSessionUser();
+  await requireSessionUser();
 
   let companyPolicy: string | null = null;
   if (input.companyId) {
@@ -43,30 +42,3 @@ export async function validatePolicySpecAction(
 ): Promise<ValidatePolicyResult> {
   return validatePermissionSpec(spec);
 }
-
-export async function generateCompanyPolicyAction(input: {
-  prompt: string;
-  companyId?: string;
-}): Promise<{ policy: string; summary: string }> {
-  await requireSessionUser();
-
-  let currentPolicy: string | null = null;
-  let companyName: string = "Organization";
-
-  if (input.companyId) {
-    const [co] = await db
-      .select({ companyPolicy: companies.companyPolicy, name: companies.name })
-      .from(companies)
-      .where(eq(companies.id, input.companyId))
-      .limit(1);
-    currentPolicy = co?.companyPolicy ?? null;
-    if (co?.name) companyName = co.name;
-  }
-
-  return synthesizeCompanyPolicy({
-    prompt: input.prompt,
-    currentPolicy,
-    companyName,
-  });
-}
-

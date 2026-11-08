@@ -1,4 +1,7 @@
 "use client";
+
+import { useSettlementRefresh } from "@/hooks/use-account-queries";
+import { DashboardLoading } from "@/components/dashboard-loading";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAccountScope, useDashboardData } from "@/hooks/use-account-queries";
 import { preparePendingPayment } from "@/lib/pending-payment";
@@ -40,10 +43,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { type SidebarAgent } from "@/components/app-sidebar";
-import { ReimbursementsCard } from "@/components/reimbursements-card";
 import { EmployeeSectionCards } from "@/components/employee-section-cards";
-import { ReimbursementDrawer } from "./ReimbursementDrawer";
-import { isReimbursementAgent } from "@/lib/reimbursements/shared";
 import { SmartAccountActivationButton } from "@/components/smart-account-activation-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -316,6 +316,7 @@ export function EmployeeClient({
 } = {}) {
   const router = useRouter();
   const auth = useAuth();
+  const refreshAfterSettlement = useSettlementRefresh();
   const queryClient = useQueryClient();
   const { key: accountKey } = useAccountScope();
   const isMobile = useIsMobile();
@@ -413,9 +414,8 @@ export function EmployeeClient({
   const sidebarAgents = useMemo((): SidebarAgent[] => {
     if (!dashboardState) return [];
 
-    // 1. Live platform agents from database (excluding built-in dashboard card services)
+    // 1. Live platform agents from database
     const liveAgents: SidebarAgent[] = (dashboardState.agents ?? [])
-      .filter((agent) => !isReimbursementAgent(agent))
       .map((agent) => {
         const delegation = dashboardState.outboundDelegations.find(
           (d) => d.delegateeId === agent.id && d.status !== "revoked"
@@ -513,25 +513,13 @@ export function EmployeeClient({
     });
   };
 
-  const [isReimbursementDrawerOpen, setIsReimbursementDrawerOpen] = useState(false);
-
   // Open drawer for existing delegation (configure / view rules)
   const handleConfigureDelegation = useCallback(
     (delegationId: string) => {
       const delegation =
         dashboardState?.outboundDelegations.find((d) => d.id === delegationId) ?? null;
 
-      // For active agent delegations, open the agent-specific drawer
-      if (delegation?.status === "active" && delegation.delegateeId) {
-        const agent = dashboardState?.agents.find(a => a.id === delegation.delegateeId);
-        if (isReimbursementAgent(agent)) {
-          setIsReimbursementDrawerOpen(true);
-          return;
-        }
-
-      }
-
-      // Default: open the caveat configuration drawer (for pending agents or employees)
+      // Open the caveat configuration drawer
       setSelectedDelegationId(delegationId);
       // Wait for React to process selectedDelegationId state update so availableMaxNear recalculates
       setTimeout(() => {
@@ -548,12 +536,6 @@ export function EmployeeClient({
       if (auth.status !== "authenticated" || !auth.address || !dashboardState) return;
       const walletAddress = auth.address;
       setError(null);
-
-      const selectedAgent = dashboardState.agents.find(a => a.id === agentId);
-      if (isReimbursementAgent(selectedAgent)) {
-        setIsReimbursementDrawerOpen(true);
-        return;
-      }
 
 
       // If already delegated, open rules or task drawer
@@ -775,23 +757,8 @@ export function EmployeeClient({
       throw new Error(`Payment settled on-chain, but history was not saved: ${failure.error || "retry the same payment to synchronize"}`);
     }
     localStorage.removeItem(key);
-    await refreshDashboard();
+    refreshAfterSettlement();
     return saved.transactionHash;
-  };
-
-  const handleVerifyReceipt = async (txHash: string, imageBase64: string) => {
-    const res = await fetch("/api/wallet/verify-receipt", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ txHash, imageBase64, mimeType: "image/jpeg" }),
-    });
-    if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || "Failed to verify receipt");
-    }
-    const data = await res.json();
-    await refreshDashboard();
-    return data.verification;
   };
 
   // ── Render guards ──────────────────────────────────────────────────────────
@@ -800,19 +767,9 @@ export function EmployeeClient({
     return <ConnectRequiredCard />;
   }
 
-  if (auth.status === "connecting") {
-    return (
-      <div className="flex h-full min-h-screen items-center justify-center p-6 bg-white">
-        <div className="flex flex-col items-center gap-6 text-center">
-          <img src="/AllocardLogoBlack.svg" alt="Allocard Logo" className="w-16 h-16 object-contain mb-4" />
-          <div className="w-10 h-10 border-4 border-[#eaeaea] border-t-[#111] rounded-full animate-spin"></div>
-          <p className="text-xl font-bold text-[#111] tracking-[-0.02em]">Connecting wallet...</p>
-        </div>
-      </div>
-    );
-  }
+  if (auth.status === "connecting") return <DashboardLoading role="employee" />;
 
-  if (error) {
+  if (error && !dashboardState) {
     return (
       <div className="flex h-full min-h-screen flex-col items-center justify-center gap-8 bg-white p-8">
         <div className="flex flex-col items-center gap-6 text-center max-w-md">
@@ -840,24 +797,7 @@ export function EmployeeClient({
   }
 
   if (!dashboardState) {
-    return (
-      <div className="flex h-full min-h-screen flex-col items-center justify-center gap-8 bg-white">
-        <div className="flex flex-col items-center gap-6">
-          <svg className="animate-spin text-[#ccc]" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path strokeLinecap="round" d="M12 2a10 10 0 0 1 10 10" className="opacity-100 text-[#111]" />
-            <path strokeLinecap="round" d="M12 2a10 10 0 0 0-10 10" className="opacity-20" />
-          </svg>
-          <div className="flex flex-col items-center gap-2 text-center">
-            <p className="text-xl font-semibold text-[#111]">
-              {isPending ? "Loading employee dashboard" : "Verifying access"}
-            </p>
-            <p className="text-sm text-[#999]">
-              {isPending ? "Fetching your delegations and agents..." : "Checking your account status..."}
-            </p>
-          </div>
-        </div>
-      </div>
-    );
+    return <DashboardLoading role="employee" />;
   }
 
   const { employee, company, summary } = dashboardState;
@@ -929,8 +869,6 @@ export function EmployeeClient({
         )}
 
         {/* Summary cards */}
-        <ReimbursementsCard role="employee" program={dashboardState.reimbursement} accountReady={!!employee.smartAccountAddress}
-          onOpen={() => setIsReimbursementDrawerOpen(true)} onRefresh={() => { void refreshDashboard(); }} />
         <EmployeeSectionCards
           approvedLimitNear={summary.approvedLimitNear}
           redelegatedNear={summary.redelegatedNear}
@@ -947,7 +885,6 @@ export function EmployeeClient({
             pendingStorageKey={dashboardState.company?.smartAccountAddress && auth.status === "authenticated" ? `allocard-payment:${dashboardState.company.smartAccountAddress}:${auth.accountId}` : undefined}
             remainingBalanceNear={formatNearTrimmed(remainingYocto)}
             onExecute={handleExecuteSpend}
-            onVerifyReceipt={handleVerifyReceipt}
           />
         </div>
       </div>
@@ -1239,18 +1176,6 @@ export function EmployeeClient({
           )}
         </DrawerContent>
       </Drawer>
-
-      {dashboardState && (
-        <ReimbursementDrawer
-          isOpen={isReimbursementDrawerOpen}
-          onOpenChange={setIsReimbursementDrawerOpen}
-          companyId={dashboardState.company.id}
-          employeeId={dashboardState.employee.id}
-          program={dashboardState.reimbursement}
-          accountReady={Boolean(dashboardState.employee.smartAccountAddress)}
-          onRefresh={refreshDashboard}
-        />
-      )}
     </DashboardShell>
   );
 }

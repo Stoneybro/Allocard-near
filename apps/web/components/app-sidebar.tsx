@@ -1,10 +1,10 @@
 "use client";
 
+import { Skeleton } from "@/components/ui/skeleton";
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import type { WorkspaceOption } from "@/app/actions/identity";
-import { isReimbursementAgent } from "@/lib/reimbursements/shared";
 import {
   BotIcon,
   CheckIcon,
@@ -145,41 +145,27 @@ function SmartAccountAddress({ label, fullAddress, role }: { label: string; full
   };
 
   return (
-    <div className="flex flex-col gap-1 px-1">
-      <p className="px-1 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-        {role === "employee" ? "Employee Smart Account" : "Company Smart Account"}
-      </p>
-      <div className="flex items-center gap-2 rounded-md border border-border bg-muted/60 px-2.5 py-2">
-        <WalletIcon className="size-3.5 shrink-0 text-foreground/50" />
-        <span
-          className={`min-w-0 flex-1 font-mono text-xs font-medium ${
-            isPending ? "italic text-muted-foreground" : "text-foreground"
-          }`}
-        >
-          {label}
-        </span>
-        {!isPending && (
-          <button
-            type="button"
-            id="copy-smart-account-btn"
-            aria-label={copied ? "Copied" : "Copy smart account address"}
-            onClick={handleCopy}
-            className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            {copied ? (
-              <CheckIcon className="size-3.5" />
-            ) : (
-              <CopyIcon className="size-3.5" />
-            )}
-          </button>
-        )}
-      </div>
-      {isPending && (
-        <p className="px-1 text-[10px] text-muted-foreground">
-          Activate your smart account to fund and enable delegations.
-        </p>
-      )}
-    </div>
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="sm" className="w-full justify-start text-muted-foreground">
+          <WalletIcon className="size-4" />
+          {role === "employee" ? "Wallet details" : "Treasury details"}
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{role === "employee" ? "Your wallet" : "Company treasury"}</DialogTitle>
+          <DialogDescription>{isPending ? "Activate your account to enable funding and delegations." : role === "employee" ? "Your NEAR Testnet wallet address." : "Internal treasury reference on NEAR Testnet. Fund this treasury using the dashboard funding action; this reference is not a transfer address."}</DialogDescription>
+        </DialogHeader>
+        {!isPending && <>
+          <Label htmlFor="treasury-address">{role === "employee" ? "NEAR account" : "Treasury reference"}</Label>
+          <Input id="treasury-address" readOnly value={fullAddress || label} className="font-mono text-xs" />
+          <Button variant="outline" onClick={() => { void handleCopy().catch(() => setCopied(false)); }}>
+            {copied ? <CheckIcon /> : <CopyIcon />}{copied ? "Copied" : "Copy address"}
+          </Button>
+        </>}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -415,99 +401,6 @@ function CanvasSection({
             )}
           </div>
         )}
-
-        {/* Spending assistants are separate from the built-in reimbursement feature. */}
-        {role === "employee" && (
-          <>
-            {/* Your AI Agents */}
-            <div className="flex flex-col gap-1.5 mt-2">
-              <div className="flex items-center justify-between px-1 mb-0.5">
-                <span className="flex items-center gap-1.5 text-[11px] font-semibold text-foreground/80">
-                  <BotIcon className="size-3.5 text-primary/80" />
-                  Your AI Agents
-                </span>
-                {!hasLiveAgents && (
-                  <Badge variant="outline" className="h-4 px-1.5 text-[10px]">Coming soon</Badge>
-                )}
-              </div>
-              <Alert className="py-2 px-3 bg-muted/50 mb-1 border-border/60">
-                <AlertDescription className="text-[11px] text-muted-foreground leading-snug">
-                  Click an AI agent to assign a spending budget or run tasks.
-                </AlertDescription>
-              </Alert>
-              <div className="relative">
-                <div className="max-h-[22rem] overflow-y-auto space-y-1.5 pr-0.5">
-                  {displayAgents.map((agent) => (
-                    <HoverCard key={agent.id}>
-                      <HoverCardTrigger asChild>
-                        <div
-                          id={`agent-${agent.id}`}
-                          onClick={
-                            !agent.isPlaceholder && onSelectAgent
-                              ? () => onSelectAgent(agent.id)
-                              : undefined
-                          }
-                          className={`group relative flex items-center gap-2 rounded-lg border p-2 shadow-2xs transition-all duration-150 select-none ${
-                            agent.isPlaceholder
-                              ? "border-dashed border-border/50 bg-muted/20 opacity-60 cursor-default"
-                              : "border-border/80 bg-card/80 hover:border-primary/50 hover:bg-accent/60 hover:shadow-xs cursor-pointer active:scale-[0.99]"
-                          }`}
-                        >
-                          <div
-                            className={`flex size-7 shrink-0 items-center justify-center rounded-md border transition-colors ${
-                              agent.isPlaceholder
-                                ? "border-border/50 bg-muted/40 text-muted-foreground/50"
-                                : agent.status === "active"
-                                  ? "border-primary/30 bg-primary/10 text-primary"
-                                  : "border-border bg-muted/80 text-foreground/80 group-hover:border-primary/40 group-hover:bg-primary/10 group-hover:text-primary"
-                            }`}
-                          >
-                            <BotIcon className="size-3.5" />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-xs font-semibold text-foreground group-hover:text-primary transition-colors">
-                              {agent.name}
-                            </p>
-                            <p className="truncate text-[10px] text-muted-foreground">
-                              {agent.detail}
-                            </p>
-                          </div>
-                          {agent.isPlaceholder ? (
-                            <Badge variant="outline" className="h-4 px-1 text-[9px] text-muted-foreground/60 border-border/60">
-                              planned
-                            </Badge>
-                          ) : agent.status === "active" ? (
-                            <Badge variant="secondary" className="h-4 px-1.5 text-[9px] font-mono">
-                              active
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline" className="h-4 px-1.5 text-[9px] font-mono text-muted-foreground">
-                              ready
-                            </Badge>
-                          )}
-                        </div>
-                      </HoverCardTrigger>
-                      <HoverCardContent side="right" align="start" className="w-68 z-[100] shadow-md">
-                        <div className="flex flex-col gap-1.5">
-                          <div className="flex items-center gap-1.5">
-                            <BotIcon className="size-4 text-primary" />
-                            <h4 className="text-sm font-semibold leading-none">{agent.name}</h4>
-                          </div>
-                          <p className="text-xs text-muted-foreground leading-relaxed">{agent.detail}</p>
-                          {!agent.isPlaceholder && (
-                            <p className="text-[10px] text-primary/80 font-medium pt-1 border-t border-border/50">
-                              Click to configure rules or open agent drawer
-                            </p>
-                          )}
-                        </div>
-                      </HoverCardContent>
-                    </HoverCard>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </>
-        )}
       </SidebarGroupContent>
     </SidebarGroup>
   );
@@ -563,6 +456,7 @@ function LogoutMenuItem() {
 // ---------------------------------------------------------------------------
 
 export function AppSidebar({
+  loading = false,
   agents,
   companyName,
   employees,
@@ -583,6 +477,7 @@ export function AppSidebar({
   employeeReferenceId,
   ...props
 }: React.ComponentProps<typeof Sidebar> & {
+  loading?: boolean;
   agents: SidebarAgent[];
   companyName: string;
   employees: SidebarEmployee[];
@@ -624,9 +519,7 @@ export function AppSidebar({
             Workspace
           </p>
           <div className="mt-0.5">
-            <h2 className="truncate text-base font-semibold text-foreground">
-              {companyName}
-            </h2>
+            {loading ? <Skeleton className="h-6 w-36" /> : <h2 className="truncate text-base font-semibold text-foreground">{companyName}</h2>}
           </div>
           {workspaceOptions.length > 1 && onWorkspaceChange && (
             <div className="mt-2.5">
@@ -666,18 +559,18 @@ export function AppSidebar({
           )}
         </div>
 
-        <SmartAccountAddress 
+        {loading ? <Button variant="ghost" size="sm" disabled className="w-full justify-start text-muted-foreground"><WalletIcon className="size-4" />{role === "employee" ? "Wallet details" : "Treasury details"}</Button> : <SmartAccountAddress
           label={smartAccountLabel} 
           fullAddress={smartAccountAddress} 
           role={role}
-        />
+        />}
       </SidebarHeader>
 
       {/* ── CONTENT ────────────────────────────────────────────────────── */}
       <SidebarContent className="gap-0">
 
         {/* Canvas — employees + AI agents */}
-        <CanvasSection
+        {loading ? <SidebarGroup><SidebarGroupLabel>{role === "employee" ? "Spending authority" : "Employees"}</SidebarGroupLabel><SidebarGroupContent className="space-y-3 px-2">{role !== "employee" && <Button variant="outline" size="sm" disabled className="w-full"><UserPlusIcon />Add employee</Button>}{[0, 1, 2].map(row => <Skeleton key={row} className="h-12 w-full" />)}</SidebarGroupContent></SidebarGroup> : <CanvasSection
           agents={agents}
           employees={employees}
           pendingEmployees={pendingEmployees}
@@ -687,7 +580,7 @@ export function AppSidebar({
           employeesRefreshing={employeesRefreshing}
           onSelectAgent={onSelectAgent}
           role={role}
-        />
+        />}
 
       </SidebarContent>
 

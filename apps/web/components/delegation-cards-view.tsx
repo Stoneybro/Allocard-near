@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { BotIcon, UserRoundIcon, PlusIcon, NetworkIcon, ChevronRightIcon, Building2Icon } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -14,6 +15,7 @@ import type { ReactNode } from "react";
 import type { DelegationCanvasCompany, DelegationCanvasEmployee, DelegationCanvasAgent, DelegationCanvasDelegation } from "@/components/dashboard-flow-canvas";
 
 export interface DelegationCardsViewProps {
+  loading?: boolean;
   company: DelegationCanvasCompany;
   employees: DelegationCanvasEmployee[];
   agents?: DelegationCanvasAgent[];
@@ -29,7 +31,7 @@ export interface DelegationCardsViewProps {
 }
 
 
-export function DelegationCardsView({ company, employees, agents = [], delegations, onViewModeChange, headerAction, onConfigureDelegation, onRevokeDelegation, onRemoveDelegation, onAddEmployee, onAddAgent }: DelegationCardsViewProps) {
+export function DelegationCardsView({ loading = false, company, employees, agents = [], delegations, onViewModeChange, headerAction, onConfigureDelegation, onRevokeDelegation, onRemoveDelegation, onAddEmployee, onAddAgent }: DelegationCardsViewProps) {
   const [isIssueDialogOpen, setIsIssueDialogOpen] = useState(false);
   const employeeById = new Map(employees.map(employee => [employee.id, employee]));
   const agentById = new Map(agents.map(agent => [agent.id, agent]));
@@ -116,31 +118,116 @@ export function DelegationCardsView({ company, employees, agents = [], delegatio
           {/* Quick Add delegation Dialog */}
           <Dialog open={isIssueDialogOpen} onOpenChange={setIsIssueDialogOpen}>
             <DialogTrigger asChild>
-              <Button size="sm" className="h-8 gap-1.5 text-xs font-medium">
+              <Button disabled={loading} size="sm" className="h-8 gap-1.5 text-xs font-medium">
                 <PlusIcon className="size-3.5" />
                 <span>Add delegation</span>
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-md">
               <DialogHeader>
-                <DialogTitle>Add a delegation</DialogTitle>
+                <DialogTitle>Issue Virtual Card</DialogTitle>
                 <DialogDescription>
-                  Select a team member or AI agent to grant spending authority directly from the company treasury.
+                  Select a team member to grant spending authority directly from the company treasury.
                 </DialogDescription>
               </DialogHeader>
 
-              <Tabs defaultValue="employees" className="mt-2 w-full">
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="employees" className="text-xs">
-                    Team Members ({availableEmployees.length})
-                  </TabsTrigger>
-                  <TabsTrigger value="agents" className="text-xs">
-                    AI Agents ({availableAgents.length})
-                  </TabsTrigger>
-                </TabsList>
+              {availableAgents.length > 0 ? (
+                <Tabs defaultValue="employees" className="mt-2 w-full">
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="employees" className="text-xs">
+                      Team Members ({availableEmployees.length})
+                    </TabsTrigger>
+                    <TabsTrigger value="agents" className="text-xs">
+                      AI Agents ({availableAgents.length})
+                    </TabsTrigger>
+                  </TabsList>
 
-                {/* Tab: Employees */}
-                <TabsContent value="employees" className="mt-4 space-y-2 max-h-[300px] overflow-y-auto">
+                  {/* Tab: Employees */}
+                  <TabsContent value="employees" className="mt-4 space-y-2 max-h-[300px] overflow-y-auto">
+                    {availableEmployees.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-border p-6 text-center text-xs text-muted-foreground">
+                        No unassigned team members found. Invite new employees using the sidebar.
+                      </div>
+                    ) : (
+                      availableEmployees.map((emp) => (
+                        <div
+                          key={emp.id}
+                          className="flex items-center justify-between rounded-lg border border-border/80 bg-card p-3 shadow-2xs hover:border-primary/50 transition-colors"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <Avatar className="size-8">
+                              <AvatarFallback className="text-xs font-semibold bg-muted">
+                                {emp.label.slice(0, 2)}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold text-foreground truncate">
+                                {emp.label}
+                              </p>
+                              <p className="text-[11px] font-mono text-muted-foreground truncate">
+                                {emp.smartAccountAddress
+                                  ? formatWalletAddress(emp.smartAccountAddress)
+                                  : "Account pending"}
+                              </p>
+                            </div>
+                          </div>
+
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs"
+                            onClick={() => {
+                              setIsIssueDialogOpen(false);
+                              onAddEmployee?.(emp.id);
+                            }}
+                          >
+                            Select
+                          </Button>
+                        </div>
+                      ))
+                    )}
+                  </TabsContent>
+
+                  {/* Tab: Agents */}
+                  <TabsContent value="agents" className="mt-4 space-y-2 max-h-[300px] overflow-y-auto">
+                    {availableAgents.map((agent) => (
+                      <div
+                        key={agent.id}
+                        className="flex items-center justify-between rounded-lg border border-border/80 bg-card p-3 shadow-2xs hover:border-primary/50 transition-colors"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                            <BotIcon className="size-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold text-foreground truncate">
+                              {agent.name}
+                            </p>
+                            <p className="text-[11px] font-mono text-muted-foreground truncate">
+                              {agent.smartAccountAddress
+                                ? formatWalletAddress(agent.smartAccountAddress)
+                                : "Signer configured"}
+                            </p>
+                          </div>
+                        </div>
+
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          onClick={() => {
+                            setIsIssueDialogOpen(false);
+                            onAddAgent?.(agent.id);
+                          }}
+                        >
+                          Select
+                        </Button>
+                      </div>
+                    ))}
+                  </TabsContent>
+                </Tabs>
+              ) : (
+                <div className="mt-4 space-y-2 max-h-[300px] overflow-y-auto">
                   {availableEmployees.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-border p-6 text-center text-xs text-muted-foreground">
                       No unassigned team members found. Invite new employees using the sidebar.
@@ -183,70 +270,26 @@ export function DelegationCardsView({ company, employees, agents = [], delegatio
                       </div>
                     ))
                   )}
-                </TabsContent>
-
-                {/* Tab: Agents */}
-                <TabsContent value="agents" className="mt-4 space-y-2 max-h-[300px] overflow-y-auto">
-                  {availableAgents.length === 0 ? (
-                    <div className="rounded-lg border border-dashed border-border p-6 text-center text-xs text-muted-foreground">
-                      No unassigned AI agents available.
-                    </div>
-                  ) : (
-                    availableAgents.map((agent) => (
-                      <div
-                        key={agent.id}
-                        className="flex items-center justify-between rounded-lg border border-border/80 bg-card p-3 shadow-2xs hover:border-primary/50 transition-colors"
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                            <BotIcon className="size-4" />
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-xs font-semibold text-foreground truncate">
-                              {agent.name}
-                            </p>
-                            <p className="text-[11px] font-mono text-muted-foreground truncate">
-                              {agent.smartAccountAddress
-                                ? formatWalletAddress(agent.smartAccountAddress)
-                                : "Signer configured"}
-                            </p>
-                          </div>
-                        </div>
-
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 text-xs"
-                          onClick={() => {
-                            setIsIssueDialogOpen(false);
-                            onAddAgent?.(agent.id);
-                          }}
-                        >
-                          Select
-                        </Button>
-                      </div>
-                    ))
-                  )}
-                </TabsContent>
-              </Tabs>
+                </div>
+              )}
             </DialogContent>
           </Dialog>
 
           {headerAction}
-          <Button variant="ghost" size="sm" onClick={() => onViewModeChange("canvas")} className="hidden md:inline-flex"><NetworkIcon className="size-3.5" />Canvas</Button>
+          <Button disabled={loading} variant="ghost" size="sm" onClick={() => onViewModeChange("canvas")} className="hidden md:inline-flex"><NetworkIcon className="size-3.5" />Canvas</Button>
         </div>
       </div>
       <div className="border-y border-border py-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-3">
             <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted"><Building2Icon className="size-5 text-muted-foreground" /></span>
-            <div className="min-w-0"><p className="break-words text-sm font-semibold">{company.name}</p><p className="mt-0.5 text-xs text-muted-foreground">Company treasury · Source of spending authority</p></div>
+            <div className="min-w-0"><div className="break-words text-sm font-semibold">{loading ? <Skeleton className="h-5 w-36" /> : company.name}</div><p className="mt-0.5 text-xs text-muted-foreground">Company treasury · Source of spending authority</p></div>
           </div>
-          <div className="pl-13 sm:pl-0 sm:text-right"><p className="text-lg font-semibold tabular-nums">{company.ethBalance ?? "—"} <span className="text-xs font-normal text-muted-foreground">{TOKEN_SYMBOL}</span></p><p className="text-xs text-muted-foreground">Treasury balance</p></div>
+          <div className="pl-13 sm:pl-0 sm:text-right"><div className="text-lg font-semibold tabular-nums">{loading ? <Skeleton className="h-7 w-28" /> : <>{company.ethBalance ?? "—"} <span className="text-xs font-normal text-muted-foreground">{TOKEN_SYMBOL}</span></>}</div><p className="text-xs text-muted-foreground">Treasury balance</p></div>
         </div>
         <p className="mt-4 text-xs text-muted-foreground">Delegated limits share this treasury. Funds stay here until spent.</p>
       </div>
-      {roots.length > 0 ? <ul aria-label={`Delegations from ${company.name}`} className="ml-4 border-l border-border pl-3 sm:pl-6">{roots.map(root => renderDelegation(root, new Set()))}</ul> : <div className="py-10 text-center"><p className="text-sm font-medium">No delegations yet</p><p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">Add an employee or agent, then set the limits for their spending authority.</p></div>}
+      {loading ? <div className="ml-4 space-y-4 border-l border-border pl-3 sm:pl-6">{[0, 1, 2].map(row => <div key={row} className="flex items-center gap-3 border-b border-border/60 py-4"><Skeleton className="size-9 shrink-0" /><div className="flex-1 space-y-2"><Skeleton className="h-4 w-32" /><Skeleton className="h-3 w-48 max-w-full" /></div><Skeleton className="h-7 w-20" /></div>)}</div> : roots.length > 0 ? <ul aria-label={`Delegations from ${company.name}`} className="ml-4 border-l border-border pl-3 sm:pl-6">{roots.map(root => renderDelegation(root, new Set()))}</ul> : <div className="py-10 text-center"><p className="text-sm font-medium">No delegations yet</p><p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">Add an employee or agent, then set the limits for their spending authority.</p></div>}
     </section>
   );
 }

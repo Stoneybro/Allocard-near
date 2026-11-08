@@ -1,5 +1,8 @@
 "use client";
 
+import { useSettlementRefresh } from "@/hooks/use-account-queries";
+import { DashboardLoading } from "@/components/dashboard-loading";
+
 import { useDashboardData, useAccountScope } from "@/hooks/use-account-queries";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { withTimeout } from "@/lib/request-timeout";
@@ -13,6 +16,7 @@ import {
   BanIcon,
   ShieldAlertIcon,
   LayoutGridIcon,
+  Sparkles,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -27,10 +31,8 @@ import {
   formatTokenAmount,
 } from "@/lib/near";
 import {
-  updateCompanyPolicy,
   activateDelegation,
   createAgentDelegation,
-  prepareReimbursementBudget,
   createEmployeeDelegation,
   addEmployeeByEmail,
   getCompanyDashboardState,
@@ -50,16 +52,14 @@ import { DashboardFlowCanvas } from "@/components/dashboard-flow-canvas";
 import { DelegationCardsView } from "@/components/delegation-cards-view";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { DashboardShell } from "@/components/dashboard-shell";
-import { isReimbursementAgent } from "@/lib/reimbursements/shared";
-import { ReimbursementsCard } from "@/components/reimbursements-card";
 import { SectionCards } from "@/components/section-cards";
 import { SmartAccountActivationButton } from "@/components/smart-account-activation-button";
+import { TopUpTreasuryDialog } from "@/components/top-up-treasury-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
-import { DEFAULT_COMPANY_POLICY } from "@/lib/policy";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -326,6 +326,7 @@ export function EmployerClient({
 } = {}) {
   const router = useRouter();
   const auth = useAuth();
+  const refreshAfterSettlement = useSettlementRefresh();
   const currentAuthAddress = auth.status === "authenticated" ? (auth.address) : undefined;
   const { profile, setProfile, dashboardState, setDashboardState, mutate: mutateDashboard, refresh: refreshDashboard, error: queryError } =
     useDashboardData("employer", getCompanyDashboardState, initialProfile, initialDashboardState);
@@ -336,6 +337,7 @@ export function EmployerClient({
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [isPending, startTransition] = useTransition();
   const [isRefreshing, startRefreshTransition] = useTransition();
+  const [isParsingPolicy, setIsParsingPolicy] = useState(false);
   const [actionError, setError] = useState<string | null>(null);
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
 
@@ -350,6 +352,7 @@ export function EmployerClient({
   const isMobile = useIsMobile();
   const [viewMode, setViewMode] = useState<"cards" | "canvas">("cards");
   const [isToppingUp, setIsToppingUp] = useState(false);
+  const [isTopUpDialogOpen, setIsTopUpDialogOpen] = useState(false);
   const { key: accountKey } = useAccountScope();
   const treasuryBalance = useQuery({
     queryKey: [...accountKey, "treasury", company?.id, company?.smartAccountAddress],
@@ -384,7 +387,7 @@ export function EmployerClient({
           toast.success("Treasury Pools Funded", {
             description: "1.7 NEAR deposited across storage reserve, operating budget, and native treasury on NEAR Testnet.",
           });
-          await fetchBalance();
+          refreshAfterSettlement();
           return;
         }
       }
@@ -394,7 +397,7 @@ export function EmployerClient({
     } finally {
       setIsToppingUp(false);
     }
-  }, [company, auth, fetchBalance]);
+  }, [company, auth, refreshAfterSettlement]);
 
   // Unused allowances do not reserve treasury capital.
   const availableBalanceNear = useMemo(() => {
@@ -424,7 +427,7 @@ export function EmployerClient({
   // Extract the configured spending allowance and remaining balance for each delegation.
   const canvasDelegations = useMemo(() => {
     if (!dashboardState) return [];
-    return dashboardState.delegations.filter(d => !dashboardState.agents.some(a => a.id === d.delegateeId && isReimbursementAgent(a))).map((delegation) => {
+    return dashboardState.delegations.map((delegation) => {
       const allowanceCaveat = delegation.caveats.find(
         (c) => c.caveatType === "nativeTokenTransferAmount",
       );
@@ -465,17 +468,6 @@ export function EmployerClient({
     [mutateDashboard],
   );
 
-  const reimbursementSetup = useMutation({
-    mutationFn: () => prepareReimbursementBudget(currentAuthAddress!), retry: false,
-    onSuccess: async result => {
-      await refreshDashboard();
-      setSelectedDelegationId(result.delegation.id);
-      setCaveatForm(formFromDelegation(result.delegation));
-      setFormErrors({});
-    },
-    onError: caught => toast.error(caught.message),
-  });
-
   const handleConfigureDelegation = useCallback(
     (delegationId: string) => {
       const delegation =
@@ -489,9 +481,50 @@ export function EmployerClient({
     [dashboardState?.delegations],
   );
 
-  const isReimbursementBudget = Boolean(selectedDelegation && dashboardState?.agents.some(
-    agent => agent.id === selectedDelegation.delegateeId && isReimbursementAgent(agent),
-  ));
+  const handleParsePolicyPrompt = async () => {
+    const promptText = caveatForm.policyPrompt.trim();
+    if (!promptText) {
+      toast.error("Please enter a natural language instruction first");
+      return;
+    }
+    setIsParsingPolicy(true);
+    try {
+      const delegateAddress = selectedDelegation ? resolveDelegateAddress(selectedDelegation) : undefined;
+      const response = await fetch("/api/policies/parse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: promptText,
+          delegateAccount: delegateAddress,
+          companyId: company?.id,
+        }),
+      });
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || "Failed to parse instructions with AI");
+      }
+      const result = await response.json();
+      if (result.formValues) {
+        setCaveatForm((prev) => ({
+          ...prev,
+          maxAmountNear: result.formValues.maxAmountNear || prev.maxAmountNear,
+          period: result.formValues.period || prev.period,
+          periodAmountNear: result.formValues.periodAmountNear || prev.periodAmountNear,
+          perTransactionCapNear: result.formValues.perTransactionCapNear || prev.perTransactionCapNear,
+          allowedTargets: result.formValues.allowedTargets || prev.allowedTargets,
+        }));
+        toast.success("Card Limits Configured by NEAR AI", {
+          description: "Limits, recurring period, and caveats were parsed from your prompt.",
+        });
+      }
+    } catch (err) {
+      toast.error("AI Parsing Failed", {
+        description: err instanceof Error ? err.message : "Could not compile natural language prompt.",
+      });
+    } finally {
+      setIsParsingPolicy(false);
+    }
+  };
 
 
   const handleDropEmployee = useCallback(
@@ -572,8 +605,8 @@ export function EmployerClient({
           delegationId,
         });
 
-        toast.success(isReimbursementAgent(agent) ? "Reimbursement payouts stopped" : "Delegation Revoked", {
-          description: isReimbursementAgent(agent) ? "New claims cannot be paid under this reimbursement budget. Set up a new budget to resume payouts." : `Spending authority for ${targetName} has been revoked on NEAR Testnet.`,
+        toast.success("Delegation Revoked", {
+          description: `Spending authority for ${targetName} has been revoked on NEAR Testnet.`,
           action: targetAddress ? {
             label: "View Explorer",
             onClick: () => window.open(getAddressExplorerUrl(targetAddress), "_blank"),
@@ -773,16 +806,8 @@ export function EmployerClient({
         );
         setSelectedDelegationId(null);
 
-        const toastTitle = isReimbursementBudget
-          ? "Reimbursement budget authorized"
-          : "Delegation Activated";
-
-        const toastDesc = isReimbursementBudget
-          ? `Employees can now submit claims against the ${caveatForm.maxAmountNear} ${TOKEN_SYMBOL} reimbursement budget.`
-          : `Assigned ${caveatForm.maxAmountNear} ${TOKEN_SYMBOL} spending limit to ${targetName} on NEAR Testnet`;
-
-        toast.success(toastTitle, {
-          description: toastDesc,
+        toast.success("Delegation Activated", {
+          description: `Assigned ${caveatForm.maxAmountNear} ${TOKEN_SYMBOL} spending limit to ${targetName} on NEAR Testnet`,
           action: {
             label: "View Explorer",
             onClick: () => window.open(getAddressExplorerUrl(delegateAddress), "_blank"),
@@ -817,7 +842,7 @@ export function EmployerClient({
           action: { label: "Copy app link", onClick: () => { void navigator.clipboard.writeText(window.location.origin).catch(() => toast.info(window.location.origin)); } },
         });
       }
-      updateDashboard(await getCompanyDashboardState(addr));
+      void refreshDashboard().catch(() => toast.error("Employee added. Refresh the team list to see the update."));
     } catch (caught) {
       toast.error("Invitation Failed", {
         description: caught instanceof Error ? caught.message : "Could not add employee.",
@@ -826,25 +851,15 @@ export function EmployerClient({
     } finally {
       setIsAddingEmployee(false);
     }
-  }, [currentAuthAddress, profile, updateDashboard]);
+  }, [currentAuthAddress, profile, refreshDashboard]);
 
   if (auth.status === "unauthenticated") {
     return <ConnectRequiredCard />;
   }
 
-  if (auth.status === "connecting") {
-    return (
-      <div className="flex h-full min-h-screen items-center justify-center p-6 bg-white">
-        <div className="flex flex-col items-center gap-6 text-center">
-          <img src="/AllocardLogoBlack.svg" alt="Allocard Logo" className="w-16 h-16 object-contain mb-4" />
-          <div className="w-10 h-10 border-4 border-[#eaeaea] border-t-[#111] rounded-full animate-spin"></div>
-          <p className="text-xl font-bold text-[#111] tracking-[-0.02em]">Connecting wallet...</p>
-        </div>
-      </div>
-    );
-  }
+  if (auth.status === "connecting") return <DashboardLoading />;
 
-  if (error) {
+  if (error && !dashboardState) {
     return (
       <div className="flex h-full min-h-screen flex-col items-center justify-center gap-8 bg-white p-8">
         <div className="flex flex-col items-center gap-6 text-center max-w-md">
@@ -872,24 +887,7 @@ export function EmployerClient({
   }
 
   if (!dashboardState || !company) {
-    return (
-      <div className="flex h-full min-h-screen flex-col items-center justify-center gap-8 bg-white">
-        <div className="flex flex-col items-center gap-6">
-          <svg className="animate-spin text-[#ccc]" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path strokeLinecap="round" d="M12 2a10 10 0 0 1 10 10" className="opacity-100 text-[#111]" />
-            <path strokeLinecap="round" d="M12 2a10 10 0 0 0-10 10" className="opacity-20" />
-          </svg>
-          <div className="flex flex-col items-center gap-2 text-center">
-            <p className="text-xl font-semibold text-[#111]">
-              {isPending ? "Loading company dashboard" : "Verifying access"}
-            </p>
-            <p className="text-sm text-[#999]">
-              {isPending ? "Fetching your delegations and employees..." : "Checking your account status..."}
-            </p>
-          </div>
-        </div>
-      </div>
-    );
+    return <DashboardLoading />;
   }
 
   return (
@@ -941,6 +939,7 @@ export function EmployerClient({
       title="Company dashboard"
     >
       <div className="flex min-h-full flex-col gap-4">
+        {error && <p role="alert" className="text-sm text-muted-foreground">{error}</p>}
         {/* Smart account activation panel */}
         {company && !company.smartAccountAddress && (
           <div className="flex items-center justify-center rounded-lg border border-border bg-muted/40 p-4">
@@ -953,16 +952,25 @@ export function EmployerClient({
           </div>
         )}
 
-        <ReimbursementsCard role="employer" program={dashboardState.reimbursement} accountReady={!!company.smartAccountAddress}
-          busy={reimbursementSetup.isPending} onOpen={() => reimbursementSetup.mutate()} onRefresh={() => { void refreshDashboard(); }} />
         <SectionCards
           employeeCount={dashboardState.summary.employeeCount}
+          balanceLoading={treasuryBalance.isPending && !!company.smartAccountAddress}
           smartAccountBalance={ethBalance ?? "—"}
           activeDelegationCount={dashboardState.summary.activeDelegationCount}
           delegatedNativeNearAllowance={
             dashboardState.summary.delegatedNativeNearAllowance
           }
-          onTopUp={handleTopUpTreasury}
+          onTopUp={() => setIsTopUpDialogOpen(true)}
+          isToppingUp={isToppingUp}
+        />
+
+        <TopUpTreasuryDialog
+          open={isTopUpDialogOpen}
+          onOpenChange={setIsTopUpDialogOpen}
+          treasuryAddress={company.smartAccountAddress}
+          adminAddress={currentAuthAddress}
+          currentBalance={ethBalance}
+          onDirectTopUp={handleTopUpTreasury}
           isToppingUp={isToppingUp}
         />
 
@@ -970,7 +978,6 @@ export function EmployerClient({
           <TabsList className="mb-4">
             <TabsTrigger value="canvas">Delegations</TabsTrigger>
             <TabsTrigger value="activity">Activity Log</TabsTrigger>
-            <TabsTrigger value="settings">Company Policy</TabsTrigger>
           </TabsList>
 
           <TabsContent value="canvas" className="mt-0">
@@ -1006,7 +1013,7 @@ export function EmployerClient({
                   </div>
                 }
                 employees={canvasEmployees}
-                agents={dashboardState.agents.filter(agent => !isReimbursementAgent(agent)).map((agent) => ({
+                agents={dashboardState.agents.map((agent) => ({
                   id: agent.id,
                   name: agent.name,
                   smartAccountAddress: agent.smartAccountAddress,
@@ -1036,7 +1043,7 @@ export function EmployerClient({
               <DelegationCardsView
                 company={canvasCompany ?? company}
                 employees={canvasEmployees}
-                agents={dashboardState.agents.filter(agent => !isReimbursementAgent(agent)).map((agent) => ({
+                agents={dashboardState.agents.map((agent) => ({
                   id: agent.id,
                   name: agent.name,
                   smartAccountAddress: agent.smartAccountAddress,
@@ -1073,25 +1080,10 @@ export function EmployerClient({
             <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-6">
               <h3 className="text-lg font-semibold mb-4">Employer Activity Log</h3>
               <p className="text-sm text-muted-foreground mb-6">
-                A unified view of all direct employee spends, agent bookings, and reimbursements within your company.
+                A unified view of all direct employee spends and corporate card delegations within your company.
               </p>
               <ActivityLogTable companyId={company.id} />
             </div>
-          </TabsContent>
-
-          <TabsContent value="settings" className="mt-0">
-            <CompanyPolicyEditor
-              companyPolicy={dashboardState?.companyPolicy ?? null}
-              onSave={async (newPolicy) => {
-                await mutateDashboard(() => updateCompanyPolicy({
-                  walletAddress: currentAuthAddress as string,
-                  companyPolicy: newPolicy,
-                }));
-                toast.success("Company Policy Updated", {
-                  description: "AI guidelines and spending policy updated successfully.",
-                });
-              }}
-            />
           </TabsContent>
         </Tabs>
       </div>
@@ -1108,17 +1100,11 @@ export function EmployerClient({
       >
         <DrawerContent>
           <DrawerHeader>
-            <DrawerTitle>
-              {isReimbursementBudget
-                ? "Reimbursement budget & policy"
-                : "Spending Limits & Rules"}
-            </DrawerTitle>
+            <DrawerTitle>Spending Limits & Rules</DrawerTitle>
             <DrawerDescription>
-              {isReimbursementBudget
-                ? "Authorize company funds for approved employee claims. To change an active budget, stop payouts and set up a new budget."
-                : selectedDelegation?.status === "active"
-                  ? "These rules are currently active and enforced on-chain."
-                  : "Configure exactly what this delegatee is allowed to do with the company's funds."}
+              {selectedDelegation?.status === "active"
+                ? "These rules are currently active and enforced on-chain."
+                : "Configure exactly what this delegatee is allowed to do with the company's funds."}
             </DrawerDescription>
           </DrawerHeader>
           <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-4 py-2">
@@ -1136,17 +1122,12 @@ export function EmployerClient({
             {/* Section 1: Overall Spending Limits */}
             <div className="flex flex-col gap-4">
               <h4 className="text-sm font-semibold text-foreground">
-                {isReimbursementBudget
-                  ? "1. Reimbursement budget"
-                  : "1. Overall Spending Limits"}
+                {"1. Overall Spending Limits"}
               </h4>
 
               <div className="flex flex-col gap-2">
                 <Label htmlFor="max-amount">
-                  {isReimbursementBudget
-                    ? "Total reimbursement budget"
-                    : "Lifetime Spending Limit"}{" "}
-                  ({TOKEN_SYMBOL})
+                  {"Lifetime Spending Limit"} ({TOKEN_SYMBOL})
                 </Label>
                 <Input
                   id="max-amount"
@@ -1165,9 +1146,7 @@ export function EmployerClient({
                 ) : (
                   <div className="text-[0.8rem] text-muted-foreground space-y-1">
                     <p>
-                      {isReimbursementBudget
-                        ? "The total amount available for employee claims under this authorization."
-                        : <>The absolute maximum amount of {TOKEN_SYMBOL} this delegatee can spend in total over the lifetime of this delegation.</>}
+                      The absolute maximum amount of {TOKEN_SYMBOL} this delegatee can spend in total over the lifetime of this delegation.
                     </p>
                     {availableBalanceNear !== null && selectedDelegation?.status !== "active" && (
                       <p>
@@ -1178,41 +1157,39 @@ export function EmployerClient({
                 )}
               </div>
 
-              {!isReimbursementBudget && (
-                <div className="flex flex-col gap-2 mt-2">
-                  <Label>
-                    {"Recurring Allowance"}
-                  </Label>
-                  <Select
-                    value={caveatForm.period}
-                    disabled={selectedDelegation?.status === "active"}
-                    onValueChange={(period) =>
-                      setCaveatForm((form) => ({
-                        ...form,
-                        period: period as CaveatForm["period"],
-                      }))
-                    }
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectItem value="none">None</SelectItem>
-                        <SelectItem value="hourly">Hourly</SelectItem>
-                        <SelectItem value="daily">Daily</SelectItem>
-                        <SelectItem value="weekly">Weekly</SelectItem>
-                        <SelectItem value="monthly">30 days (fixed)</SelectItem>
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-[0.8rem] text-muted-foreground">
-                    {"Automatically reset their spending limit on a recurring schedule."}
-                  </p>
-                </div>
-              )}
+              <div className="flex flex-col gap-2 mt-2">
+                <Label>
+                  {"Recurring Allowance"}
+                </Label>
+                <Select
+                  value={caveatForm.period}
+                  disabled={selectedDelegation?.status === "active"}
+                  onValueChange={(period) =>
+                    setCaveatForm((form) => ({
+                      ...form,
+                      period: period as CaveatForm["period"],
+                    }))
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="none">None</SelectItem>
+                      <SelectItem value="hourly">Hourly</SelectItem>
+                      <SelectItem value="daily">Daily</SelectItem>
+                      <SelectItem value="weekly">Weekly</SelectItem>
+                      <SelectItem value="monthly">30 days (fixed)</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <p className="text-[0.8rem] text-muted-foreground">
+                  {"Automatically reset their spending limit on a recurring schedule."}
+                </p>
+              </div>
 
-              {!isReimbursementBudget && caveatForm.period !== "none" && (
+              {caveatForm.period !== "none" && (
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="period-amount">
                     {`Allowance per Period (${TOKEN_SYMBOL})`}
@@ -1273,132 +1250,137 @@ export function EmployerClient({
                 )}
               </div>
 
-              {!isReimbursementBudget && (
-                <div className="flex flex-col gap-2 mt-2">
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="limited-calls-enabled"
-                      checked={caveatForm.limitedCallsEnabled}
-                      disabled={selectedDelegation?.status === "active"}
-                      onCheckedChange={(checked) =>
-                        setCaveatForm((form) => ({
-                          ...form,
-                          limitedCallsEnabled: checked === true,
-                        }))
-                      }
-                    />
-                    <Label htmlFor="limited-calls-enabled">
-                      {"Limit Total Transactions"}
-                    </Label>
-                  </div>
-                  {caveatForm.limitedCallsEnabled && (
-                    <>
-                      <Input
-                        value={caveatForm.limitedCalls}
-                        disabled={selectedDelegation?.status === "active"}
-                        onChange={(event) =>
-                          setCaveatForm((form) => ({
-                            ...form,
-                            limitedCalls: event.target.value,
-                          }))
-                        }
-                        className={cn("mt-1", formErrors.limitedCalls ? "border-destructive" : "")}
-                      />
-                      {formErrors.limitedCalls ? (
-                        <p className="text-[0.8rem] text-destructive">{formErrors.limitedCalls}</p>
-                      ) : (
-                        <p className="text-[0.8rem] text-muted-foreground">
-                          {"Restrict the delegatee to a specific number of total transactions."}
-                        </p>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {!isReimbursementBudget && <Separator />}
-
-            {/* Section 3: Target & Address Restrictions */}
-            {!isReimbursementBudget && (
-              <div className="flex flex-col gap-4">
-                <h4 className="text-sm font-semibold text-foreground">
-                  {"3. Address Whitelist"}
-                </h4>
-
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="targets">
-                    {"Permitted Addresses"}
-                  </Label>
-                  <Input
-                    id="targets"
-                    value={caveatForm.allowedTargets}
-                    className={formErrors.allowedTargets ? "border-destructive" : ""}
+              <div className="flex flex-col gap-2 mt-2">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="limited-calls-enabled"
+                    checked={caveatForm.limitedCallsEnabled}
                     disabled={selectedDelegation?.status === "active"}
-                    onChange={(event) =>
+                    onCheckedChange={(checked) =>
                       setCaveatForm((form) => ({
                         ...form,
-                        allowedTargets: event.target.value,
+                        limitedCallsEnabled: checked === true,
                       }))
                     }
-                    placeholder={
-                      "One address per line or comma-separated"
-                    }
                   />
-                  {formErrors.allowedTargets ? (
-                    <p className="text-[0.8rem] text-destructive">{formErrors.allowedTargets}</p>
-                  ) : formErrors.allowedTargetsWarning ? (
-                    <p className="text-[0.8rem] text-amber-500">{formErrors.allowedTargetsWarning}</p>
-                  ) : (
-                    <p className="text-[0.8rem] text-muted-foreground">
-                      {"Only allow sends to these addresses. Leave blank to allow any destination (less secure)."}
-                    </p>
-                  )}
+                  <Label htmlFor="limited-calls-enabled">
+                    {"Limit Total Transactions"}
+                  </Label>
                 </div>
+                {caveatForm.limitedCallsEnabled && (
+                  <>
+                    <Input
+                      value={caveatForm.limitedCalls}
+                      disabled={selectedDelegation?.status === "active"}
+                      onChange={(event) =>
+                        setCaveatForm((form) => ({
+                          ...form,
+                          limitedCalls: event.target.value,
+                        }))
+                      }
+                      className={cn("mt-1", formErrors.limitedCalls ? "border-destructive" : "")}
+                    />
+                    {formErrors.limitedCalls ? (
+                      <p className="text-[0.8rem] text-destructive">{formErrors.limitedCalls}</p>
+                    ) : (
+                      <p className="text-[0.8rem] text-muted-foreground">
+                        {"Restrict the delegatee to a specific number of total transactions."}
+                      </p>
+                    )}
+                  </>
+                )}
               </div>
-            )}
+            </div>
 
             <Separator />
 
-            {/* Section 4: AI Policy Prompt */}
-            {selectedDelegation?.delegateeType === "agent" && (
-              <div className="flex flex-col gap-4">
-                <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                  <BotIcon className="h-4 w-4 text-chart-5" />
-                  {isReimbursementBudget
-                      ? "3. Reimbursement Policy Rules"
-                      : "4. AI Policy Prompt"}
-                </h4>
+            {/* Section 3: Target & Address Restrictions */}
+            <div className="flex flex-col gap-4">
+              <h4 className="text-sm font-semibold text-foreground">
+                {"3. Address Whitelist"}
+              </h4>
 
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="policy-prompt">
-                    {isReimbursementBudget
-                        ? "Policy Guidelines"
-                        : "Natural Language Rules"}
-                  </Label>
-                  <Textarea
-                    id="policy-prompt"
-                    value={caveatForm.policyPrompt}
-                    disabled={selectedDelegation?.status === "active"}
-                    onChange={(event) =>
-                      setCaveatForm((form) => ({
-                        ...form,
-                        policyPrompt: event.target.value,
-                      }))
-                    }
-                    placeholder={
-                      isReimbursementBudget
-                          ? "e.g. Do not reimburse alcohol. Limit meals to $50. Flights must be economy."
-                          : "e.g. Only allow cloud infrastructure purchases. Reject any request over $500 without manager approval."
-                    }
-                    className="min-h-[100px] resize-none"
-                  />
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="targets">
+                  {"Permitted Addresses"}
+                </Label>
+                <Input
+                  id="targets"
+                  value={caveatForm.allowedTargets}
+                  className={formErrors.allowedTargets ? "border-destructive" : ""}
+                  disabled={selectedDelegation?.status === "active"}
+                  onChange={(event) =>
+                    setCaveatForm((form) => ({
+                      ...form,
+                      allowedTargets: event.target.value,
+                    }))
+                  }
+                  placeholder={
+                    "One address per line or comma-separated"
+                  }
+                />
+                {formErrors.allowedTargets ? (
+                  <p className="text-[0.8rem] text-destructive">{formErrors.allowedTargets}</p>
+                ) : formErrors.allowedTargetsWarning ? (
+                  <p className="text-[0.8rem] text-amber-500">{formErrors.allowedTargetsWarning}</p>
+                ) : (
                   <p className="text-[0.8rem] text-muted-foreground">
-                    {"These additional rules are used with your company policy to assess expenses. The authorized payment limits still apply."}
+                    {"Only allow sends to these addresses. Leave blank to allow any destination (less secure)."}
                   </p>
-                </div>
+                )}
               </div>
-            )}
+            </div>
+
+            <Separator />
+
+            {/* Section 4: Natural Language Card Prompt */}
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-primary" />
+                  {"4. Natural Language Card Rules"}
+                </h4>
+                {selectedDelegation?.status !== "active" && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleParsePolicyPrompt}
+                    disabled={isParsingPolicy || !caveatForm.policyPrompt.trim()}
+                    className="h-7 text-xs gap-1.5"
+                  >
+                    {isParsingPolicy ? (
+                      <LoaderCircleIcon className="size-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="size-3.5 text-primary" />
+                    )}
+                    {isParsingPolicy ? "Parsing..." : "Auto-fill with AI"}
+                  </Button>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="policy-prompt">
+                  Describe spending limits in plain English
+                </Label>
+                <Textarea
+                  id="policy-prompt"
+                  value={caveatForm.policyPrompt}
+                  disabled={selectedDelegation?.status === "active"}
+                  onChange={(event) =>
+                    setCaveatForm((form) => ({
+                      ...form,
+                      policyPrompt: event.target.value,
+                    }))
+                  }
+                  placeholder="e.g. Allow up to 500 NEAR monthly with a 100 NEAR per-transaction limit for official vendors."
+                  className="min-h-[80px] resize-none text-xs"
+                />
+                <p className="text-[0.8rem] text-muted-foreground">
+                  Type your instructions and tap <strong>Auto-fill with AI</strong> to instantly configure the on-chain parameters.
+                </p>
+              </div>
+            </div>
 
             <div className="pb-4"></div>
           </div>
@@ -1409,18 +1391,14 @@ export function EmployerClient({
                   <AlertDialogTrigger asChild>
                     <Button variant="destructive" disabled={isPending}>
                       <BanIcon className="size-4 mr-2" />
-                      {isReimbursementBudget
-                          ? "Stop reimbursement payouts"
-                          : "Revoke delegation"}
+                      {"Revoke delegation"}
                     </Button>
                   </AlertDialogTrigger>
                   <AlertDialogContent>
                     <AlertDialogHeader>
                       <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
                       <AlertDialogDescription>
-                        {isReimbursementBudget
-                            ? "This stops new reimbursement payouts under the current budget. Previous payments stay in your activity log. Authorize a new budget to resume payouts."
-                            : "This will permanently revoke this active delegation on NEAR Testnet. All child AI agents under this delegation will also lose spending authority immediately."}
+                        {"This will permanently revoke this active delegation on NEAR Testnet."}
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
@@ -1433,9 +1411,7 @@ export function EmployerClient({
                         }}
                         className="bg-red-600 text-white hover:bg-red-700"
                       >
-                        {isReimbursementBudget
-                            ? "Stop payouts"
-                            : "Yes, revoke delegation"}
+                        {"Yes, revoke delegation"}
                       </AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>
@@ -1447,9 +1423,7 @@ export function EmployerClient({
                   ) : (
                     <ShieldCheckIcon className="size-4 mr-2" />
                   )}
-                  {isReimbursementBudget
-                      ? "Authorize reimbursement budget"
-                      : "Activate delegation"}
+                  {"Activate delegation"}
                 </Button>
               ) : null}
             </DrawerFooter>
@@ -1460,87 +1434,4 @@ export function EmployerClient({
   );
 }
 
-
-
-function CompanyPolicyEditor({
-  companyPolicy,
-  onSave,
-}: {
-  companyPolicy: string | null;
-  onSave: (policy: string) => Promise<void>;
-}) {
-  const [draft, setDraft] = useState(companyPolicy ?? DEFAULT_COMPANY_POLICY);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-
-  const hasChanges = draft !== (companyPolicy ?? DEFAULT_COMPANY_POLICY);
-
-  const handleSave = async () => {
-    setSaving(true);
-    setSaveError(null);
-    try {
-      await onSave(draft);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
-    } catch (caught) {
-      setSaveError(caught instanceof Error ? caught.message : "Could not save company policy.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleReset = () => {
-    setDraft(DEFAULT_COMPANY_POLICY);
-  };
-
-  return (
-    <div className="rounded-lg border border-neutral-200 bg-white p-6 shadow-sm">
-      <div className="mb-6">
-        <h3 className="text-lg font-semibold text-neutral-800">Company Expense Policy</h3>
-        <p className="mt-1 text-sm text-neutral-500">
-          This policy is the single source of truth for all Qwen AI checks:
-          reimbursements, direct spends, and agent decisions. Edit once, applied everywhere.
-        </p>
-      </div>
-
-      {saveError && <p role="alert" className="mb-3 text-sm text-destructive">{saveError}</p>}
-      <Textarea
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        className="min-h-[280px] font-mono text-sm resize-y"
-        placeholder="Enter your company expense policy..."
-      />
-
-      <div className="mt-4 flex items-center justify-between">
-        <div className="flex gap-2">
-          <Button
-            onClick={handleSave}
-            disabled={!hasChanges || saving}
-            size="sm"
-          >
-            {saving ? "Saving..." : saved ? "✓ Saved" : "Save Policy"}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleReset}
-          >
-            Reset to Default
-          </Button>
-        </div>
-        {saved && (
-          <span className="text-xs text-green-600 font-medium">
-            Policy saved: all Qwen AI checks now use this policy.
-          </span>
-        )}
-        {!hasChanges && !saved && (
-          <span className="text-xs text-neutral-400">
-            No changes to save.
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
 
