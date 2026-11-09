@@ -1,6 +1,7 @@
 import { Buffer } from "buffer";
 import { parseTreasuryReference, type ExecuteRequest } from "@allocard/delegation-sdk";
 import { sponsoredAdapterDelegate, canonicalSponsorJson, sponsoredCompanyDelegate, sponsoredDelegate, sponsoredSigningBytes, type SponsoredAdapterPermission, type SponsoredCompany, type SponsoredPayment } from "./near-sponsored-action";
+import { paymentSubmission, TransactionNotSubmittedError } from "./payment-submission";
 
 async function sponsorRequest(operation: "prepare" | "submit" | "prepare-company" | "submit-company" | "prepare-adapter" | "submit-adapter", body: object) {
   let response: Response;
@@ -14,12 +15,17 @@ async function sponsorRequest(operation: "prepare" | "submit" | "prepare-company
     throw new Error("Gas sponsorship could not be confirmed. Retry this same action to check its status.");
   }
   const result = await response.json().catch(() => null);
-  if (!response.ok || !result) throw new Error(result?.error ?? "Gas sponsorship could not be confirmed. Retry the same action to check its status.");
+  if (!response.ok || !result) {
+    const message=result?.error ?? "Gas sponsorship could not be confirmed. Retry the same action to check its status.";
+    if(result?.submissionState==="not_submitted")throw new TransactionNotSubmittedError(message);
+    throw new Error(message);
+  }
   return result;
 }
 
 export async function sponsoredExecute(accountId: string, receiverId: string, args: { request: ExecuteRequest; company_id?: string }, signHash: (hash: `0x${string}`) => Promise<`0x${string}`>) {
   const payment: SponsoredPayment = { treasury: args.company_id ? `${receiverId}#${args.company_id}` : receiverId, request: args.request };
+  const noteSubmission=paymentSubmission(accountId,payment.treasury,payment.request.request_id);
   const prepared = await sponsorRequest("prepare", payment);
   if (!prepared.enabled) return null;
   // Recovery returns the original confirmed transaction, without a fresh signature.
@@ -29,7 +35,10 @@ export async function sponsoredExecute(accountId: string, receiverId: string, ar
   const digest = await crypto.subtle.digest("SHA-256", sponsoredSigningBytes(delegate));
   const signature = await signHash(`0x${Buffer.from(digest).toString("hex")}`);
   if (!/^0x[0-9a-fA-F]{128}$/.test(signature)) throw new Error("Privy did not return an Ed25519 signature");
-  const result = await sponsorRequest("submit", { ...payment, nonce: prepared.nonce, maxBlockHeight: prepared.maxBlockHeight, signature });
+  noteSubmission(true);
+  let result;
+  try { result = await sponsorRequest("submit", { ...payment, nonce: prepared.nonce, maxBlockHeight: prepared.maxBlockHeight, signature }); }
+  catch(caught){if(caught instanceof TransactionNotSubmittedError)noteSubmission(false);throw caught;}
   if (!result.outcome) throw new Error("Sponsored payment has no confirmed outcome. Retry the same action to check its status.");
   return result.outcome;
 }

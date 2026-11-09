@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Loader2, Moon, Sun } from "lucide-react";
+import { ArrowRight, Loader2 } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 import { useQueryClient } from "@tanstack/react-query";
 import { accountQueryKey } from "@/lib/query-keys";
@@ -23,25 +23,6 @@ export function LandingPageClient({
   initialWalletAddress?: string | null;
 } = {}) {
   const router = useRouter();
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
-
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("allocard-landing-theme");
-      if (saved === "light" || saved === "dark") {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setTheme(saved);
-      }
-    } catch { /* Keep the default when browser storage is unavailable. */ }
-  }, []);
-
-  const toggleTheme = () => {
-    const next = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    try {
-      localStorage.setItem("allocard-landing-theme", next);
-    } catch { /* Switching still works when browser storage is unavailable. */ }
-  };
   const auth = useAuth();
   const queryClient = useQueryClient();
   const requestedLogin = useRef(false);
@@ -132,7 +113,7 @@ export function LandingPageClient({
     if (phase === "routing") {
       return (
         <span className="inline-flex items-center justify-center gap-2">
-          <Loader2 className="size-4 animate-spin text-[var(--landing-tone-000000)]" />
+          <Loader2 className="size-4 animate-spin text-[#ffffff]" />
           <span>Opening dashboard…</span>
         </span>
       );
@@ -154,17 +135,17 @@ export function LandingPageClient({
   };
 
   return (
-    <div data-theme={theme} className="landing landing-restored min-h-screen font-sans antialiased">
+    <div className="landing landing-restored min-h-screen font-sans antialiased">
 
       {(routeError || (auth.status === "unauthenticated" && auth.error)) && (
-        <p role="alert" className="fixed bottom-4 left-4 right-4 z-50 rounded-md border bg-[var(--landing-tone-000000)] p-4 text-sm text-red-700 shadow-lg">{routeError || (auth.status === "unauthenticated" ? auth.error : "")}</p>
+        <p role="alert" className="fixed bottom-4 left-4 right-4 z-50 rounded-md border bg-[#ffffff] p-4 text-sm text-red-700 shadow-lg">{routeError || (auth.status === "unauthenticated" ? auth.error : "")}</p>
       )}
       <a className="landing-skip" href="#main">Skip to content</a>
 
       {/* ── Nav ── */}
-      <nav className="fixed top-0 inset-x-0 z-50 border-b border-[var(--landing-tone-151515)] bg-[var(--landing-tone-000000)]/80 backdrop-blur-xl">
+      <nav className="fixed top-0 inset-x-0 z-50 border-b border-[#eaeaea] bg-[#ffffff]/80 backdrop-blur-xl">
         <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-          <a href="#" className="flex items-center gap-2 text-xl font-bold tracking-tight text-[var(--landing-tone-eeeeee)]">
+          <a href="#" className="flex items-center gap-2 text-xl font-bold tracking-tight text-[#111111]">
             <Image src="/AllocardLogoBlack.svg" alt="Allocard Logo" width={28} height={28} />
             Allocard
           </a>
@@ -173,35 +154,24 @@ export function LandingPageClient({
               href="https://github.com/Stoneybro/Allocard"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-sm text-[var(--landing-tone-999999)] hover:text-[var(--landing-tone-eeeeee)] transition-colors"
+              className="text-sm text-[#666666] hover:text-[#111111] transition-colors"
             >
               GitHub
             </a>
-            <a href="" onClick={(event) => event.preventDefault()} className="text-sm text-[var(--landing-tone-999999)] hover:text-[var(--landing-tone-eeeeee)] transition-colors">Documentation</a>
+            <a href="" onClick={(event) => event.preventDefault()} className="text-sm text-[#666666] hover:text-[#111111] transition-colors">Documentation</a>
           </div>
-          <div className="landing-nav-actions">
-          <button
-            id="theme-toggle"
-            type="button"
-            onClick={toggleTheme}
-            aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-            title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-          >
-            {theme === "dark" ? <Sun className="size-4" aria-hidden="true" /> : <Moon className="size-4" aria-hidden="true" />}
-          </button>
           <Button
             id="nav-cta"
             onClick={() => handleGetStarted("nav")}
             disabled={isBusy}
             className={`h-8 px-4 rounded-md text-sm font-medium transition-colors disabled:opacity-50 cursor-pointer ${
               isAuthenticated
-                ? "bg-[var(--landing-tone-eeeeee)] text-[var(--landing-tone-000000)] hover:bg-[var(--landing-tone-cccccc)]"
-                : "border border-[var(--landing-tone-151515)] bg-[var(--landing-tone-000000)] text-[var(--landing-tone-eeeeee)] hover:bg-[var(--landing-tone-080808)] hover:border-[var(--landing-tone-333333)]"
+                ? "bg-[#111111] text-[#ffffff] hover:bg-[#333333]"
+                : "border border-[#eaeaea] bg-[#ffffff] text-[#111111] hover:bg-[#f7f7f7] hover:border-[#cccccc]"
             }`}
           >
             {renderNavButtonContent()}
           </Button>
-          </div>
         </div>
       </nav>
 
@@ -209,11 +179,11 @@ export function LandingPageClient({
 
         {/* ── Hero ── */}
         <section id="hero" className="max-w-6xl mx-auto px-6 pt-32 pb-16 flex flex-col items-center text-center">
-          <h1 className="text-5xl sm:text-7xl font-bold tracking-[-0.04em] leading-[1.05] max-w-4xl mb-6 text-[var(--landing-tone-eeeeee)]">
+          <h1 className="text-5xl sm:text-7xl font-bold tracking-[-0.04em] leading-[1.05] max-w-4xl mb-6 text-[#111111]">
             The corporate expense system<br className="hidden sm:block" /> for teams and autonomous AI.
           </h1>
 
-          <p className="max-w-xl text-base sm:text-lg text-[var(--landing-tone-999999)] leading-relaxed mb-10">
+          <p className="max-w-xl text-base sm:text-lg text-[#666666] leading-relaxed mb-10">
             Give employees and AI agents permission to spend within rules you control. No shared cards, no pre-funded wallets, and no paperwork.
           </p>
 
@@ -222,7 +192,7 @@ export function LandingPageClient({
               id="hero-try-demo"
               onClick={() => handleGetStarted("hero")}
               disabled={isBusy}
-              className="h-10 px-6 rounded-md bg-[var(--landing-tone-eeeeee)] text-[var(--landing-tone-000000)] text-sm font-medium hover:bg-[var(--landing-tone-cccccc)] transition-colors disabled:opacity-60 cursor-pointer shadow-xs min-w-[170px]"
+              className="h-10 px-6 rounded-md bg-[#111111] text-[#ffffff] text-sm font-medium hover:bg-[#333333] transition-colors disabled:opacity-60 cursor-pointer shadow-xs min-w-[170px]"
             >
               {renderHeroButtonContent()}
             </Button>
@@ -231,7 +201,7 @@ export function LandingPageClient({
               href="https://github.com/Stoneybro/Allocard"
               target="_blank"
               rel="noopener noreferrer"
-              className="h-10 px-6 rounded-md border border-[var(--landing-tone-151515)] text-[var(--landing-tone-bbbbbb)] text-sm font-medium hover:border-[var(--landing-tone-333333)] hover:bg-[var(--landing-tone-050505)] transition-colors flex items-center justify-center gap-2"
+              className="h-10 px-6 rounded-md border border-[#eaeaea] text-[#444444] text-sm font-medium hover:border-[#cccccc] hover:bg-[#fafafa] transition-colors flex items-center justify-center gap-2"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.522 2 12 2Z" />
@@ -240,15 +210,15 @@ export function LandingPageClient({
             </a>
           </div>
 
-          <p className="text-xs text-[var(--landing-tone-666666)] mb-12">
+          <p className="text-xs text-[#999999] mb-12">
             Built on NEAR Protocol
           </p>
 
           <div className="w-full max-w-4xl mx-auto flex items-center justify-center">
             <div className="relative w-full drop-shadow-[0_25px_60px_rgba(255,255,255,0.08)] transition-all duration-500 hover:scale-[1.01]">
               <Image
-                src="/Allocardmodelcard.png"
-                alt="Allocard virtual spending card"
+                src="/AllocardVirtualCard.png"
+                alt="Allocard spending authorization"
                 width={1572}
                 height={694}
                 className="w-full h-auto"
@@ -259,16 +229,16 @@ export function LandingPageClient({
         </section>
 
         {/* ── Value Strip ── */}
-        <section className="border-y border-[var(--landing-tone-151515)] bg-[var(--landing-tone-050505)]">
+        <section className="border-y border-[#eaeaea] bg-[#fafafa]">
           <div className="max-w-6xl mx-auto px-6 py-5 flex flex-wrap items-center justify-center gap-x-10 gap-y-3">
             {[
               "Zero Money Sent Upfront",
               "Instant 1-Click Revocation",
-              "Native NEAR Account Auth",
-              "Automated AI Receipt Auditing",
+              "Multi-Chain Treasury Funding",
+              "Instant Social & Email Login",
               "Instant Global Settlements",
             ].map((label) => (
-              <span key={label} className="text-xs font-semibold text-[var(--landing-tone-999999)] tracking-wide whitespace-nowrap">
+              <span key={label} className="text-xs font-semibold text-[#666666] tracking-wide whitespace-nowrap">
                 {label}
               </span>
             ))}
@@ -279,32 +249,32 @@ export function LandingPageClient({
         <section id="problem" className="max-w-6xl mx-auto px-6 py-24">
           <div className="grid md:grid-cols-2 gap-16 items-start">
             <div>
-              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[var(--landing-tone-666666)] mb-4">The Problem</p>
-              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] leading-[1.1] text-[var(--landing-tone-eeeeee)] mb-5">
-                Giving employees and AI agents cards or pre-funded wallets puts your capital at risk.
+              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[#999999] mb-4">The Problem</p>
+              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] leading-[1.1] text-[#111111] mb-5">
+                Giving employees pre-funded wallets or shared company credentials puts your capital at risk.
               </h2>
-              <p className="text-[var(--landing-tone-999999)] leading-relaxed text-sm">
-                Traditional setups force you to hand out shared credit cards or transfer funds directly into employee wallets. Both models give up custody of company capital before anything is even purchased.
+              <p className="text-[#666666] leading-relaxed text-sm">
+                Traditional setups force you to share company credentials or transfer funds directly into employee wallets. Both models surrender custody of company capital before anything is even purchased.
               </p>
             </div>
             <div className="grid grid-cols-1 gap-3 pt-1">
               {[
                 {
-                  title: "Shared cards lead to runaway charges",
-                  body: "Broad credit limits rely on trust. Forgotten subscriptions and unapproved charges only surface weeks later during end-of-month reviews.",
+                  title: "Shared credentials lead to runaway charges",
+                  body: "Broad spending access relies purely on trust. Forgotten subscriptions and unapproved charges only surface weeks later during reconciliation.",
                 },
                 {
                   title: "Upfront transfers lose treasury custody",
-                  body: "Sending tokens directly to employee wallets puts company capital at risk. If a private key leaks or money is misspent, the funds are already gone.",
+                  body: "Sending tokens directly to personal wallets puts company capital at risk. If private keys leak or funds are misspent, the money is already gone.",
                 },
                 {
-                  title: "AI agents cannot safely hold funds",
-                  body: "Giving an autonomous bot an open credit card or pre-funded wallet is dangerous. One loop or bad prompt can drain your account.",
+                  title: "Rigid approvals slow teams down",
+                  body: "Manual reimbursement cycles and multi-sig bottlenecks force employees to wait days just to pay for necessary software and services.",
                 },
               ].map(({ title, body }) => (
-                <div key={title} className="p-4 rounded-lg border border-[var(--landing-tone-151515)] bg-[var(--landing-tone-050505)]">
-                  <p className="text-sm font-semibold text-[var(--landing-tone-eeeeee)] mb-1">{title}</p>
-                  <p className="text-sm text-[var(--landing-tone-999999)] leading-relaxed">{body}</p>
+                <div key={title} className="p-4 rounded-lg border border-[#eaeaea] bg-[#fafafa]">
+                  <p className="text-sm font-semibold text-[#111111] mb-1">{title}</p>
+                  <p className="text-sm text-[#666666] leading-relaxed">{body}</p>
                 </div>
               ))}
             </div>
@@ -312,20 +282,20 @@ export function LandingPageClient({
         </section>
 
         {/* ── How It Works ── */}
-        <section id="how-it-works" className="border-t border-[var(--landing-tone-151515)] bg-[var(--landing-tone-050505)]">
+        <section id="how-it-works" className="border-t border-[#eaeaea] bg-[#fafafa]">
           <div className="max-w-6xl mx-auto px-6 py-24">
             <div className="text-center mb-14">
-              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[var(--landing-tone-666666)] mb-4">The Core Innovation</p>
-              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] text-[var(--landing-tone-eeeeee)] mb-4">
+              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[#999999] mb-4">The Core Innovation</p>
+              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] text-[#111111] mb-4">
                 Permissions under rules, not money transfers.
               </h2>
-              <p className="max-w-xl mx-auto text-sm text-[var(--landing-tone-999999)] leading-relaxed">
-                Instead of sending funds to an employee or card, your capital stays 100% in your company treasury contract. You grant cryptographic permissions that define exactly what can be bought, up to what cap, and on what schedule. Funds only leave your treasury when a valid transaction matches your rules.
+              <p className="max-w-xl mx-auto text-sm text-[#666666] leading-relaxed">
+                Instead of sending funds upfront or sharing company credentials, your capital stays 100% in your company treasury contract. You grant cryptographic permissions that define exactly what can be bought, up to what cap, and on what schedule. Funds only leave your treasury when a valid transaction matches your rules.
               </p>
             </div>
 
             <div className="max-w-4xl mx-auto mb-16">
-              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[var(--landing-tone-666666)] mb-4 text-center">
+              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[#999999] mb-4 text-center">
                 Spending rules enforced onchain
               </p>
               <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-3">
@@ -335,11 +305,11 @@ export function LandingPageClient({
                   { title: "Per-Transaction Caps", desc: "Prevent any single checkout from exceeding approved policy limits." },
                   { title: "Approved Vendor Whitelists", desc: "Restrict spending authority exclusively to verified vendor accounts or contracts." },
                   { title: "Instant 1-Click Revocation", desc: "Cancel or freeze any spending permission instantly with zero stranded cash." },
-                  { title: "AI Agent Sub-Delegations", desc: "Empower autonomous software agents to buy tools within strict mathematical caps." },
+                  { title: "Multi-Chain Funding", desc: "Top up your company treasury from Ethereum, Base, Solana, or Bitcoin with zero manual bridging." },
                 ].map(({ title, desc }) => (
-                  <div key={title} className="p-4 rounded-lg border border-[var(--landing-tone-151515)] bg-[var(--landing-tone-000000)]">
-                    <p className="text-sm font-semibold text-[var(--landing-tone-eeeeee)] mb-1">{title}</p>
-                    <p className="text-xs text-[var(--landing-tone-999999)] leading-relaxed">{desc}</p>
+                  <div key={title} className="p-4 rounded-lg border border-[#eaeaea] bg-[#ffffff]">
+                    <p className="text-sm font-semibold text-[#111111] mb-1">{title}</p>
+                    <p className="text-xs text-[#666666] leading-relaxed">{desc}</p>
                   </div>
                 ))}
               </div>
@@ -348,15 +318,15 @@ export function LandingPageClient({
         </section>
 
         {/* ── Spend Rails ── */}
-        <section id="spend-rails" className="border-t border-[var(--landing-tone-151515)] bg-[var(--landing-tone-000000)]">
+        <section id="spend-rails" className="border-t border-[#eaeaea] bg-[#ffffff]">
           <div className="max-w-6xl mx-auto px-6 py-24">
             <div className="text-center mb-14">
-              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[var(--landing-tone-666666)] mb-4">Universal Spending Rails</p>
-              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] text-[var(--landing-tone-eeeeee)] mb-4">
+              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[#999999] mb-4">Universal Spending Rails</p>
+              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] text-[#111111] mb-4">
                 Every way modern companies spend, unified.
               </h2>
-              <p className="max-w-lg mx-auto text-sm text-[var(--landing-tone-999999)] leading-relaxed">
-                One company treasury powers direct vendor payments, instant expense reimbursements, overseas contractor payouts, and autonomous AI procurement.
+              <p className="max-w-lg mx-auto text-sm text-[#666666] leading-relaxed">
+                One company treasury powers direct vendor payments, multi-chain liquidity, policy-enforced allowances, and real-time spending controls.
               </p>
             </div>
 
@@ -370,39 +340,39 @@ export function LandingPageClient({
                   engine: "Executed via native NEAR treasury delegation contracts with canonical SHA-256 dispatch envelopes.",
                 },
                 {
-                  tag: "Instant AI Reimbursements",
-                  pattern: "Snap receipt · Vision AI extracts items · Instant payout",
-                  title: "No more waiting weeks for expense reports.",
-                  body: "Employees upload a photo of an out-of-pocket receipt. Vision AI reads the merchant, date, and items, validates policy compliance, and settles the claim in seconds.",
-                  engine: "Powered by Alibaba Cloud Qwen 2.5 VL with automated natural-language policy matching.",
+                  tag: "Cross-Chain Funding",
+                  pattern: "Ethereum, Solana, Bitcoin · Zero manual bridging · Instant liquidity",
+                  title: "Fund treasury from any chain with Aurora Intent.",
+                  body: "Top up your company treasury balance directly from any major blockchain and wallet. Intent-based cross-chain routing eliminates manual token bridging and complex swaps.",
+                  engine: "Integrated with Aurora Intent Connect for frictionless multi-chain treasury deposits.",
                 },
                 {
-                  tag: "Global Remittances",
-                  pattern: "Overseas invoices · Live mid-market FX · Zero wire fees",
-                  title: "Pay global talent without $45 bank wire fees.",
-                  body: "Settle international invoices instantly using digital dollar stables on NEAR. Eliminates multi-day correspondent bank delays and expensive foreign exchange spreads.",
-                  engine: "Settles on NEAR in sub-second finality with live multi-currency conversion.",
+                  tag: "Cryptographic Delegations",
+                  pattern: "Periodic budgets · Vendor whitelists · Per-transaction caps",
+                  title: "Grant spending authority without moving funds.",
+                  body: "Assign scoped spending permissions with strict periodic resets, approved recipient whitelists, and per-checkout limits. Capital only leaves the treasury when rules are satisfied.",
+                  engine: "Cryptographically bound to smart contract caveats with zero upfront capital transfer.",
                 },
                 {
-                  tag: "Cloud & Tooling Agent",
-                  pattern: "Scoped micro-budget · AI scours plans · Autonomous procurement",
-                  title: "Autonomous tool procurement for your team.",
-                  body: "Employees assign a portion of their authorized budget to our Cloud & Tooling Agent to compare and purchase developer infrastructure across NEAR ecosystem partners.",
-                  engine: "Cryptographically bound to its cap: impossible for the agent to overspend.",
+                  tag: "AI Policy Setup",
+                  pattern: "Plain English · Instant extraction · Deterministic rules",
+                  title: "Define spending policies in plain English.",
+                  body: "Describe your spending requirements in natural language—such as budget caps, approved recipients, or periodic resets—and let AI parse them into deterministic on-chain rules.",
+                  engine: "Powered by structured AI parameter extraction for automated policy generation.",
                 },
               ].map(({ tag, pattern, title, body, engine }) => (
-                <div key={tag} className="p-6 rounded-xl border border-[var(--landing-tone-151515)] bg-[var(--landing-tone-050505)] flex flex-col gap-3">
+                <div key={tag} className="p-6 rounded-xl border border-[#eaeaea] bg-[#fafafa] flex flex-col gap-3">
                   <div className="flex flex-col gap-1">
-                    <span className="self-start text-xs font-semibold px-2.5 py-1 rounded-full border border-[var(--landing-tone-151515)] text-[var(--landing-tone-aaaaaa)] bg-[var(--landing-tone-000000)]">
+                    <span className="self-start text-xs font-semibold px-2.5 py-1 rounded-full border border-[#eaeaea] text-[#555555] bg-[#ffffff]">
                       {tag}
                     </span>
-                    <span className="text-xs text-[var(--landing-tone-666666)] mt-1">{pattern}</span>
+                    <span className="text-xs text-[#999999] mt-1">{pattern}</span>
                   </div>
-                  <h3 className="text-base font-semibold text-[var(--landing-tone-eeeeee)] leading-snug">{title}</h3>
-                  <p className="text-sm text-[var(--landing-tone-999999)] leading-relaxed">{body}</p>
-                  <div className="mt-auto pt-3 border-t border-[var(--landing-tone-151515)]">
-                    <p className="text-xs text-[var(--landing-tone-777777)] leading-relaxed">
-                      <span className="font-semibold text-[var(--landing-tone-aaaaaa)]">System: </span>{engine}
+                  <h3 className="text-base font-semibold text-[#111111] leading-snug">{title}</h3>
+                  <p className="text-sm text-[#666666] leading-relaxed">{body}</p>
+                  <div className="mt-auto pt-3 border-t border-[#eaeaea]">
+                    <p className="text-xs text-[#888888] leading-relaxed">
+                      <span className="font-semibold text-[#555555]">System: </span>{engine}
                     </p>
                   </div>
                 </div>
@@ -412,26 +382,26 @@ export function LandingPageClient({
         </section>
 
         {/* ── Delegation Canvas ── */}
-        <section id="canvas" className="border-t border-[var(--landing-tone-151515)] bg-[var(--landing-tone-050505)]">
+        <section id="canvas" className="border-t border-[#eaeaea] bg-[#fafafa]">
           <div className="max-w-6xl mx-auto px-6 py-24">
             <div className="text-center mb-12">
-              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[var(--landing-tone-666666)] mb-4">Visual Spend Map</p>
-              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] text-[var(--landing-tone-eeeeee)] mb-4">
+              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[#999999] mb-4">Visual Spend Map</p>
+              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] text-[#111111] mb-4">
                 Your entire company spend, live on canvas.
               </h2>
-              <p className="max-w-lg mx-auto text-sm text-[var(--landing-tone-999999)] leading-relaxed">
-                Replace rigid spreadsheets with an interactive visual tree showing your company treasury, active employee allowances, and AI agent delegations in real time.
+              <p className="max-w-lg mx-auto text-sm text-[#666666] leading-relaxed">
+                Replace rigid spreadsheets with an interactive visual tree showing your company treasury and active employee spending permissions in real time.
               </p>
             </div>
 
-            <div className="w-full rounded-xl border border-[var(--landing-tone-151515)] overflow-hidden shadow-[0_4px_20px_rgb(255,255,255,0.04)] bg-[var(--landing-tone-000000)]">
-              <div className="border-b border-[var(--landing-tone-151515)] bg-[var(--landing-tone-050505)] px-4 py-2.5 flex items-center gap-2">
+            <div className="w-full rounded-xl border border-[#eaeaea] overflow-hidden shadow-[0_4px_20px_rgb(0,0,0,0.04)] bg-[#ffffff]">
+              <div className="border-b border-[#eaeaea] bg-[#fafafa] px-4 py-2.5 flex items-center gap-2">
                 <div className="flex gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-[var(--landing-tone-1f1f1f)]" />
-                  <span className="w-2.5 h-2.5 rounded-full bg-[var(--landing-tone-1f1f1f)]" />
-                  <span className="w-2.5 h-2.5 rounded-full bg-[var(--landing-tone-1f1f1f)]" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#e0e0e0]" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#e0e0e0]" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#e0e0e0]" />
                 </div>
-                <span className="text-xs text-[var(--landing-tone-666666)] ml-2 font-medium">Allocard Visual Spending Canvas</span>
+                <span className="text-xs text-[#999999] ml-2 font-medium">Allocard Visual Spending Canvas</span>
               </div>
               <Image
                 src="/delegationCanvas.png"
@@ -444,13 +414,13 @@ export function LandingPageClient({
 
             <div className="grid sm:grid-cols-3 gap-4 mt-6">
               {[
-                { title: "Central Treasury", body: "View your company balance and every active spending authorization in one central map." },
-                { title: "Composable Permissions", body: "Allowances flow from company to employees, and from employees to their AI assistants." },
-                { title: "Instant Cascading Revocation", body: "Revoking an employee instantly terminates all child budgets and agent permissions attached to them." },
+                { title: "Central Treasury", body: "View your company balance and every active spending authorization in one central interactive canvas." },
+                { title: "Granular Authorizations", body: "Configure precise spending rules, budget caps, and authorized recipients directly on each node." },
+                { title: "Instant Cascading Revocation", body: "Revoke or adjust any active permission in real time on-chain with zero stranded company cash." },
               ].map(({ title, body }) => (
-                <div key={title} className="p-4 rounded-lg border border-[var(--landing-tone-151515)] bg-[var(--landing-tone-000000)]">
-                  <p className="text-sm font-semibold text-[var(--landing-tone-eeeeee)] mb-1">{title}</p>
-                  <p className="text-sm text-[var(--landing-tone-999999)] leading-relaxed">{body}</p>
+                <div key={title} className="p-4 rounded-lg border border-[#eaeaea] bg-[#ffffff]">
+                  <p className="text-sm font-semibold text-[#111111] mb-1">{title}</p>
+                  <p className="text-sm text-[#666666] leading-relaxed">{body}</p>
                 </div>
               ))}
             </div>
@@ -458,18 +428,18 @@ export function LandingPageClient({
         </section>
 
         {/* ── Enterprise Sovereignty ── */}
-        <section id="sovereignty" className="border-t border-[var(--landing-tone-151515)] bg-[var(--landing-tone-000000)]">
+        <section id="sovereignty" className="border-t border-[#eaeaea] bg-[#ffffff]">
           <div className="max-w-6xl mx-auto px-6 py-24">
             <div className="grid md:grid-cols-2 gap-12 items-start">
             <div>
-              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[var(--landing-tone-666666)] mb-4">Complete Ownership</p>
-              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] text-[var(--landing-tone-eeeeee)] mb-4">
+              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[#999999] mb-4">Complete Ownership</p>
+              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] text-[#111111] mb-4">
                 A corporate spend system you truly own.
               </h2>
-              <p className="text-sm text-[var(--landing-tone-999999)] leading-relaxed mb-4">
-                Allocard delivers the power of modern corporate cards without handing custody to third parties. Your treasury contract runs directly on NEAR with zero intermediaries.
+              <p className="text-sm text-[#666666] leading-relaxed mb-4">
+                Allocard delivers complete control over corporate spending without handing custody to third parties. Your treasury contract runs directly on NEAR with zero intermediaries.
               </p>
-              <p className="text-sm text-[var(--landing-tone-999999)] leading-relaxed">
+              <p className="text-sm text-[#666666] leading-relaxed">
                 Your funds stay in your custody. Your rules remain under your control. You get the speed of modern automation with the safety of cryptographic guarantees.
               </p>
             </div>
@@ -481,17 +451,17 @@ export function LandingPageClient({
                   body: "Allocard never holds your funds. Everything runs on your native NEAR treasury contract. We cannot freeze your balance or alter your rules.",
                 },
                 {
-                  title: "Private Policy AI",
-                  body: "Company expense policies and receipts are evaluated privately with zero data retention using Alibaba Cloud Qwen AI.",
+                  title: "AI Policy Extraction",
+                  body: "Company spending policies are translated from natural language into deterministic contract constraints with strict validation.",
                 },
                 {
                   title: "Tamper-Proof Audit Trail",
                   body: "Every authorization, budget adjustment, and payment is permanently logged and verifiable on NEAR.",
                 },
               ].map(({ title, body }) => (
-                <div key={title} className="p-4 rounded-lg border border-[var(--landing-tone-151515)] bg-[var(--landing-tone-050505)]">
-                  <p className="text-sm font-semibold text-[var(--landing-tone-eeeeee)] mb-1">{title}</p>
-                  <p className="text-sm text-[var(--landing-tone-999999)] leading-relaxed">{body}</p>
+                <div key={title} className="p-4 rounded-lg border border-[#eaeaea] bg-[#fafafa]">
+                  <p className="text-sm font-semibold text-[#111111] mb-1">{title}</p>
+                  <p className="text-sm text-[#666666] leading-relaxed">{body}</p>
                 </div>
               ))}
             </div>
@@ -500,23 +470,23 @@ export function LandingPageClient({
       </section>
 
         {/* ── Closing CTA ── */}
-        <section id="cta" className="border-t border-[var(--landing-tone-151515)] bg-[var(--landing-tone-050505)]">
+        <section id="cta" className="border-t border-[#eaeaea] bg-[#fafafa]">
           <div className="max-w-6xl mx-auto px-6 py-24 flex flex-col items-center text-center">
-            <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[var(--landing-tone-666666)] mb-5">
-              Ready in two minutes · Native NEAR accounts · Cryptographic delegation
+            <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[#999999] mb-5">
+              Ready in two minutes · Multi-chain funding · Cryptographic delegation
             </p>
-            <h2 className="text-4xl sm:text-5xl font-bold tracking-[-0.03em] leading-[1.05] max-w-xl text-[var(--landing-tone-eeeeee)] mb-5">
+            <h2 className="text-4xl sm:text-5xl font-bold tracking-[-0.03em] leading-[1.05] max-w-xl text-[#111111] mb-5">
               Take total control of your company spend today.
             </h2>
-            <p className="text-sm text-[var(--landing-tone-999999)] max-w-md mb-10 leading-relaxed">
-              Connect your NEAR account, deploy your company treasury contract, and issue your first spending permission in under sixty seconds.
+            <p className="text-sm text-[#666666] max-w-md mb-10 leading-relaxed">
+              Sign in with email, Google, or any Web3 wallet, deploy your company treasury contract, and issue your first spending permission in under sixty seconds.
             </p>
             <div className="flex flex-col sm:flex-row gap-3">
               <Button
                 id="closing-try-demo"
                 onClick={() => handleGetStarted("hero")}
                 disabled={isBusy}
-                className="h-10 px-6 rounded-md bg-[var(--landing-tone-eeeeee)] text-[var(--landing-tone-000000)] text-sm font-medium hover:bg-[var(--landing-tone-cccccc)] transition-colors disabled:opacity-60 cursor-pointer shadow-xs min-w-[170px]"
+                className="h-10 px-6 rounded-md bg-[#111111] text-[#ffffff] text-sm font-medium hover:bg-[#333333] transition-colors disabled:opacity-60 cursor-pointer shadow-xs min-w-[170px]"
               >
                 {renderHeroButtonContent()}
               </Button>
@@ -525,7 +495,7 @@ export function LandingPageClient({
                 href="https://github.com/Stoneybro/Allocard"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="h-10 px-6 rounded-md border border-[var(--landing-tone-151515)] text-[var(--landing-tone-bbbbbb)] text-sm font-medium hover:border-[var(--landing-tone-333333)] hover:bg-[var(--landing-tone-000000)] transition-colors flex items-center justify-center gap-2"
+                className="h-10 px-6 rounded-md border border-[#eaeaea] text-[#444444] text-sm font-medium hover:border-[#cccccc] hover:bg-[#ffffff] transition-colors flex items-center justify-center gap-2"
               >
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                   <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.522 2 12 2Z" />
@@ -538,20 +508,20 @@ export function LandingPageClient({
       </main>
 
       {/* ── Footer ── */}
-      <footer className="border-t border-[var(--landing-tone-151515)] bg-[var(--landing-tone-000000)]">
+      <footer className="border-t border-[#eaeaea] bg-[#ffffff]">
         <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <Image src="/AllocardLogoBlack.svg" alt="Allocard Logo" width={20} height={20} />
-            <span className="text-sm font-semibold text-[var(--landing-tone-eeeeee)]">Allocard</span>
+            <span className="text-sm font-semibold text-[#111111]">Allocard</span>
           </div>
-          <p className="text-xs text-[var(--landing-tone-666666)] text-center">
-            NEAR Protocol · Built on NEAR with native treasury delegation contracts and AI agents.
+          <p className="text-xs text-[#999999] text-center">
+            NEAR Protocol · Built on NEAR with native treasury delegation contracts and multi-chain liquidity.
           </p>
           <a
             href="https://github.com/Stoneybro/Allocard"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-xs text-[var(--landing-tone-666666)] hover:text-[var(--landing-tone-eeeeee)] transition-colors"
+            className="text-xs text-[#999999] hover:text-[#111111] transition-colors"
           >
             GitHub
           </a>

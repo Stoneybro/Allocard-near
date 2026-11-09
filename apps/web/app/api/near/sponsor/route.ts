@@ -3,6 +3,8 @@ import { getSessionIdentity } from "@/lib/session";
 import { prepareSponsoredAdapter, submitSponsoredAdapter } from "@/lib/near-sponsor-server";
 import { sponsoredAdapterSchema, sponsoredAdapterProofSchema } from "@/lib/adapter-permission-schema";
 import { databaseFailure } from "@/lib/db/error";
+import { NearRpcError } from "@/lib/near-rpc-error";
+import { TransactionNotSubmittedError } from "@/lib/payment-submission";
 import { companySponsorshipEnabled, sponsoredCompanySchema, sponsoredCompanyProofSchema, prepareSponsoredCompany, submitSponsoredCompany, sponsorshipEnabled, sponsoredPaymentSchema, sponsoredProofSchema, prepareSponsoredPayment, submitSponsoredPayment } from "@/lib/near-sponsor-server";
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -40,6 +42,7 @@ export async function POST(request: Request) {
   } catch (caught) {
     if (caught instanceof SyntaxError || caught instanceof TypeError) return Response.json({ error: "Invalid sponsorship request" }, { status: 400, headers });
     const dbError = databaseFailure(caught);
-    return Response.json({ error: dbError ?? (caught instanceof Error ? caught.message : "Gas sponsorship is unavailable") }, { status: dbError ? 503 : 409, headers });
+    const notSubmitted = caught instanceof TransactionNotSubmittedError || (caught instanceof NearRpcError && caught.rpcCause === "INVALID_TRANSACTION");
+    return Response.json({ error: dbError ?? (caught instanceof Error ? caught.message : "Gas sponsorship is unavailable"), ...(notSubmitted ? { submissionState: "not_submitted" } : {}) }, { status: dbError ? 503 : 409, headers });
   }
 }

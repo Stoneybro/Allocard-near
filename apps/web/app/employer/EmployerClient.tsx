@@ -9,7 +9,7 @@ import { useDashboardData, useAccountScope } from "@/hooks/use-account-queries";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { withTimeout } from "@/lib/request-timeout";
 import { toast } from "sonner";
-import { useCallback, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import {
   LoaderCircleIcon,
   ShieldCheckIcon,
@@ -46,9 +46,6 @@ import {
   type CompanyDashboardState,
   type WalletProfile,
 } from "@/app/actions/identity";
-import {
-  ConnectRequiredCard,
-} from "@/components/auth-state";
 import { useAuth } from "@/components/AuthProvider";
 import { DashboardFlowCanvas } from "@/components/dashboard-flow-canvas";
 import { DelegationCardsView } from "@/components/delegation-cards-view";
@@ -855,8 +852,14 @@ export function EmployerClient({
     }
   }, [currentAuthAddress, profile, refreshDashboard]);
 
+  useEffect(() => {
+    if (auth.status === "unauthenticated") {
+      router.replace("/");
+    }
+  }, [auth.status, router]);
+
   if (auth.status === "unauthenticated") {
-    return <ConnectRequiredCard />;
+    return <DashboardLoading role="employer" />;
   }
 
   if (auth.status === "connecting") return <DashboardLoading />;

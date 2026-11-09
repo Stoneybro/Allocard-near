@@ -1,5 +1,6 @@
 "use client"
 
+import { useRouter } from "next/navigation"
 import { useAuth } from "@/components/AuthProvider"
 import {
   Avatar,
@@ -39,6 +40,7 @@ export function NavUser({
 }) {
   const { isMobile } = useSidebar()
   const auth = useAuth()
+  const router = useRouter()
 
   return (
     <SidebarMenu>
@@ -96,9 +98,15 @@ export function NavUser({
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => { if (auth.status === "authenticated") void auth.disconnect() }}>
-              <LogOutIcon
-              />
+            <DropdownMenuItem
+              onClick={() => {
+                if (auth.status === "authenticated") {
+                  router.replace("/");
+                  void auth.disconnect();
+                }
+              }}
+            >
+              <LogOutIcon />
               Log out
             </DropdownMenuItem>
           </DropdownMenuContent>

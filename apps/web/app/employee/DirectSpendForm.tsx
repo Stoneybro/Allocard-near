@@ -1,4 +1,5 @@
 "use client";
+import { isUnsubmittedPayment } from "@/lib/pending-payment";
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -57,7 +58,7 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
     enabled: !loading && !!pendingStorageKey && !isExecuting,
     queryFn: async () => {
       const saved = JSON.parse(localStorage.getItem(pendingStorageKey!) || "null");
-      if (!saved?.request) return null;
+      if (!saved?.request || isUnsubmittedPayment(saved)) return null;
       const response = await fetch("/api/wallet/pending", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -96,7 +97,7 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setToAddress(saved.request.action.receiver);
         setAmountNear(formatTokenAmount(saved.request.action.amount, 24));
-        setHasPendingRequest(true);
+        setHasPendingRequest(!isUnsubmittedPayment(saved));
       }
     } catch {
       setError("Saved payment data could not be read. Check your account's execution history before starting another payment.");
@@ -161,7 +162,10 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
         },
       });
     } catch (err) {
-      if (pendingStorageKey) setHasPendingRequest(Boolean(localStorage.getItem(pendingStorageKey)));
+      if (pendingStorageKey) {
+        const saved = JSON.parse(localStorage.getItem(pendingStorageKey) || "null");
+        setHasPendingRequest(!!saved && !isUnsubmittedPayment(saved));
+      }
       void pendingStatus.refetch();
       console.error(err);
       const parsed = parseUserOpError(err);
@@ -204,7 +208,7 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
 
             {hasPendingRequest && (
               <p role="status" className="text-xs text-muted-foreground">
-                A saved payment request needs reconciliation. Retry its original recipient and amount; the same request cannot send a second payment.
+                A previous payment may still be processing. Check its status before sending a different payment; recovery keeps the original request identity.
               </p>
             )}
 

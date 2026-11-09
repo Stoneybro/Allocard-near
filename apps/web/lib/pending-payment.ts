@@ -6,8 +6,10 @@ export type PendingPayment = {
   executionId?: string;
   delegationId?: string;
   attempted?: boolean;
+  submissionAttempted?: boolean;
 };
 type PaymentStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+export const isUnsubmittedPayment = (payment: PendingPayment) => !payment.transactionHash && !payment.executionId && (payment.submissionAttempted === false || payment.attempted === false);
 
 /** Replace an expired intent only after finalized chain state proves it never dispatched. */
 export async function preparePendingPayment(input: {
@@ -19,7 +21,17 @@ export async function preparePendingPayment(input: {
   const { storage, key } = input;
   const now = input.now ?? Date.now();
   let saved: PendingPayment | null = JSON.parse(storage.getItem(key) || "null");
-  let existing = saved ? await input.readExecution(saved.request.request_id) : null;
+  const changed = (payment: PendingPayment) => payment.request.action.amount !== input.amount || payment.request.action.receiver !== input.receiver;
+  const draft = saved && isUnsubmittedPayment(saved);
+  let existing = saved && !draft ? await input.readExecution(saved.request.request_id) : null;
+  if (saved && draft && (changed(saved) || BigInt(saved.request.deadline_ms) <= BigInt(now) || saved.request.permission_id !== input.activePermissionId)) {
+    storage.removeItem(key); saved = null;
+  }
+  if (saved && existing && (existing.status === "Failed" || (existing.status === "Succeeded" && changed(saved)))) {
+    // Keep settled evidence for history reconciliation without blocking a new payment.
+    storage.setItem(`${key}:settled:${saved.request.request_id}`, JSON.stringify({ payment: saved, execution: existing }));
+    storage.removeItem(key); saved = null; existing = null;
+  }
   if (saved && !existing && BigInt(saved.request.deadline_ms) <= BigInt(now)) {
     const response = await fetch("/api/wallet/pending", {
       method: "POST", credentials: "same-origin", cache: "no-store", headers: { "Content-Type": "application/json" },
@@ -38,13 +50,13 @@ export async function preparePendingPayment(input: {
     }
   }
   if (saved && (saved.request.action.amount !== input.amount || saved.request.action.receiver !== input.receiver)) {
-    throw new Error("A previous payment is unresolved. Retry its original recipient and amount before starting another payment.");
+    throw new Error("A previous payment is still processing or needs reconciliation. Check its status before sending a different payment.");
   }
   if (!saved) {
     const permissionId = input.activePermissionId;
     if (!permissionId || !/^[0-9]+$/.test(permissionId)) throw new Error("A confirmed company permission is required");
     saved = {
-      delegationId: input.delegationId, attempted: false,
+      delegationId: input.delegationId, attempted: false, submissionAttempted: false,
       request: { api_version: 1, request_id: generateRequestId(), permission_id: permissionId,
         action: { type: "Transfer", asset: { type: "NativeNear" }, receiver: input.receiver, amount: input.amount },
         deadline_ms: String(Date.now() + 15 * 60 * 1000),

@@ -7,6 +7,7 @@ import { createTransaction, SignedTransaction, Signature, type Action } from "ne
 import type { NearCaller } from "@allocard/delegation-sdk";
 import { nearBrowserRpc } from "./near-rpc-client";
 import { NearRpcError } from "./near-rpc-error";
+import { paymentSubmission } from "./payment-submission";
 import { clearPendingNearTransaction, nearRequestKey, readPendingNearTransaction, savePendingNearTransaction } from "./near-pending-transaction";
 export type NearActionSender = (request: { receiverId: string; actions: Action[]; signerId?: string }) => Promise<unknown>;
 export function implicitPublicKey(accountId: string) {
@@ -23,7 +24,7 @@ export function createPrivyNearTransport(accountId: string, signHash: (hash: `0x
     queue = task;
     return task;
   };
-  const sendDirect = async (request: Parameters<NearActionSender>[0], requestKey = nearRequestKey(request)) => {
+  const sendDirect = async (request: Parameters<NearActionSender>[0], requestKey = nearRequestKey(request), noteSubmission: (submitted: boolean) => void = () => {}) => {
     const signerId = request.signerId || accountId;
     if (signerId !== accountId) throw new Error("Transaction signer does not match the connected wallet");
     const checkOutcome = (outcome: unknown) => {
@@ -65,12 +66,14 @@ export function createPrivyNearTransport(accountId: string, signHash: (hash: `0x
     if (!/^0x[0-9a-fA-F]{128}$/.test(signature)) throw new Error("Privy did not return an Ed25519 signature");
     const signed = new SignedTransaction({ transaction, signature: new Signature({ keyType: publicKey.keyType, data: Buffer.from(signature.slice(2), "hex") }) });
     const txHash = utils.serialize.base_encode(digest);
+    noteSubmission(true);
     savePendingNearTransaction(accountId, { hash: txHash, requestKey });
     let outcome;
     try { outcome = await rpc("send_tx", { signed_tx_base64: Buffer.from(signed.encode()).toString("base64"), wait_until: "FINAL" }); }
     catch (cause) {
       if (cause instanceof NearRpcError && cause.rpcCause === "INVALID_TRANSACTION") {
         clearPendingNearTransaction(accountId);
+        noteSubmission(false);
         throw new Error(`NEAR rejected transaction ${txHash} before execution. ${cause.message} Correct the reported cause before trying again.`);
       }
       try { outcome = await rpc("tx", { tx_hash: txHash, sender_account_id: accountId, wait_until: "FINAL" }); }
@@ -105,7 +108,10 @@ export function createPrivyNearTransport(accountId: string, signHash: (hash: `0x
           if (outcome) return outcome;
         }
         if (unrelatedAdapter) throw new Error(`Gas sponsorship is disabled. Resolve adapter transaction ${pending.hash} before using wallet-funded spending.`);
-        return sendDirect(directRequest, requestKey);
+        const requestId = methodName === "execute" ? (args as { request?: { request_id?: string } })?.request?.request_id : undefined;
+        const companyId = (args as { company_id?: string })?.company_id;
+        const noteSubmission = requestId ? paymentSubmission(accountId, companyId ? `${contractId}#${companyId}` : contractId, requestId) : undefined;
+        return sendDirect(directRequest, requestKey, noteSubmission);
       });
     },
   };

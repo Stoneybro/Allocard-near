@@ -81,3 +81,19 @@ An unresolved older adapter transaction no longer blocks an unrelated sponsored 
 Explicit send_tx validation rejections expose `data.TxExecutionError.InvalidTxError` and release only the exact rejected submission. Ambiguous submissions retain their original transaction identity and are never automatically rebroadcast.
 
 Profile/dashboard queries use authenticated, private GET requests at `/api/dashboard`, validating the requested wallet against the session. They do not wait in Next's sequential Server Action dispatch queue. Independent membership/preference profile database reads also run concurrently. Actual database/RPC outages can still fail reads.
+
+## Reviewed legacy rejection migration
+
+Older browser records saved only a transaction hash and request details, without recording that the RPC had rejected them. Logout intentionally preserves pending transaction records. `NEXT_PUBLIC_NEAR_REJECTED_LEGACY_TX_HASHES` is an optional comma-separated list of public testnet hashes reviewed against explicit RPC `INVALID_TRANSACTION` rejection evidence. Reading a matching legacy `create_child_permission` record removes that record automatically before attempting sponsorship. Payment records, unlisted hashes, malformed intents and unknown outcomes are never discarded by this migration.
+
+The local/demo configuration includes the adapter transaction reported as rejected in the demo logs. This is a scoped repair, not an expiry policy or an instruction to treat an unobserved transaction as rejected. Changes to this public build variable require a rebuilt deployment or a development-server environment reload.
+
+Browser storage is authoritative: a record reset or recovered in another tab cannot be resurrected by the module's in-memory cache.
+
+## Payment request lifecycle
+
+Saving a draft or opening a signature prompt is not transaction submission. New payment records include `submissionAttempted: false`; the transport flips it immediately before sending a signed transaction or submitting a signed meta-transaction. Preparation errors and cancelled signatures therefore leave an editable draft. Explicit RPC validation rejection, or a sponsor failure known to have occurred before broadcast, restores the unsubmitted state. Ambiguous submit responses retain the submitted state and original identity.
+
+A different recipient or amount can replace an unsubmitted draft immediately. Confirmed failed payments can be replaced; confirmed successful payments with different new details are archived with their execution evidence under the original request ID before starting the new payment. That browser archive preserves evidence for history reconciliation; it does not claim server history synchronization has succeeded. The UI does not poll or describe unsubmitted drafts as pending transactions.
+
+Older records without reliable submission metadata remain conservative: their outcome must be reconciled, or the original request must be proven unused after expiry. Unknown outcomes are not relabelled as failed merely to remove a lock.

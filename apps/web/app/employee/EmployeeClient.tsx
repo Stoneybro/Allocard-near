@@ -12,7 +12,7 @@ import { recoverAdapterPermission } from "@/lib/recover-adapter-permission";
 import { clearAdapterPermissionIntent } from "@/lib/near-sponsor-client";
 import { clearPendingNearTransaction, readPendingNearTransaction } from "@/lib/near-pending-transaction";
 
-import { useCallback, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -41,9 +41,6 @@ import {
   type WorkspaceOption,
   type WalletProfile,
 } from "@/app/actions/identity";
-import {
-  ConnectRequiredCard,
-} from "@/components/auth-state";
 import { useAuth } from "@/components/AuthProvider";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { DashboardShell } from "@/components/dashboard-shell";
@@ -813,10 +810,16 @@ export function EmployeeClient({
     return saved.transactionHash;
   };
 
+  useEffect(() => {
+    if (auth.status === "unauthenticated") {
+      router.replace("/");
+    }
+  }, [auth.status, router]);
+
   // ── Render guards ──────────────────────────────────────────────────────────
 
   if (auth.status === "unauthenticated") {
-    return <ConnectRequiredCard />;
+    return <DashboardLoading role="employee" />;
   }
 
   if (auth.status === "connecting") return <DashboardLoading role="employee" />;

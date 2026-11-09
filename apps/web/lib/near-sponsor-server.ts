@@ -23,6 +23,7 @@ import { acquireSponsorKey, allocateSponsorNonce, claimSponsorJob, findSponsorJo
 import { invalidateNearReadCache } from "./near-read-coordinator";
 import { NearRpcError, describeNearRpcError } from "./near-rpc-error";
 import { releaseRejectedSponsorJob } from "./near-sponsor-store";
+import { TransactionNotSubmittedError } from "./payment-submission";
 
 const decimal = z.string().regex(/^(0|[1-9][0-9]*)$/).max(39);
 const account = z.string().min(2).max(64).regex(/^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/);
@@ -187,6 +188,7 @@ async function submitOuter(id: string, actor: string, intentHash: string, receiv
     // the journal even on timeouts, and only ever reconcile that transaction.
     if (ownsJob && broadcastHash && caught instanceof NearRpcError && caught.rpcCause === "INVALID_TRANSACTION") await releaseRejectedSponsorJob(id, broadcastHash);
     else if (ownsJob) await releaseUnbroadcastJob(id);
+    if (ownsJob && !broadcastHash) throw new TransactionNotSubmittedError(caught instanceof Error ? caught.message : "Sponsorship validation failed before submission");
     throw caught;
   } finally {
     await releaseSponsorKey(keyId, lease.leaseUntil);

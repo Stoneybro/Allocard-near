@@ -160,7 +160,16 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
     setSession(null);
     await queryClient.cancelQueries({ queryKey: ["allocard"] });
     queryClient.removeQueries({ queryKey: ["allocard"] });
-    try { await clearSession(); } finally { await sdk.current.logout(); }
+    try {
+      await clearSession();
+    } finally {
+      try {
+        if (typeof window !== "undefined" && window.location.pathname !== "/") {
+          window.location.replace("/");
+        }
+      } catch { /* Ignore in test environments where navigation is not implemented */ }
+      await sdk.current.logout();
+    }
   }, [queryClient]);
   const connect = useCallback(() => {
     if (sdk.current && principal) setRetry(n => n + 1);

@@ -416,10 +416,10 @@ function SidebarLogoutButton() {
 
   const handleLogout = async () => {
     try {
+      router.replace("/");
       if (auth.status === "authenticated") {
         await auth.disconnect();
       }
-      router.push("/");
     } catch (err) {
       console.warn("Logout error:", err);
       window.location.assign("/");
@@ -442,9 +442,18 @@ function SidebarLogoutButton() {
 
 function LogoutMenuItem() {
   const auth = useAuth();
+  const router = useRouter();
 
   return (
-    <DropdownMenuItem onClick={() => { if (auth.status === "authenticated") void auth.disconnect(); }} className="cursor-pointer text-muted-foreground hover:text-foreground">
+    <DropdownMenuItem
+      onClick={() => {
+        if (auth.status === "authenticated") {
+          router.replace("/");
+          void auth.disconnect();
+        }
+      }}
+      className="cursor-pointer text-muted-foreground hover:text-foreground"
+    >
       <LogOutIcon className="mr-2 h-4 w-4" />
       <span>Log out</span>
     </DropdownMenuItem>

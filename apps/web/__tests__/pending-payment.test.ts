@@ -62,7 +62,7 @@ describe("pending employee payment recovery", () => {
   });
   it("does not overwrite a live payment with different details", async () => {
     const live = { ...old, request: { ...old.request, deadline_ms: "2000000" } }; entries.set(key, JSON.stringify(live));
-    await expect(preparePendingPayment({ ...input(), amount: "20" })).rejects.toThrow("original recipient and amount");
+    await expect(preparePendingPayment({ ...input(), amount: "20" })).rejects.toThrow("still processing");
     expect(JSON.parse(entries.get(key)!)).toEqual(live);
   });
   it("requires a current permission for a fresh request after discarding an expired one", async () => {
@@ -70,4 +70,24 @@ describe("pending employee payment recovery", () => {
     await expect(preparePendingPayment({ ...input(), activePermissionId: null })).rejects.toThrow("confirmed company permission");
     expect(entries.has(key)).toBe(false);
   });
+});
+
+it("lets a user replace a draft that was saved but never signed or submitted",async()=>{
+ const draft={...old,attempted:false,transactionHash:undefined,executionId:undefined,request:{...old.request,deadline_ms:"2000000"}};entries.set(key,JSON.stringify(draft));
+ const options={...input(),receiver:"different.testnet",amount:"20"};
+ const result=await preparePendingPayment(options);
+ expect(result.saved.request.action.receiver).toBe("different.testnet");expect(result.saved.submissionAttempted).toBe(false);expect(options.readExecution).not.toHaveBeenCalled();
+});
+it("does not lock values after preparation failed before any broadcast",async()=>{
+ const draft={...old,attempted:true,submissionAttempted:false,transactionHash:undefined,executionId:undefined,request:{...old.request,deadline_ms:"2000000"}};entries.set(key,JSON.stringify(draft));
+ const result=await preparePendingPayment({...input(),amount:"25"});expect(result.saved.request.action.amount).toBe("25");
+});
+it("keeps an actually submitted payment locked while its outcome is unknown",async()=>{
+ const submitted={...old,submissionAttempted:true,request:{...old.request,deadline_ms:"2000000"}};entries.set(key,JSON.stringify(submitted));
+ await expect(preparePendingPayment({...input(),amount:"25"})).rejects.toThrow("still processing");expect(JSON.parse(entries.get(key)!)).toEqual(submitted);
+});
+it("preserves settled evidence but permits a different payment once the old payment succeeded",async()=>{
+ const options={...input(),amount:"25"};const execution={id:"42",status:"Succeeded",request_id:old.request.request_id} as Execution;options.readExecution.mockResolvedValue(execution);
+ const result=await preparePendingPayment(options);expect(result.saved.request.action.amount).toBe("25");expect(result.saved.request.request_id).not.toBe(old.request.request_id);
+ expect(JSON.parse(entries.get(`${key}:settled:${old.request.request_id}`)!)).toEqual({payment:old,execution});
 });
