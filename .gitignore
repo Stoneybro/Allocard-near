@@ -37,3 +37,8 @@ pnpm-debug.log*
 .idea/
 .vscode/
 
+
+# Local companion repository and validation artifacts
+.agent-work/
+.vercel
+.env*

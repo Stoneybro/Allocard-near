@@ -5,6 +5,7 @@ import { SignedTransaction } from "near-api-js/lib/transaction";
 import { sameSiteOrigin } from "@/lib/request-origin";
 import { getSessionIdentity } from "@/lib/session";
 import { nearRpcServerUrl } from "@/lib/near-rpc-server";
+import { describeNearRpcError } from "@/lib/near-rpc-error";
 export const runtime = "nodejs";
 const headers = { "Cache-Control": "no-store" };
 const reads = new Set(["view_account", "view_access_key", "view_access_key_list", "call_function"]);
@@ -13,10 +14,10 @@ export async function POST(request: Request) {
   if (!sameSiteOrigin(request)) return error("Wrong origin", 403);
   const text = await request.text();
   if (text.length > 131072) return error("NEAR request is too large", 413);
-  let body: any;
+  let body: { method: string; params: Record<string, unknown>; id?: unknown };
   try { body = JSON.parse(text); } catch { return error("Invalid NEAR request", 400); }
   if (!body || Array.isArray(body) || !["query", "block", "tx", "send_tx"].includes(body.method) || !body.params || typeof body.params !== "object" || Array.isArray(body.params)) return error("Unsupported NEAR request", 400);
-  if (body.method === "query" && !reads.has(body.params.request_type)) return error("Unsupported NEAR query", 400);
+  if (body.method === "query" && (typeof body.params.request_type !== "string" || !reads.has(body.params.request_type))) return error("Unsupported NEAR query", 400);
   if (body.method === "query") {
     try {
       const result = await nearQuery(body.params, { rpcId: body.id, dedupe: true });
@@ -46,8 +47,16 @@ export async function POST(request: Request) {
         return error(body.method === "send_tx" ? "Transaction submission is uncertain. Check its execution before retrying." : "NEAR RPC is temporarily unavailable or rate limited. Retry shortly.", 503);
       }
       const payload = await response.json();
+      if (payload.error) {
+        const upstream = payload.error;
+        const description = describeNearRpcError(upstream);
+        const detail = description.message.replace(/^Server error: /, "");
+        console.error("[near/rpc] upstream rejected request", { method: body.method, txHash: body.method === "tx" ? body.params.tx_hash : undefined, code: upstream.code, message: upstream.message, detail, invalidReason: description.invalidReason });
+        payload.error = { ...upstream, message: description.message };
+      }
       return Response.json(payload, { status: response.ok ? 200 : 502, headers });
-    } catch {
+    } catch (caught) {
+      console.error("[near/rpc] upstream transport failed", { method: body.method, error: caught instanceof Error ? caught.name : "UnknownError" });
       if (attempt + 1 === attempts) return error(body.method === "send_tx" ? "Transaction submission is uncertain. Check its execution before retrying." : "The server could not reach NEAR RPC. Check NEAR_RPC_URL or retry shortly.", 502);
     }
   }

@@ -1,3 +1,4 @@
+vi.mock("server-only", () => ({}));
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { KeyPair } from "near-api-js";
 import { SignedTransaction } from "near-api-js/lib/transaction";
@@ -5,9 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SponsorJob } from "@/lib/near-sponsor-store";
 const mocks = vi.hoisted(() => ({
   jobs: new Map<string, SponsorJob>(), rows: new Map<unknown, unknown[]>(), query: vi.fn(), reader: vi.fn(), owner: vi.fn(),
-  identity: vi.fn(), user: vi.fn(), membership: vi.fn(), quota: vi.fn(), lease: vi.fn(), release: vi.fn(), nonce: vi.fn(), shared: vi.fn(), grant: vi.fn(), active: false, registered: false,
+  identity: vi.fn(), user: vi.fn(), membership: vi.fn(), quota: vi.fn(), lease: vi.fn(), release: vi.fn(), nonce: vi.fn(), shared: vi.fn(), grant: vi.fn(), active: false, registered: false, adapterRows: null as unknown[][] | null,
 }));
-vi.mock("@/lib/db", () => ({ db: { select: () => ({ from: (table: unknown) => ({ where: () => ({ limit: async () => mocks.rows.get(table) ?? [] }) }) }) } }));
+vi.mock("@/lib/db", () => ({ db: { select: () => ({ from: (table: unknown) => ({ where: () => ({ limit: async () => mocks.adapterRows ? mocks.adapterRows.shift() ?? [] : mocks.rows.get(table) ?? [] }) }) }) } }));
 vi.mock("@/lib/auth-guard", () => ({ requireSessionUser: mocks.user, requireEmployeeCompany: mocks.membership }));
 vi.mock("@/lib/shared-server", () => ({ verifiedSharedConfig: mocks.shared }));
 vi.mock("@/lib/session", () => ({ getSessionIdentity: mocks.identity }));
@@ -22,10 +23,11 @@ vi.mock("@/lib/near-sponsor-store", () => ({
   takeCompanyRegistrationGrant: mocks.grant, takeSponsorQuota: mocks.quota, acquireSponsorKey: mocks.lease, releaseSponsorKey: mocks.release, allocateSponsorNonce: mocks.nonce,
   saveSponsorTransaction: async (id: string, transactionHash: string, signedTransaction: string) => { Object.assign(mocks.jobs.get(id)!, { transactionHash, signedTransaction, state: "submitted" }); },
   finishSponsorJob: async (id: string, state: string) => { Object.assign(mocks.jobs.get(id)!, { state }); },
+  releaseRejectedSponsorJob: async (id: string, hash: string) => { if (mocks.jobs.get(id)?.transactionHash === hash) mocks.jobs.delete(id); },
   releaseUnbroadcastJob: async (id: string) => { if (!mocks.jobs.get(id)?.transactionHash) mocks.jobs.delete(id); },
 }));
-import { prepareSponsoredCompany, submitSponsoredCompany, prepareSponsoredPayment, submitSponsoredPayment, sponsoredPaymentSchema } from "@/lib/near-sponsor-server";
-import { sponsoredCompanyDelegate, sponsoredDelegate, sponsoredSigningBytes } from "@/lib/near-sponsored-action";
+import { prepareSponsoredAdapter, submitSponsoredAdapter, prepareSponsoredCompany, submitSponsoredCompany, prepareSponsoredPayment, submitSponsoredPayment, sponsoredPaymentSchema } from "@/lib/near-sponsor-server";
+import { sponsoredAdapterDelegate, sponsoredCompanyDelegate, sponsoredDelegate, sponsoredSigningBytes } from "@/lib/near-sponsored-action";
 import { companies, companyMemberships, delegations, users } from "@/lib/db/schema";
 import { NearReadError } from "@/lib/near-read-error";
 const employeeKey = generateKeyPairSync("ed25519");
@@ -38,6 +40,10 @@ function proof(nonce = "2", height = "220") {
   const digest = createHash("sha256").update(sponsoredSigningBytes(delegate)).digest();
   return { ...payment, nonce, maxBlockHeight: height, signature: `0x${sign(null, digest, employeeKey.privateKey).toString("hex")}` };
 }
+function adapterReceipts(signed: SignedTransaction) {
+ const method=signed.transaction.actions[0].signedDelegate?.delegateAction.actions[0].functionCall?.methodName;
+ return method==="create_child_permission" ? [{outcome:{executor_id:"shared.testnet",status:{SuccessValue:Buffer.from(JSON.stringify("9")).toString("base64")}}}] : [];
+}
 function mockRpc() {
   return vi.fn(async (_url: unknown, options: RequestInit) => {
     const body = JSON.parse(options.body as string);
@@ -45,17 +51,17 @@ function mockRpc() {
     if (body.method === "gas_price") return Response.json({ result: { gas_price: "100000000" } });
     if (body.method === "tx") {
       const job = [...mocks.jobs.values()].find(job => job.transactionHash === body.params.tx_hash)!;
-      return Response.json({ result: { transaction: { hash: job.transactionHash }, status: { SuccessValue: "" } } });
+      return Response.json({ result: { transaction: { hash: job.transactionHash }, status: { SuccessValue: "" }, receipts_outcome: adapterReceipts(SignedTransaction.decode(Buffer.from(job.signedTransaction!,"base64"))) } });
     }
     const signed = SignedTransaction.decode(Buffer.from(body.params.signed_tx_base64, "base64"));
     const hash = [...mocks.jobs.values()].find(job => job.signedTransaction === body.params.signed_tx_base64)!.transactionHash;
     if (signed.transaction.actions[0].transfer) mocks.active = true;
     if (signed.transaction.actions[0].signedDelegate?.delegateAction.actions[0].functionCall?.methodName === "create_company") mocks.registered = true;
-    return Response.json({ result: { transaction: { hash, signer_id: signed.transaction.signerId, receiver_id: signed.transaction.receiverId }, status: { SuccessValue: "" } } });
+    return Response.json({ result: { transaction: { hash, signer_id: signed.transaction.signerId, receiver_id: signed.transaction.receiverId }, status: { SuccessValue: "" }, receipts_outcome: adapterReceipts(signed) } });
   });
 }
 beforeEach(() => {
-  vi.resetAllMocks(); mocks.jobs.clear(); mocks.rows.clear(); mocks.active = true; mocks.registered = false;
+  vi.resetAllMocks(); mocks.jobs.clear(); mocks.rows.clear(); mocks.active = true; mocks.registered = false; mocks.adapterRows = null;
   vi.stubEnv("NEAR_SPONSOR_COMPANY_ENABLED", "true");
   vi.stubEnv("NEAR_SPONSOR_ENABLED", "true"); vi.stubEnv("NEAR_RELAYER_ACCOUNT_ID", "sponsor.testnet"); vi.stubEnv("NEAR_RELAYER_PRIVATE_KEY", relayer.toString());
   mocks.identity.mockResolvedValue({ walletAddress: employee, providerUserId: "did:privy:employee" });
@@ -263,4 +269,83 @@ describe("company owner activation and registration sponsorship", () => {
     expect(mocks.grant).toHaveBeenCalledTimes(1);
     expect(vi.mocked(fetch).mock.calls.filter(call => JSON.parse(call[1]!.body as string).method === "send_tx")).toHaveLength(0);
   });
+});
+
+const adapterPermission = { treasury:payment.treasury,delegationId:"11111111-1111-4111-8111-111111111111",parentId:"7",spec:{delegate:"a".repeat(64),valid_from_ms:"0",expires_at_ms:null,max_executions:null,redelegation_depth:0,metadata_hash:null,rules:[{asset:{type:"NativeNear" as const},recipients:{type:"Any" as const},min_per_action:null,max_per_action:"10",lifetime_limit:"100",fixed_window:null,streaming:null,approval:null,acknowledge_unbounded_budget:false}]}};
+function adapterRows(changes: Record<string,unknown> = {}) {
+ const child={id:adapterPermission.delegationId,delegatorType:"user",delegatorId:"employee-id",delegateeType:"agent",delegateeId:"adapter-id",parentDelegationId:"parent-id",status:"pending_config",...changes};
+ return [[{id:"company-id",ownerId:"owner-id"}],[child],[{id:"parent-id",delegatorType:"company",delegatorId:"company-id",delegateeType:"user",delegateeId:"employee-id",status:"active",delegationHash:"7",treasuryReference:payment.treasury}],[{id:"adapter-id",isActive:true,name:"Allocard Purchasing Research Adapter",smartAccountAddress:"a".repeat(64),signerAddress:"a".repeat(64)}],[{nearAccountId:"owner.testnet"}]];
+}
+function configureAdapter() {
+ vi.stubEnv("NEAR_ADAPTER_ACCOUNT_ID","a".repeat(64));
+ const root={id:"7",delegate:employee,issuer:"owner.testnet",parent_id:null,revoked:false,epoch:"1",valid_from_ms:"0",expires_at_ms:null,max_executions:null,redelegation_depth:1,rules:[{...adapterPermission.spec.rules[0],max_per_action:"100",lifetime_limit:"1000"}]};
+ mocks.reader.mockReturnValue({getPermission:async(id:string)=>({id,parent_id:"7",issuer:employee,delegate:adapterPermission.spec.delegate,revoked:false}),getPermissionPath:async()=>[root],caller:{viewFunction:async()=>false},contractId:"shared.testnet"});
+ return root;
+}
+function adapterProof() {
+ const delegate=sponsoredAdapterDelegate(employee,adapterPermission,"2","220");
+ const digest=createHash("sha256").update(sponsoredSigningBytes(delegate)).digest();
+ return {...adapterPermission,nonce:"2",maxBlockHeight:"220",signature:`0x${sign(null,digest,employeeKey.privateKey).toString("hex")}`};
+}
+describe("adapter child permission gas sponsorship",()=>{
+ it("quotes a nonce for a zero-balance employee without transferring them spendable funds",async()=>{
+  configureAdapter();mocks.adapterRows=adapterRows();
+  expect(await prepareSponsoredAdapter(adapterPermission)).toMatchObject({enabled:true,nonce:"2"});
+  expect(vi.mocked(fetch).mock.calls.filter(call=>JSON.parse(call[1]!.body as string).method==="send_tx")).toHaveLength(0);
+ });
+ it("relays only the employee-signed child permission with zero attached deposit",async()=>{
+  configureAdapter();mocks.adapterRows=adapterRows();
+  const result=await submitSponsoredAdapter(adapterProof());
+  expect(result.outcome.status.SuccessValue).toBe("");
+  expect(result.outcome.adapterPermissionId).toBe("9");
+  const broadcast=vi.mocked(fetch).mock.calls.find(call=>JSON.parse(call[1]!.body as string).method==="send_tx")!;
+  const signed=SignedTransaction.decode(Buffer.from(JSON.parse(broadcast[1]!.body as string).params.signed_tx_base64,"base64"));
+  expect(signed.transaction.signerId).toBe("sponsor.testnet");expect(signed.transaction.receiverId).toBe(employee);
+  const delegate=signed.transaction.actions[0].signedDelegate!.delegateAction;
+  expect(delegate.senderId).toBe(employee);expect(delegate.receiverId).toBe("shared.testnet");
+  const action=delegate.actions[0].functionCall!;
+  expect(action.methodName).toBe("create_child_permission");expect(action.deposit).toBe(0n);
+  expect(JSON.parse(Buffer.from(action.args).toString())).toMatchObject({parent_id:"7",company_id:companyId,spec:{delegate:"a".repeat(64),redelegation_depth:0}});
+ });
+ it("recovers the original durable job without another broadcast",async()=>{
+  configureAdapter();mocks.adapterRows=adapterRows();await submitSponsoredAdapter(adapterProof());
+  mocks.adapterRows=adapterRows();await prepareSponsoredAdapter(adapterPermission);
+  expect(vi.mocked(fetch).mock.calls.filter(call=>JSON.parse(call[1]!.body as string).method==="send_tx")).toHaveLength(1);
+ });
+ it("rejects another employee's child permission before signing or relaying",async()=>{
+  configureAdapter();mocks.adapterRows=adapterRows({delegatorId:"other-employee"});
+  await expect(prepareSponsoredAdapter(adapterPermission)).rejects.toThrow("Only your adapter");expect(mocks.jobs.size).toBe(0);
+ });
+ it("rejects a different adapter recipient",async()=>{
+  configureAdapter();mocks.adapterRows=adapterRows();
+  await expect(prepareSponsoredAdapter({...adapterPermission,spec:{...adapterPermission.spec,delegate:"evil.testnet"}})).rejects.toThrow("configured Allocard adapter");expect(mocks.jobs.size).toBe(0);
+ });
+ it("rejects widened child budgets before consuming relayer gas",async()=>{
+  configureAdapter();mocks.adapterRows=adapterRows();
+  await expect(prepareSponsoredAdapter({...adapterPermission,spec:{...adapterPermission.spec,rules:[{...adapterPermission.spec.rules[0],lifetime_limit:"1001"}]}})).rejects.toThrow("parent spending limits");expect(mocks.jobs.size).toBe(0);
+ });
+ it("rejects a forged signature before creating a sponsor job",async()=>{
+  configureAdapter();mocks.adapterRows=adapterRows();
+  await expect(submitSponsoredAdapter({...adapterProof(),signature:`0x${"00".repeat(64)}`})).rejects.toThrow("Invalid adapter permission meta-transaction signature");expect(mocks.jobs.size).toBe(0);
+ });
+ it("rejects revoked on-chain parent permissions",async()=>{
+  const root=configureAdapter();root.revoked=true;mocks.adapterRows=adapterRows();
+  await expect(prepareSponsoredAdapter(adapterPermission)).rejects.toThrow("expired or revoked");expect(mocks.jobs.size).toBe(0);
+ });
+});
+
+it("recovers a confirmed adapter's inner receipt instead of issuing a replacement when its first response is incomplete",async()=>{
+ configureAdapter();mocks.adapterRows=adapterRows();
+ const base=mockRpc();
+ const rpc=vi.fn(async(url:unknown,options:RequestInit)=>{
+  const response=await base(url,options);const data=await response.json();
+  if(JSON.parse(options.body as string).method==="send_tx")delete data.result.receipts_outcome;
+  return Response.json(data);
+ });
+ vi.stubGlobal("fetch",rpc);
+ await expect(submitSponsoredAdapter(adapterProof())).rejects.toThrow("child permission result is not available");
+ expect(mocks.jobs.size).toBe(1);
+ mocks.adapterRows=adapterRows();
+ expect((await prepareSponsoredAdapter(adapterPermission)).outcome?.adapterPermissionId).toBe("9");
+ expect(rpc.mock.calls.filter(call=>JSON.parse(call[1].body as string).method==="send_tx")).toHaveLength(1);
 });

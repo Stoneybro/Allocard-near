@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Loader2 } from "lucide-react";
+import { ArrowRight, Loader2, Moon, Sun } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 import { useQueryClient } from "@tanstack/react-query";
 import { accountQueryKey } from "@/lib/query-keys";
@@ -23,6 +23,25 @@ export function LandingPageClient({
   initialWalletAddress?: string | null;
 } = {}) {
   const router = useRouter();
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("allocard-landing-theme");
+      if (saved === "light" || saved === "dark") {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setTheme(saved);
+      }
+    } catch { /* Keep the default when browser storage is unavailable. */ }
+  }, []);
+
+  const toggleTheme = () => {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    try {
+      localStorage.setItem("allocard-landing-theme", next);
+    } catch { /* Switching still works when browser storage is unavailable. */ }
+  };
   const auth = useAuth();
   const queryClient = useQueryClient();
   const requestedLogin = useRef(false);
@@ -113,7 +132,7 @@ export function LandingPageClient({
     if (phase === "routing") {
       return (
         <span className="inline-flex items-center justify-center gap-2">
-          <Loader2 className="size-4 animate-spin text-white" />
+          <Loader2 className="size-4 animate-spin text-[var(--landing-tone-000000)]" />
           <span>Opening dashboard…</span>
         </span>
       );
@@ -135,62 +154,66 @@ export function LandingPageClient({
   };
 
   return (
-    <div className="landing landing-restored min-h-screen font-sans antialiased">
+    <div data-theme={theme} className="landing landing-restored min-h-screen font-sans antialiased">
 
       {(routeError || (auth.status === "unauthenticated" && auth.error)) && (
-        <p role="alert" className="fixed bottom-4 left-4 right-4 z-50 rounded-md border bg-white p-4 text-sm text-red-700 shadow-lg">{routeError || (auth.status === "unauthenticated" ? auth.error : "")}</p>
+        <p role="alert" className="fixed bottom-4 left-4 right-4 z-50 rounded-md border bg-[var(--landing-tone-000000)] p-4 text-sm text-red-700 shadow-lg">{routeError || (auth.status === "unauthenticated" ? auth.error : "")}</p>
       )}
       <a className="landing-skip" href="#main">Skip to content</a>
 
       {/* ── Nav ── */}
-      <nav className="fixed top-0 inset-x-0 z-50 border-b border-[#eaeaea] bg-white/80 backdrop-blur-xl">
+      <nav className="fixed top-0 inset-x-0 z-50 border-b border-[var(--landing-tone-151515)] bg-[var(--landing-tone-000000)]/80 backdrop-blur-xl">
         <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-          <a href="#" className="flex items-center gap-2 text-xl font-bold tracking-tight text-[#111]">
+          <a href="#" className="flex items-center gap-2 text-xl font-bold tracking-tight text-[var(--landing-tone-eeeeee)]">
             <Image src="/AllocardLogoBlack.svg" alt="Allocard Logo" width={28} height={28} />
             Allocard
           </a>
           <div className="hidden md:flex items-center gap-6">
-            <a href="#problem" className="text-sm text-[#666] hover:text-[#111] transition-colors">The Problem</a>
-            <a href="#how-it-works" className="text-sm text-[#666] hover:text-[#111] transition-colors">How it Works</a>
-            <a href="#spend-rails" className="text-sm text-[#666] hover:text-[#111] transition-colors">Spend Rails</a>
-            <a href="#canvas" className="text-sm text-[#666] hover:text-[#111] transition-colors">Live Canvas</a>
             <a
               href="https://github.com/Stoneybro/Allocard"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-sm text-[#666] hover:text-[#111] transition-colors"
+              className="text-sm text-[var(--landing-tone-999999)] hover:text-[var(--landing-tone-eeeeee)] transition-colors"
             >
               GitHub
             </a>
+            <a href="" onClick={(event) => event.preventDefault()} className="text-sm text-[var(--landing-tone-999999)] hover:text-[var(--landing-tone-eeeeee)] transition-colors">Documentation</a>
           </div>
+          <div className="landing-nav-actions">
+          <button
+            id="theme-toggle"
+            type="button"
+            onClick={toggleTheme}
+            aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+            title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          >
+            {theme === "dark" ? <Sun className="size-4" aria-hidden="true" /> : <Moon className="size-4" aria-hidden="true" />}
+          </button>
           <Button
             id="nav-cta"
             onClick={() => handleGetStarted("nav")}
             disabled={isBusy}
             className={`h-8 px-4 rounded-md text-sm font-medium transition-colors disabled:opacity-50 cursor-pointer ${
               isAuthenticated
-                ? "bg-[#111] text-white hover:bg-[#333]"
-                : "border border-[#eaeaea] bg-white text-[#111] hover:bg-[#f7f7f7] hover:border-[#ccc]"
+                ? "bg-[var(--landing-tone-eeeeee)] text-[var(--landing-tone-000000)] hover:bg-[var(--landing-tone-cccccc)]"
+                : "border border-[var(--landing-tone-151515)] bg-[var(--landing-tone-000000)] text-[var(--landing-tone-eeeeee)] hover:bg-[var(--landing-tone-080808)] hover:border-[var(--landing-tone-333333)]"
             }`}
           >
             {renderNavButtonContent()}
           </Button>
+          </div>
         </div>
       </nav>
 
       <main id="main" className="pt-14">
 
         {/* ── Hero ── */}
-        <section id="hero" className="max-w-6xl mx-auto px-6 pt-24 pb-16 flex flex-col items-center text-center">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-[#eaeaea] bg-[#fafafa] mb-8">
-            <span className="text-xs text-[#666] font-medium">NEAR Protocol · Programmable Treasury & Delegations</span>
-          </div>
-
-          <h1 className="text-5xl sm:text-7xl font-bold tracking-[-0.04em] leading-[1.05] max-w-4xl mb-6 text-[#111]">
+        <section id="hero" className="max-w-6xl mx-auto px-6 pt-32 pb-16 flex flex-col items-center text-center">
+          <h1 className="text-5xl sm:text-7xl font-bold tracking-[-0.04em] leading-[1.05] max-w-4xl mb-6 text-[var(--landing-tone-eeeeee)]">
             The corporate expense system<br className="hidden sm:block" /> for teams and autonomous AI.
           </h1>
 
-          <p className="max-w-xl text-base sm:text-lg text-[#666] leading-relaxed mb-10">
+          <p className="max-w-xl text-base sm:text-lg text-[var(--landing-tone-999999)] leading-relaxed mb-10">
             Give employees and AI agents permission to spend within rules you control. No shared cards, no pre-funded wallets, and no paperwork.
           </p>
 
@@ -199,7 +222,7 @@ export function LandingPageClient({
               id="hero-try-demo"
               onClick={() => handleGetStarted("hero")}
               disabled={isBusy}
-              className="h-10 px-6 rounded-md bg-[#111] text-white text-sm font-medium hover:bg-[#333] transition-colors disabled:opacity-60 cursor-pointer shadow-xs min-w-[170px]"
+              className="h-10 px-6 rounded-md bg-[var(--landing-tone-eeeeee)] text-[var(--landing-tone-000000)] text-sm font-medium hover:bg-[var(--landing-tone-cccccc)] transition-colors disabled:opacity-60 cursor-pointer shadow-xs min-w-[170px]"
             >
               {renderHeroButtonContent()}
             </Button>
@@ -208,7 +231,7 @@ export function LandingPageClient({
               href="https://github.com/Stoneybro/Allocard"
               target="_blank"
               rel="noopener noreferrer"
-              className="h-10 px-6 rounded-md border border-[#eaeaea] text-[#444] text-sm font-medium hover:border-[#ccc] hover:bg-[#fafafa] transition-colors flex items-center justify-center gap-2"
+              className="h-10 px-6 rounded-md border border-[var(--landing-tone-151515)] text-[var(--landing-tone-bbbbbb)] text-sm font-medium hover:border-[var(--landing-tone-333333)] hover:bg-[var(--landing-tone-050505)] transition-colors flex items-center justify-center gap-2"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.522 2 12 2Z" />
@@ -217,24 +240,26 @@ export function LandingPageClient({
             </a>
           </div>
 
-          <p className="text-xs text-[#999] mb-12">
-            Named NEAR accounts · Cryptographic delegation · Sub-second finality on NEAR
+          <p className="text-xs text-[var(--landing-tone-666666)] mb-12">
+            Built on NEAR Protocol
           </p>
 
-          <div className="w-full max-w-5xl rounded-xl border border-[#eaeaea] overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.06)] bg-white">
-            <Image
-              src="/Allocardmodelcard.png"
-              alt="Allocard model card"
-              width={1774}
-              height={887}
-              className="w-full h-auto"
-              priority
-            />
+          <div className="w-full max-w-4xl mx-auto flex items-center justify-center">
+            <div className="relative w-full drop-shadow-[0_25px_60px_rgba(255,255,255,0.08)] transition-all duration-500 hover:scale-[1.01]">
+              <Image
+                src="/Allocardmodelcard.png"
+                alt="Allocard virtual spending card"
+                width={1572}
+                height={694}
+                className="w-full h-auto"
+                priority
+              />
+            </div>
           </div>
         </section>
 
         {/* ── Value Strip ── */}
-        <section className="border-y border-[#eaeaea] bg-[#fafafa]">
+        <section className="border-y border-[var(--landing-tone-151515)] bg-[var(--landing-tone-050505)]">
           <div className="max-w-6xl mx-auto px-6 py-5 flex flex-wrap items-center justify-center gap-x-10 gap-y-3">
             {[
               "Zero Money Sent Upfront",
@@ -243,7 +268,7 @@ export function LandingPageClient({
               "Automated AI Receipt Auditing",
               "Instant Global Settlements",
             ].map((label) => (
-              <span key={label} className="text-xs font-semibold text-[#666] tracking-wide whitespace-nowrap">
+              <span key={label} className="text-xs font-semibold text-[var(--landing-tone-999999)] tracking-wide whitespace-nowrap">
                 {label}
               </span>
             ))}
@@ -254,11 +279,11 @@ export function LandingPageClient({
         <section id="problem" className="max-w-6xl mx-auto px-6 py-24">
           <div className="grid md:grid-cols-2 gap-16 items-start">
             <div>
-              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[#999] mb-4">The Problem</p>
-              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] leading-[1.1] text-[#111] mb-5">
+              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[var(--landing-tone-666666)] mb-4">The Problem</p>
+              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] leading-[1.1] text-[var(--landing-tone-eeeeee)] mb-5">
                 Giving employees and AI agents cards or pre-funded wallets puts your capital at risk.
               </h2>
-              <p className="text-[#666] leading-relaxed text-sm">
+              <p className="text-[var(--landing-tone-999999)] leading-relaxed text-sm">
                 Traditional setups force you to hand out shared credit cards or transfer funds directly into employee wallets. Both models give up custody of company capital before anything is even purchased.
               </p>
             </div>
@@ -277,9 +302,9 @@ export function LandingPageClient({
                   body: "Giving an autonomous bot an open credit card or pre-funded wallet is dangerous. One loop or bad prompt can drain your account.",
                 },
               ].map(({ title, body }) => (
-                <div key={title} className="p-4 rounded-lg border border-[#eaeaea] bg-[#fafafa]">
-                  <p className="text-sm font-semibold text-[#111] mb-1">{title}</p>
-                  <p className="text-sm text-[#666] leading-relaxed">{body}</p>
+                <div key={title} className="p-4 rounded-lg border border-[var(--landing-tone-151515)] bg-[var(--landing-tone-050505)]">
+                  <p className="text-sm font-semibold text-[var(--landing-tone-eeeeee)] mb-1">{title}</p>
+                  <p className="text-sm text-[var(--landing-tone-999999)] leading-relaxed">{body}</p>
                 </div>
               ))}
             </div>
@@ -287,20 +312,20 @@ export function LandingPageClient({
         </section>
 
         {/* ── How It Works ── */}
-        <section id="how-it-works" className="border-t border-[#eaeaea] bg-[#fafafa]">
+        <section id="how-it-works" className="border-t border-[var(--landing-tone-151515)] bg-[var(--landing-tone-050505)]">
           <div className="max-w-6xl mx-auto px-6 py-24">
             <div className="text-center mb-14">
-              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[#999] mb-4">The Core Innovation</p>
-              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] text-[#111] mb-4">
+              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[var(--landing-tone-666666)] mb-4">The Core Innovation</p>
+              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] text-[var(--landing-tone-eeeeee)] mb-4">
                 Permissions under rules, not money transfers.
               </h2>
-              <p className="max-w-xl mx-auto text-sm text-[#666] leading-relaxed">
+              <p className="max-w-xl mx-auto text-sm text-[var(--landing-tone-999999)] leading-relaxed">
                 Instead of sending funds to an employee or card, your capital stays 100% in your company treasury contract. You grant cryptographic permissions that define exactly what can be bought, up to what cap, and on what schedule. Funds only leave your treasury when a valid transaction matches your rules.
               </p>
             </div>
 
             <div className="max-w-4xl mx-auto mb-16">
-              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[#999] mb-4 text-center">
+              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[var(--landing-tone-666666)] mb-4 text-center">
                 Spending rules enforced onchain
               </p>
               <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-3">
@@ -312,9 +337,9 @@ export function LandingPageClient({
                   { title: "Instant 1-Click Revocation", desc: "Cancel or freeze any spending permission instantly with zero stranded cash." },
                   { title: "AI Agent Sub-Delegations", desc: "Empower autonomous software agents to buy tools within strict mathematical caps." },
                 ].map(({ title, desc }) => (
-                  <div key={title} className="p-4 rounded-lg border border-[#eaeaea] bg-white">
-                    <p className="text-sm font-semibold text-[#111] mb-1">{title}</p>
-                    <p className="text-xs text-[#666] leading-relaxed">{desc}</p>
+                  <div key={title} className="p-4 rounded-lg border border-[var(--landing-tone-151515)] bg-[var(--landing-tone-000000)]">
+                    <p className="text-sm font-semibold text-[var(--landing-tone-eeeeee)] mb-1">{title}</p>
+                    <p className="text-xs text-[var(--landing-tone-999999)] leading-relaxed">{desc}</p>
                   </div>
                 ))}
               </div>
@@ -323,14 +348,14 @@ export function LandingPageClient({
         </section>
 
         {/* ── Spend Rails ── */}
-        <section id="spend-rails" className="border-t border-[#eaeaea] bg-white">
+        <section id="spend-rails" className="border-t border-[var(--landing-tone-151515)] bg-[var(--landing-tone-000000)]">
           <div className="max-w-6xl mx-auto px-6 py-24">
             <div className="text-center mb-14">
-              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[#999] mb-4">Universal Spending Rails</p>
-              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] text-[#111] mb-4">
+              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[var(--landing-tone-666666)] mb-4">Universal Spending Rails</p>
+              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] text-[var(--landing-tone-eeeeee)] mb-4">
                 Every way modern companies spend, unified.
               </h2>
-              <p className="max-w-lg mx-auto text-sm text-[#666] leading-relaxed">
+              <p className="max-w-lg mx-auto text-sm text-[var(--landing-tone-999999)] leading-relaxed">
                 One company treasury powers direct vendor payments, instant expense reimbursements, overseas contractor payouts, and autonomous AI procurement.
               </p>
             </div>
@@ -366,18 +391,18 @@ export function LandingPageClient({
                   engine: "Cryptographically bound to its cap: impossible for the agent to overspend.",
                 },
               ].map(({ tag, pattern, title, body, engine }) => (
-                <div key={tag} className="p-6 rounded-xl border border-[#eaeaea] bg-[#fafafa] flex flex-col gap-3">
+                <div key={tag} className="p-6 rounded-xl border border-[var(--landing-tone-151515)] bg-[var(--landing-tone-050505)] flex flex-col gap-3">
                   <div className="flex flex-col gap-1">
-                    <span className="self-start text-xs font-semibold px-2.5 py-1 rounded-full border border-[#eaeaea] text-[#555] bg-white">
+                    <span className="self-start text-xs font-semibold px-2.5 py-1 rounded-full border border-[var(--landing-tone-151515)] text-[var(--landing-tone-aaaaaa)] bg-[var(--landing-tone-000000)]">
                       {tag}
                     </span>
-                    <span className="text-xs text-[#999] mt-1">{pattern}</span>
+                    <span className="text-xs text-[var(--landing-tone-666666)] mt-1">{pattern}</span>
                   </div>
-                  <h3 className="text-base font-semibold text-[#111] leading-snug">{title}</h3>
-                  <p className="text-sm text-[#666] leading-relaxed">{body}</p>
-                  <div className="mt-auto pt-3 border-t border-[#eaeaea]">
-                    <p className="text-xs text-[#888] leading-relaxed">
-                      <span className="font-semibold text-[#555]">System: </span>{engine}
+                  <h3 className="text-base font-semibold text-[var(--landing-tone-eeeeee)] leading-snug">{title}</h3>
+                  <p className="text-sm text-[var(--landing-tone-999999)] leading-relaxed">{body}</p>
+                  <div className="mt-auto pt-3 border-t border-[var(--landing-tone-151515)]">
+                    <p className="text-xs text-[var(--landing-tone-777777)] leading-relaxed">
+                      <span className="font-semibold text-[var(--landing-tone-aaaaaa)]">System: </span>{engine}
                     </p>
                   </div>
                 </div>
@@ -387,26 +412,26 @@ export function LandingPageClient({
         </section>
 
         {/* ── Delegation Canvas ── */}
-        <section id="canvas" className="border-t border-[#eaeaea] bg-[#fafafa]">
+        <section id="canvas" className="border-t border-[var(--landing-tone-151515)] bg-[var(--landing-tone-050505)]">
           <div className="max-w-6xl mx-auto px-6 py-24">
             <div className="text-center mb-12">
-              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[#999] mb-4">Visual Spend Map</p>
-              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] text-[#111] mb-4">
+              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[var(--landing-tone-666666)] mb-4">Visual Spend Map</p>
+              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] text-[var(--landing-tone-eeeeee)] mb-4">
                 Your entire company spend, live on canvas.
               </h2>
-              <p className="max-w-lg mx-auto text-sm text-[#666] leading-relaxed">
+              <p className="max-w-lg mx-auto text-sm text-[var(--landing-tone-999999)] leading-relaxed">
                 Replace rigid spreadsheets with an interactive visual tree showing your company treasury, active employee allowances, and AI agent delegations in real time.
               </p>
             </div>
 
-            <div className="w-full rounded-xl border border-[#eaeaea] overflow-hidden shadow-[0_4px_20px_rgb(0,0,0,0.04)] bg-white">
-              <div className="border-b border-[#eaeaea] bg-[#fafafa] px-4 py-2.5 flex items-center gap-2">
+            <div className="w-full rounded-xl border border-[var(--landing-tone-151515)] overflow-hidden shadow-[0_4px_20px_rgb(255,255,255,0.04)] bg-[var(--landing-tone-000000)]">
+              <div className="border-b border-[var(--landing-tone-151515)] bg-[var(--landing-tone-050505)] px-4 py-2.5 flex items-center gap-2">
                 <div className="flex gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#e0e0e0]" />
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#e0e0e0]" />
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#e0e0e0]" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-[var(--landing-tone-1f1f1f)]" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-[var(--landing-tone-1f1f1f)]" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-[var(--landing-tone-1f1f1f)]" />
                 </div>
-                <span className="text-xs text-[#999] ml-2 font-medium">Allocard Visual Spending Canvas</span>
+                <span className="text-xs text-[var(--landing-tone-666666)] ml-2 font-medium">Allocard Visual Spending Canvas</span>
               </div>
               <Image
                 src="/delegationCanvas.png"
@@ -423,9 +448,9 @@ export function LandingPageClient({
                 { title: "Composable Permissions", body: "Allowances flow from company to employees, and from employees to their AI assistants." },
                 { title: "Instant Cascading Revocation", body: "Revoking an employee instantly terminates all child budgets and agent permissions attached to them." },
               ].map(({ title, body }) => (
-                <div key={title} className="p-4 rounded-lg border border-[#eaeaea] bg-white">
-                  <p className="text-sm font-semibold text-[#111] mb-1">{title}</p>
-                  <p className="text-sm text-[#666] leading-relaxed">{body}</p>
+                <div key={title} className="p-4 rounded-lg border border-[var(--landing-tone-151515)] bg-[var(--landing-tone-000000)]">
+                  <p className="text-sm font-semibold text-[var(--landing-tone-eeeeee)] mb-1">{title}</p>
+                  <p className="text-sm text-[var(--landing-tone-999999)] leading-relaxed">{body}</p>
                 </div>
               ))}
             </div>
@@ -433,18 +458,18 @@ export function LandingPageClient({
         </section>
 
         {/* ── Enterprise Sovereignty ── */}
-        <section id="sovereignty" className="border-t border-[#eaeaea] bg-white">
+        <section id="sovereignty" className="border-t border-[var(--landing-tone-151515)] bg-[var(--landing-tone-000000)]">
           <div className="max-w-6xl mx-auto px-6 py-24">
             <div className="grid md:grid-cols-2 gap-12 items-start">
             <div>
-              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[#999] mb-4">Complete Ownership</p>
-              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] text-[#111] mb-4">
+              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[var(--landing-tone-666666)] mb-4">Complete Ownership</p>
+              <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] text-[var(--landing-tone-eeeeee)] mb-4">
                 A corporate spend system you truly own.
               </h2>
-              <p className="text-sm text-[#666] leading-relaxed mb-4">
+              <p className="text-sm text-[var(--landing-tone-999999)] leading-relaxed mb-4">
                 Allocard delivers the power of modern corporate cards without handing custody to third parties. Your treasury contract runs directly on NEAR with zero intermediaries.
               </p>
-              <p className="text-sm text-[#666] leading-relaxed">
+              <p className="text-sm text-[var(--landing-tone-999999)] leading-relaxed">
                 Your funds stay in your custody. Your rules remain under your control. You get the speed of modern automation with the safety of cryptographic guarantees.
               </p>
             </div>
@@ -464,9 +489,9 @@ export function LandingPageClient({
                   body: "Every authorization, budget adjustment, and payment is permanently logged and verifiable on NEAR.",
                 },
               ].map(({ title, body }) => (
-                <div key={title} className="p-4 rounded-lg border border-[#eaeaea] bg-[#fafafa]">
-                  <p className="text-sm font-semibold text-[#111] mb-1">{title}</p>
-                  <p className="text-sm text-[#666] leading-relaxed">{body}</p>
+                <div key={title} className="p-4 rounded-lg border border-[var(--landing-tone-151515)] bg-[var(--landing-tone-050505)]">
+                  <p className="text-sm font-semibold text-[var(--landing-tone-eeeeee)] mb-1">{title}</p>
+                  <p className="text-sm text-[var(--landing-tone-999999)] leading-relaxed">{body}</p>
                 </div>
               ))}
             </div>
@@ -475,15 +500,15 @@ export function LandingPageClient({
       </section>
 
         {/* ── Closing CTA ── */}
-        <section id="cta" className="border-t border-[#eaeaea] bg-[#fafafa]">
+        <section id="cta" className="border-t border-[var(--landing-tone-151515)] bg-[var(--landing-tone-050505)]">
           <div className="max-w-6xl mx-auto px-6 py-24 flex flex-col items-center text-center">
-            <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[#999] mb-5">
+            <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[var(--landing-tone-666666)] mb-5">
               Ready in two minutes · Native NEAR accounts · Cryptographic delegation
             </p>
-            <h2 className="text-4xl sm:text-5xl font-bold tracking-[-0.03em] leading-[1.05] max-w-xl text-[#111] mb-5">
+            <h2 className="text-4xl sm:text-5xl font-bold tracking-[-0.03em] leading-[1.05] max-w-xl text-[var(--landing-tone-eeeeee)] mb-5">
               Take total control of your company spend today.
             </h2>
-            <p className="text-sm text-[#666] max-w-md mb-10 leading-relaxed">
+            <p className="text-sm text-[var(--landing-tone-999999)] max-w-md mb-10 leading-relaxed">
               Connect your NEAR account, deploy your company treasury contract, and issue your first spending permission in under sixty seconds.
             </p>
             <div className="flex flex-col sm:flex-row gap-3">
@@ -491,7 +516,7 @@ export function LandingPageClient({
                 id="closing-try-demo"
                 onClick={() => handleGetStarted("hero")}
                 disabled={isBusy}
-                className="h-10 px-6 rounded-md bg-[#111] text-white text-sm font-medium hover:bg-[#333] transition-colors disabled:opacity-60 cursor-pointer shadow-xs min-w-[170px]"
+                className="h-10 px-6 rounded-md bg-[var(--landing-tone-eeeeee)] text-[var(--landing-tone-000000)] text-sm font-medium hover:bg-[var(--landing-tone-cccccc)] transition-colors disabled:opacity-60 cursor-pointer shadow-xs min-w-[170px]"
               >
                 {renderHeroButtonContent()}
               </Button>
@@ -500,7 +525,7 @@ export function LandingPageClient({
                 href="https://github.com/Stoneybro/Allocard"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="h-10 px-6 rounded-md border border-[#eaeaea] text-[#444] text-sm font-medium hover:border-[#ccc] hover:bg-white transition-colors flex items-center justify-center gap-2"
+                className="h-10 px-6 rounded-md border border-[var(--landing-tone-151515)] text-[var(--landing-tone-bbbbbb)] text-sm font-medium hover:border-[var(--landing-tone-333333)] hover:bg-[var(--landing-tone-000000)] transition-colors flex items-center justify-center gap-2"
               >
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                   <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.522 2 12 2Z" />
@@ -513,20 +538,20 @@ export function LandingPageClient({
       </main>
 
       {/* ── Footer ── */}
-      <footer className="border-t border-[#eaeaea] bg-white">
+      <footer className="border-t border-[var(--landing-tone-151515)] bg-[var(--landing-tone-000000)]">
         <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <Image src="/AllocardLogoBlack.svg" alt="Allocard Logo" width={20} height={20} />
-            <span className="text-sm font-semibold text-[#111]">Allocard</span>
+            <span className="text-sm font-semibold text-[var(--landing-tone-eeeeee)]">Allocard</span>
           </div>
-          <p className="text-xs text-[#999] text-center">
+          <p className="text-xs text-[var(--landing-tone-666666)] text-center">
             NEAR Protocol · Built on NEAR with native treasury delegation contracts and AI agents.
           </p>
           <a
             href="https://github.com/Stoneybro/Allocard"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-xs text-[#999] hover:text-[#111] transition-colors"
+            className="text-xs text-[var(--landing-tone-666666)] hover:text-[var(--landing-tone-eeeeee)] transition-colors"
           >
             GitHub
           </a>

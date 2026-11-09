@@ -1,0 +1,24 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+const mocks=vi.hoisted(()=>({user:vi.fn(),membership:vi.fn(),authorize:vi.fn(),ready:vi.fn(),create:vi.fn(),own:vi.fn(),confirm:vi.fn(),progress:vi.fn(),cancel:vi.fn(),list:vi.fn(),discover:vi.fn()}));
+vi.mock("@/lib/auth-guard",()=>({requireSessionUser:mocks.user,requireEmployeeCompany:mocks.membership}));
+vi.mock("@/lib/agent-adapter/permissions",()=>({authorizeAdapter:mocks.authorize}));
+vi.mock("@/lib/agent-adapter/worker",()=>({workerReady:mocks.ready}));
+vi.mock("@/lib/agent-adapter/catalog",()=>({discoverWorkers:mocks.discover}));
+vi.mock("@/lib/agent-adapter/store",()=>({createProposal:mocks.create,ownTask:mocks.own,confirmProposal:mocks.confirm,listTasks:mocks.list,companyTasks:vi.fn(),viewTask:(value:unknown)=>value}));
+vi.mock("@/lib/agent-adapter/service",()=>({progressTask:mocks.progress,cancelQueued:mocks.cancel}));
+import {GET,POST} from "@/app/api/agent-adapter/route";
+const id="11111111-1111-4111-8111-111111111111",companyId="22222222-2222-4222-8222-222222222222",delegationId="33333333-3333-4333-8333-333333333333",digest="a".repeat(64);
+const task={id,companyId,delegationId,employeeId:"alice",digest,state:"proposal",prompt:"Compare software for a team of twelve people"};
+const request=(action:string,data:unknown=task,origin="http://localhost")=>new Request("http://localhost/api/agent-adapter",{method:"POST",headers:{origin,"content-type":"application/json"},body:JSON.stringify({action,task:data})});
+beforeEach(()=>{vi.clearAllMocks();mocks.user.mockResolvedValue({id:"alice",embeddedWalletAddress:"alice.testnet"});mocks.membership.mockResolvedValue(undefined);mocks.authorize.mockResolvedValue({});mocks.ready.mockResolvedValue({ready:true});mocks.create.mockResolvedValue(task);mocks.own.mockResolvedValue(task);mocks.confirm.mockResolvedValue({...task,state:"queued"});mocks.progress.mockImplementation(async row=>row);mocks.list.mockResolvedValue([]);});
+describe("direct adapter authorization and approval",()=>{
+ it("rejects a cross-origin submission before reading identity",async()=>{expect((await POST(request("confirm",{id,digest},"https://evil.example"))).status).toBe(403);expect(mocks.user).not.toHaveBeenCalled();});
+ it("requires authentication",async()=>{mocks.user.mockRejectedValue(new Error("Unauthorized: sign in"));expect((await POST(request("confirm",{id,digest}))).status).toBe(401);expect(mocks.progress).not.toHaveBeenCalled();});
+ it("rejects a client-selected execution endpoint",async()=>{const response=await POST(request("prepare",{companyId,delegationId,prompt:task.prompt,requestId:id,workerUrl:"https://evil.example"}));expect(response.status).toBe(400);expect(mocks.create).not.toHaveBeenCalled();});
+ it("prepares a proposal without dispatching work",async()=>{const response=await POST(request("prepare",{companyId,delegationId,prompt:task.prompt,requestId:id}));expect(response.status).toBe(200);expect(mocks.authorize).toHaveBeenCalledWith("alice","alice.testnet",companyId,delegationId);expect(mocks.ready).toHaveBeenCalled();expect(mocks.progress).not.toHaveBeenCalled();});
+ it("does not dispatch when deployment readiness fails",async()=>{mocks.ready.mockRejectedValue(new Error("Worker unavailable"));expect((await POST(request("prepare",{companyId,delegationId,prompt:task.prompt,requestId:id}))).status).toBe(503);expect(mocks.create).not.toHaveBeenCalled();});
+ it("binds confirmation to the original proposal digest",async()=>{expect((await POST(request("confirm",{id,digest:"b".repeat(64)}))).status).toBe(409);expect(mocks.confirm).not.toHaveBeenCalled();expect(mocks.progress).not.toHaveBeenCalled();});
+ it("rechecks permission before confirming and dispatches only the approved job",async()=>{expect((await POST(request("confirm",{id,digest}))).status).toBe(200);expect(mocks.authorize).toHaveBeenCalledWith("alice","alice.testnet",companyId,delegationId);expect(mocks.confirm).toHaveBeenCalledWith(task,digest);expect(mocks.progress).toHaveBeenCalledWith({...task,state:"queued"},"alice.testnet");});
+ it("does not read another workspace's job",async()=>{mocks.own.mockResolvedValue({...task,companyId:delegationId});expect((await GET(new Request(`http://localhost/api/agent-adapter?companyId=${companyId}&id=${id}`))).status).toBe(403);});
+ it("does not confirm if permission has been revoked",async()=>{mocks.authorize.mockRejectedValue(new Error("Forbidden: revoked"));expect((await POST(request("confirm",{id,digest}))).status).toBe(403);expect(mocks.confirm).not.toHaveBeenCalled();});
+});

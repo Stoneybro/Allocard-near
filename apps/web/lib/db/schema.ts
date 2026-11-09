@@ -407,3 +407,32 @@ export const reimbursementJobs = pgTable("reimbursement_jobs", {
   executionId: text("execution_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, table => [index("reimbursement_jobs_employee_idx").on(table.employeeId), index("reimbursement_jobs_company_idx").on(table.companyId)]);
+
+/** Direct demo jobs are durable, scoped to one employee permission and approved intent. */
+export const agentResearchTasks = pgTable("agent_research_tasks", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  companyId: uuid("company_id").notNull().references(() => companies.id),
+  employeeId: uuid("employee_id").notNull().references(() => users.id),
+  delegationId: uuid("delegation_id").notNull().references(() => delegations.id),
+  requestId: uuid("request_id").notNull(),
+  prompt: text("prompt").notNull(),
+  digest: text("digest").notNull(),
+  state: text("state").notNull().default("proposal"),
+  result: text("result"),
+  message: text("message"),
+  reservedMicros: numeric("reserved_micros", { precision: 20, scale: 0 }).notNull().default("0"),
+  workerSession: text("worker_session"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+}, table => [uniqueIndex("research_employee_request_unique").on(table.employeeId, table.requestId), index("research_company_employee_idx").on(table.companyId, table.employeeId), index("research_state_idx").on(table.state)]);
+
+/** At most one billable research invocation per approved direct job. */
+export const agentResearchCalls = pgTable("agent_research_calls", {
+  jobId: uuid("job_id").primaryKey().references(() => agentResearchTasks.id),
+  callId: text("call_id").notNull(),
+  sessionId: text("session_id").notNull(),
+  result: text("result"),
+  createdAt: timestamp("created_at", {withTimezone:true}).notNull().defaultNow(),
+});

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ session: vi.fn(), enabled: vi.fn(), prepare: vi.fn(), submit: vi.fn(), companyEnabled: vi.fn(), companyPrepare: vi.fn(), companySubmit: vi.fn() }));
+const mocks = vi.hoisted(() => ({ session: vi.fn(), enabled: vi.fn(), prepare: vi.fn(), submit: vi.fn(), companyEnabled: vi.fn(), companyPrepare: vi.fn(), companySubmit: vi.fn(), adapterPrepare: vi.fn(), adapterSubmit: vi.fn() }));
 vi.mock("@/lib/session", () => ({ getSessionIdentity: mocks.session }));
 vi.mock("@/lib/near-sponsor-server", () => ({
+  prepareSponsoredAdapter: mocks.adapterPrepare, submitSponsoredAdapter: mocks.adapterSubmit,
   companySponsorshipEnabled: mocks.companyEnabled, prepareSponsoredCompany: mocks.companyPrepare, submitSponsoredCompany: mocks.companySubmit,
   sponsoredCompanySchema: { safeParse: () => ({ success: true }), parse: (value: unknown) => value },
   sponsoredCompanyProofSchema: { safeParse: () => ({ success: true }), parse: (value: unknown) => value },
@@ -45,4 +46,14 @@ describe("sponsorship API boundary", () => {
     expect(response.status).toBe(503);
     expect(JSON.stringify(await response.json())).not.toContain("secret");
   });
+});
+
+it("routes only strictly validated adapter permission requests to the sponsor",async()=>{
+ const permission={treasury:"shared.testnet",delegationId:"11111111-1111-4111-8111-111111111111",parentId:"7",spec:{delegate:"adapter.testnet",valid_from_ms:"0",redelegation_depth:0,rules:[{asset:{type:"NativeNear"},recipients:{type:"Any"},lifetime_limit:"10",acknowledge_unbounded_budget:false}]}};
+ mocks.adapterPrepare.mockResolvedValue({enabled:true,nonce:"2",maxBlockHeight:"220"});
+ const response=await POST(request({operation:"prepare-adapter",...permission}));
+ expect(response.status).toBe(200);expect(mocks.adapterPrepare).toHaveBeenCalledWith(permission);
+ mocks.adapterPrepare.mockClear();
+ expect((await POST(request({operation:"prepare-adapter",...permission,deposit:"1"}))).status).toBe(400);
+ expect(mocks.adapterPrepare).not.toHaveBeenCalled();
 });

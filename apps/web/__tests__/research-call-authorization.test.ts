@@ -1,0 +1,29 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("server-only", () => ({}));
+const mocks = vi.hoisted(() => ({ execute: vi.fn(), after: vi.fn(), drain: vi.fn() }));
+vi.mock("@/lib/db", () => ({ db: { execute: mocks.execute } }));
+vi.mock("next/server", () => ({ after: mocks.after }));
+vi.mock("@/lib/agent-adapter/service", () => ({ drainQueue: mocks.drain }));
+import { POST } from "@/app/api/internal/agent-adapter/research/route";
+const binding = { action: "claim", jobId: "00000000-0000-4000-8000-000000000001", digest: "a".repeat(64), sessionId: "session-a", callId: "call-a" };
+const request = (body: unknown, authorized = true) => new Request("https://allocard.test/api/internal/agent-adapter/research", { method: "POST", headers: authorized ? { authorization: `Bearer ${"s".repeat(40)}` } : {}, body: JSON.stringify(body) });
+beforeEach(() => { vi.clearAllMocks(); vi.stubEnv("ALLOCARD_AGENT_SECRET", "s".repeat(40)); });
+describe("durable billable research authorization", () => {
+ it("rejects unauthenticated workers before accessing jobs", async () => { expect((await POST(request(binding, false))).status).toBe(401); expect(mocks.execute).not.toHaveBeenCalled(); });
+ it("returns the stored brief only for the original successful claim", async () => {
+  mocks.execute.mockResolvedValueOnce({ rows: [{ job_id: binding.jobId }] }).mockResolvedValueOnce({ rows: [{ prompt: "Authoritative brief", session_id: binding.sessionId, call_id: binding.callId }] });
+  expect(await (await POST(request(binding))).json()).toEqual({ cached: false, prompt: "Authoritative brief" });
+ });
+ it("refuses a replay while the original model call is outstanding", async () => {
+  mocks.execute.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ prompt: "Brief", session_id: binding.sessionId, call_id: binding.callId }] });
+  expect((await POST(request(binding))).status).toBe(409);
+ });
+ it("does not expose a report to a different session", async () => {
+  mocks.execute.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ result: "Saved report", session_id: "other-session", call_id: binding.callId }] });
+  expect((await POST(request(binding))).status).toBe(409);
+ });
+ it("lets the original call recover its saved report without another billable claim", async () => {
+  mocks.execute.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ result: "Saved report", session_id: binding.sessionId, call_id: binding.callId }] });
+  expect(await (await POST(request(binding))).json()).toEqual({ cached: true, result: "Saved report" });
+ });
+});

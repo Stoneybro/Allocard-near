@@ -6,14 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ auth: {} as Record<string, unknown>, profile: vi.fn(), load: vi.fn(), replace: vi.fn() }));
 vi.mock("@/components/AuthProvider", () => ({ useAuth: () => mocks.auth }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: mocks.replace }) }));
-vi.mock("@/app/actions/identity", () => ({ getWalletProfile: mocks.profile, getWorkspaceOptions: vi.fn() }));
+vi.mock("@/app/actions/identity", () => ({ getWorkspaceOptions: vi.fn() }));
+vi.mock("@/lib/dashboard-read", () => ({ dashboardRead: (view: string) => view === "profile" ? mocks.profile() : mocks.load() }));
 import { useDashboardData } from "@/hooks/use-account-queries";
 type Snapshot = { company: { id: string }; employees: string[]; remaining: string };
 let root: Root; let host: HTMLDivElement; let client: QueryClient;
 let dashboard: ReturnType<typeof useDashboardData<Snapshot>>;
 let role: "employer" | "employee";
 function Probe() {
-  const current = useDashboardData<Snapshot>(role, mocks.load);
+  const current = useDashboardData<Snapshot>(role);
   useEffect(() => { dashboard = current; }, [current]);
   return <span>{current.error?.message ?? current.dashboardState?.remaining ?? "loading"}</span>;
 }

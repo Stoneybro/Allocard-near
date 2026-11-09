@@ -1,5 +1,8 @@
 "use server";
 
+import { adapterAccount } from "@/lib/agent-adapter/config";
+import { ADAPTER_NAME } from "@/lib/agent-adapter/shared";
+
 import { readLiveNativeCapacity, capacityReadError } from "@/lib/live-capacity";
 
 import { parseTreasuryReference, computeCompanyId } from "@allocard/delegation-sdk";
@@ -617,20 +620,19 @@ export async function getWalletProfile(address: string): Promise<WalletProfile> 
     return result;
   }
 
-  const memberships = await withRetry(() => db.select({
+  const [memberships, [preference]] = await Promise.all([withRetry(() => db.select({
     membership: companyMemberships,
     company: companies,
   }).from(companyMemberships).innerJoin(companies, eq(companyMemberships.companyId, companies.id))
     .where(and(eq(companyMemberships.userId, user.id), eq(companyMemberships.status, "active"))),
-  "getWalletProfile:memberships");
+  "getWalletProfile:memberships"), db.select().from(workspacePreferences)
+    .where(eq(workspacePreferences.userId, user.id)).limit(1)]);
 
   if (memberships.length === 0) {
     const result: WalletProfile = { status: "new", user: null, company: null };
     return result;
   }
 
-  const [preference] = await db.select().from(workspacePreferences)
-    .where(eq(workspacePreferences.userId, user.id)).limit(1);
   const selected = memberships.find(({ membership }) => membership.companyId === preference?.companyId);
 
   if (!selected && memberships.length > 1) {
@@ -1933,7 +1935,19 @@ export async function createAgentRedelegation(input: {
 }): Promise<EmployeeDashboardState> {
   await getEmployeeProfileOrThrow(input.walletAddress);
   await validateSessionWallet(input.walletAddress);
-  throw new Error("Additional automated agents are unavailable. Use employee payments or the company reimbursement service.");
+  const profile = await getEmployeeProfileOrThrow(input.walletAddress);
+  const account = adapterAccount();
+  const [agent] = await db.select().from(agents).where(eq(agents.id, input.agentId)).limit(1);
+  if (!account || !agent?.isActive || agent.name !== ADAPTER_NAME || agent.smartAccountAddress !== account || agent.signerAddress !== account) throw new Error("Only the configured purchasing research adapter is available.");
+  const parent = await getEmployeeInboundDelegationOrThrow(profile.user.id, profile.company.id);
+  if (!parent.delegationHash) throw new Error("Activate the employee allowance before creating a child permission.");
+  await db.batch([
+    db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${profile.user.id + parent.id + agent.id}))`),
+    db.execute(sql`INSERT INTO delegations (delegator_type, delegator_id, delegatee_type, delegatee_id, parent_delegation_id, status, canvas_position_x, canvas_position_y)
+      SELECT 'user', ${profile.user.id}::uuid, 'agent', ${agent.id}::uuid, ${parent.id}::uuid, 'pending_config', ${input.canvasPositionX ?? 420}, ${input.canvasPositionY ?? 220}
+      WHERE NOT EXISTS (SELECT 1 FROM delegations WHERE delegator_type='user' AND delegator_id=${profile.user.id}::uuid AND delegatee_type='agent' AND delegatee_id=${agent.id}::uuid AND parent_delegation_id=${parent.id}::uuid AND status IN ('pending_config','active'))`),
+  ]);
+  return getEmployeeDashboardState(input.walletAddress);
 }
 
 
@@ -2019,7 +2033,11 @@ export async function activateEmployeeDelegation(input: {
   const treasury = profile.company?.smartAccountAddress;
   if (!treasury || !/^[0-9]+$/.test(input.delegationHash)) throw new Error("A confirmed child permission is required");
   const reader = treasuryReader(treasury);
+  const parent = await getEmployeeInboundDelegationOrThrow(user.id, profile.company.id);
+  const [agent] = await db.select().from(agents).where(eq(agents.id, delegation.delegateeId!)).limit(1);
+  if (!agent || !agent.isActive || agent.name !== ADAPTER_NAME || agent.smartAccountAddress !== adapterAccount() || delegation.parentDelegationId !== parent.id) throw new Error("Unsupported adapter or parent permission");
   const permission = await reader.getPermission(input.delegationHash);
+  if (permission?.delegate !== agent.smartAccountAddress || permission?.parent_id !== parent.delegationHash) throw new Error("On-chain child belongs to another adapter or parent");
   if (!permission || permission.issuer !== input.walletAddress || permission.revoked || permission.parent_id == null) throw new Error("On-chain child permission does not match the signing employee");
 
   await db

@@ -85,6 +85,20 @@
       "when": 1794009600000,
       "tag": "0011_near_sessions_and_payouts",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794182400000,
+      "tag": "0012_agent_research",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794182400001,
+      "tag": "0013_agent_research_calls",
+      "breakpoints": true
     }
   ]
 }

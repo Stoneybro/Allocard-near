@@ -3,10 +3,14 @@ import { KeyPair, utils } from "near-api-js";
 import { Action, createTransaction, Signature, SignedTransaction, transfer } from "near-api-js/lib/transaction";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { computeCompanyId, parseTreasuryReference, treasuryReference } from "@allocard/delegation-sdk";
+import { computeCompanyId, decodeMutationId, parseTreasuryReference, treasuryReference } from "@allocard/delegation-sdk";
 import { requireEmployeeCompany, requireSessionUser } from "./auth-guard";
 import { db } from "./db";
-import { companies, companyMemberships, delegations, users } from "./db/schema";
+import { agents, companies, companyMemberships, delegations, users } from "./db/schema";
+import { adapterAccount } from "./agent-adapter/config";
+import { ADAPTER_NAME } from "./agent-adapter/shared";
+import { sponsoredAdapterSchema, sponsoredAdapterProofSchema } from "./adapter-permission-schema";
+import { sponsoredAdapterDelegate } from "./near-sponsored-action";
 import { withRetry } from "./db/withRetry";
 import { getSessionIdentity } from "./session";
 import { nearQuery, treasuryReader, verifyTreasuryOwner, assertEmployeePermission } from "./near-server";
@@ -17,6 +21,8 @@ import { nextAccessKeyNonce } from "./near-nonce";
 import { MAX_SPONSORED_COMPANY_DEPOSIT, canonicalSponsorJson, sponsoredCompanyDelegate, sponsoredDelegate, sponsoredSigningBytes, SPONSORED_VALID_BLOCKS, type SponsoredCompany, type SponsoredCompanyProof, type SponsoredPayment, type SponsoredProof } from "./near-sponsored-action";
 import { acquireSponsorKey, allocateSponsorNonce, claimSponsorJob, findSponsorJob, finishSponsorJob, releaseSponsorKey, releaseUnbroadcastJob, saveSponsorTransaction, takeCompanyRegistrationGrant, takeSponsorQuota, type SponsorJob } from "./near-sponsor-store";
 import { invalidateNearReadCache } from "./near-read-coordinator";
+import { NearRpcError, describeNearRpcError } from "./near-rpc-error";
+import { releaseRejectedSponsorJob } from "./near-sponsor-store";
 
 const decimal = z.string().regex(/^(0|[1-9][0-9]*)$/).max(39);
 const account = z.string().min(2).max(64).regex(/^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/);
@@ -92,9 +98,14 @@ async function relayRpc(method: string, params: object, txHash?: string): Promis
     const response = await fetch(nearRpcServerUrl(), { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
       body: JSON.stringify({ jsonrpc: "2.0", id: "allocard-sponsor", method, params }), signal: AbortSignal.timeout(method === "send_tx" || method === "tx" ? 40000 : 10000) });
     const payload = await response.json();
+    if (payload.error?.cause) {
+      const detail = describeNearRpcError(payload.error);
+      throw new NearRpcError(detail.message, detail.rpcCause, detail.invalidReason);
+    }
     if (!response.ok || payload.error || !payload.result) throw new Error("RPC rejected request");
     return payload.result;
-  } catch {
+  } catch (caught) {
+    if (caught instanceof NearRpcError && caught.rpcCause === "INVALID_TRANSACTION") throw caught;
     throw new Error(txHash ? `Sponsored transaction ${txHash} is not yet confirmed. Retry this same action to check its status; it will not be submitted again.` : "The gas sponsor could not reach NEAR testnet. Retry shortly.");
   }
 }
@@ -125,6 +136,7 @@ async function submitOuter(id: string, actor: string, intentHash: string, receiv
   // does not strand a payment intent. Different requests never race nonces.
   const lease = await acquireSponsorKey(keyId);
   let ownsJob = false;
+  let broadcastHash: string | undefined;
   try {
     const claimed = await claimSponsorJob({ id, actor, intentHash, relayerId: config.accountId });
     if (!claimed) {
@@ -158,6 +170,7 @@ async function submitOuter(id: string, actor: string, intentHash: string, receiv
     const signature = config.key.sign(digest);
     const signed = new SignedTransaction({ transaction, signature: new Signature({ keyType: config.key.getPublicKey().keyType, data: signature.signature }) });
     const transactionHash = utils.serialize.base_encode(digest);
+    broadcastHash = transactionHash;
     const serialized = Buffer.from(signed.encode()).toString("base64");
     // Never broadcast before the exact signed transaction and hash are durable.
     if (registrationPrincipal) await takeCompanyRegistrationGrant(hash(registrationPrincipal));
@@ -172,7 +185,8 @@ async function submitOuter(id: string, actor: string, intentHash: string, receiv
   } catch (caught) {
     // A failed preflight is retryable. Once a transaction hash is stored, retain
     // the journal even on timeouts, and only ever reconcile that transaction.
-    if (ownsJob) await releaseUnbroadcastJob(id);
+    if (ownsJob && broadcastHash && caught instanceof NearRpcError && caught.rpcCause === "INVALID_TRANSACTION") await releaseRejectedSponsorJob(id, broadcastHash);
+    else if (ownsJob) await releaseUnbroadcastJob(id);
     throw caught;
   } finally {
     await releaseSponsorKey(keyId, lease.leaseUntil);
@@ -286,4 +300,105 @@ export async function submitSponsoredCompany(proof: SponsoredCompanyProof) {
   if (!Number.isSafeInteger(access.block_height) || delegate.maxBlockHeight <= BigInt(access.block_height) || delegate.maxBlockHeight > BigInt(access.block_height + SPONSORED_VALID_BLOCKS)) throw new Error("The owner meta-transaction expired or has an excessive validity window");
   const action = new Action({ signedDelegate: { delegateAction: delegate, signature: new Signature({ keyType: delegate.publicKey.keyType, data: Buffer.from(proof.signature.slice(2), "hex") }) } });
   return { enabled: true, outcome: await submitOuter(id, identity.walletAddress, intentHash, identity.walletAddress, [action], identity.providerUserId) };
+}
+
+/** Only the owned adapter's employee child permission can use this subsidy. */
+async function authorizeAdapterPermission(permission: import("./near-sponsored-action").SponsoredAdapterPermission) {
+  const identity = await getSessionIdentity();
+  if (!identity || !/^[0-9a-f]{64}$/.test(identity.walletAddress) || identity.providerUserId.startsWith("near:")) throw new Error("Verified employee wallet required");
+  const user = await requireSessionUser();
+  if (user.privyUserId !== identity.providerUserId) throw new Error("Employee identity mismatch");
+  const [company] = await db.select().from(companies).where(eq(companies.smartAccountAddress, permission.treasury)).limit(1);
+  if (!company) throw new Error("Registered company treasury required");
+  await requireEmployeeCompany(user.id, company.id);
+  const [child] = await db.select().from(delegations).where(eq(delegations.id, permission.delegationId)).limit(1);
+  if (!child || child.delegatorType !== "user" || child.delegatorId !== user.id || child.delegateeType !== "agent" || !["pending_config", "active"].includes(child.status) || !child.parentDelegationId) throw new Error("Only your adapter permission can be sponsored");
+  const [parent] = await db.select().from(delegations).where(eq(delegations.id, child.parentDelegationId)).limit(1);
+  if (!parent || parent.delegatorType !== "company" || parent.delegatorId !== company.id || parent.delegateeType !== "user" || parent.delegateeId !== user.id || parent.status !== "active" || parent.delegationHash !== permission.parentId || parent.treasuryReference !== permission.treasury) throw new Error("Permission belongs to another employee, parent or company");
+  const [agent] = await db.select().from(agents).where(eq(agents.id, child.delegateeId!)).limit(1);
+  const adapter = adapterAccount();
+  if (!adapter || !agent?.isActive || agent.name !== ADAPTER_NAME || agent.smartAccountAddress !== adapter || agent.signerAddress !== adapter || permission.spec.delegate !== adapter) throw new Error("Only the configured Allocard adapter can receive sponsored permission");
+  return { identity, company, child };
+}
+async function previewAdapterPermission(actor: string, company: typeof companies.$inferSelect, permission: import("./near-sponsored-action").SponsoredAdapterPermission) {
+  const [owner] = await db.select().from(users).where(eq(users.id, company.ownerId)).limit(1);
+  if (!owner) throw new Error("Company owner missing");
+  const config = await verifyTreasuryOwner(permission.treasury, owner.nearAccountId ?? owner.embeddedWalletAddress);
+  const reader = treasuryReader(permission.treasury);
+  const path = await reader.getPermissionPath(permission.parentId);
+  const parent = path[0];
+  if (config.paused || path.length !== 1 || !parent || parent.id !== permission.parentId || parent.delegate !== actor || parent.issuer !== config.owner || parent.parent_id != null || parent.redelegation_depth < 1) throw new Error("A live company root permission allowing redelegation is required");
+  const now = BigInt(Date.now());
+  if (parent.revoked || parent.epoch !== config.authority_epoch || BigInt(parent.valid_from_ms) > now || (parent.expires_at_ms && BigInt(parent.expires_at_ms) <= now)) throw new Error("Employee permission is expired or revoked");
+  for (const principal of [actor, config.owner, permission.spec.delegate]) {
+    if (await reader.caller.viewFunction({contractId:reader.contractId,methodName:"is_principal_blocked",args:{account:principal}})) throw new Error("Permission principal is blocked");
+  }
+  const spec = permission.spec, rule = spec.rules[0], parentRule = parent.rules.find(v=>v.asset.type==="NativeNear");
+  if (!parentRule || BigInt(spec.valid_from_ms) < BigInt(parent.valid_from_ms) || (spec.expires_at_ms && BigInt(spec.expires_at_ms) <= now) || (parent.expires_at_ms && (!spec.expires_at_ms || BigInt(spec.expires_at_ms)>BigInt(parent.expires_at_ms))) || (parent.max_executions != null && (spec.max_executions == null || spec.max_executions>parent.max_executions))) throw new Error("Child permission exceeds its parent lifetime or execution limit");
+  if (parent.max_executions != null) {
+    const usage=await reader.caller.viewFunction({contractId:reader.contractId,methodName:"get_permission_usage",args:{permission_id:parent.id}});
+    if (!Number.isSafeInteger(usage?.executions_count) || usage.executions_count>=parent.max_executions) throw new Error("Parent execution limit reached");
+  }
+  for (const limit of ["lifetime_limit","max_per_action"] as const) {
+    if (parentRule[limit] != null && (rule[limit] == null || BigInt(rule[limit]!)>BigInt(parentRule[limit]!))) throw new Error("Child permission exceeds parent spending limits");
+  }
+  if (parentRule.min_per_action != null && (rule.min_per_action == null || BigInt(rule.min_per_action)<BigInt(parentRule.min_per_action))) throw new Error("Child minimum is wider than its parent");
+  const parentRecipients = parentRule.recipients;
+  if (parentRecipients.type==="Only" && (rule.recipients.type!=="Only" || rule.recipients.accounts.some(account=>!parentRecipients.accounts.includes(account)))) throw new Error("Child recipients exceed parent policy");
+  for (const policy of ["fixed_window","streaming","approval"] as const) {
+    if (canonicalSponsorJson(rule[policy]??null)!==canonicalSponsorJson(parentRule[policy]??null)) throw new Error("Sponsored child must inherit parent window, streaming and approval policy");
+  }
+}
+function adapterJobId(actor: string, permission: import("./near-sponsored-action").SponsoredAdapterPermission) {
+  return hash(`adapter_permission\0${permission.treasury}\0${actor}\0${permission.delegationId}`);
+}
+async function adapterResult(outcome: RpcOutcome, permission: import("./near-sponsored-action").SponsoredAdapterPermission, actor: string) {
+  const scope = parseTreasuryReference(permission.treasury);
+  const receipts = (outcome as RpcOutcome & { receipts_outcome?: Array<{ outcome: { executor_id: string; status: { SuccessValue?: string; Failure?: unknown } } }> }).receipts_outcome ?? [];
+  const candidates = new Set<string>();
+  for (const receipt of receipts.filter(value => value.outcome.executor_id === scope.contractId)) {
+    if (receipt.outcome.status.Failure !== undefined) throw new Error(`Adapter permission creation failed: ${JSON.stringify(receipt.outcome.status.Failure)}`);
+    if (receipt.outcome.status.SuccessValue) candidates.add(decodeMutationId({status:receipt.outcome.status}));
+  }
+  if (outcome.status.SuccessValue) candidates.add(decodeMutationId(outcome));
+  if (candidates.size !== 1) throw new Error("Sponsored transaction confirmed but its child permission result is not available. Retry the same rules to recover the original transaction; do not create a replacement.");
+  const [id] = candidates;
+  const actual = await treasuryReader(permission.treasury).getPermission(id);
+  if (!actual || actual.revoked || actual.issuer !== actor || actual.parent_id !== permission.parentId || actual.delegate !== permission.spec.delegate) throw new Error("The confirmed child permission does not match this employee, parent and adapter");
+  return {...outcome,adapterPermissionId:id};
+}
+export async function prepareSponsoredAdapter(input: import("./near-sponsored-action").SponsoredAdapterPermission) {
+  const permission = sponsoredAdapterSchema.parse(input);
+  sponsorConfig();
+  const {identity,company,child}=await authorizeAdapterPermission(permission);
+  await assertTestnet();
+  const intentHash=hash(canonicalSponsorJson(permission));
+  const existing=await findSponsorJob(adapterJobId(identity.walletAddress,permission));
+  if(existing)return {enabled:true,outcome:await adapterResult(await recover(existing,intentHash),permission,identity.walletAddress)};
+  if(child.status!=="pending_config")throw new Error("Adapter permission is already active");
+  await previewAdapterPermission(identity.walletAddress,company,permission);
+  const access=await ensureSigningAccount(identity.walletAddress);
+  if(!Number.isSafeInteger(access.block_height))throw new Error("Invalid NEAR block height");
+  return {enabled:true,nonce:nextAccessKeyNonce(access.nonce).toString(),maxBlockHeight:String(access.block_height+SPONSORED_VALID_BLOCKS)};
+}
+export async function submitSponsoredAdapter(input: import("./near-sponsored-action").SponsoredAdapterProof) {
+  const proof=sponsoredAdapterProofSchema.parse(input);
+  const {nonce,maxBlockHeight,signature,...permission}=proof;
+  sponsorConfig();
+  const {identity,company,child}=await authorizeAdapterPermission(permission);
+  await assertTestnet();
+  const id=adapterJobId(identity.walletAddress,permission),intentHash=hash(canonicalSponsorJson(permission));
+  const existing=await findSponsorJob(id);
+  if(existing)return {enabled:true,outcome:await adapterResult(await recover(existing,intentHash),permission,identity.walletAddress)};
+  if(child.status!=="pending_config")throw new Error("Adapter permission is already active");
+  const delegate=sponsoredAdapterDelegate(identity.walletAddress,permission,nonce,maxBlockHeight);
+  const digest=createHash("sha256").update(sponsoredSigningBytes(delegate)).digest();
+  const publicKey=createPublicKey({key:Buffer.concat([Buffer.from("302a300506032b6570032100","hex"),Buffer.from(identity.walletAddress,"hex")]),format:"der",type:"spki"});
+  if(!verify(null,digest,publicKey,Buffer.from(signature.slice(2),"hex")))throw new Error("Invalid adapter permission meta-transaction signature");
+  const access=await nearQuery({request_type:"view_access_key",account_id:identity.walletAddress,public_key:delegate.publicKey.toString()});
+  if(access.permission!=="FullAccess" || delegate.nonce!==nextAccessKeyNonce(access.nonce))throw new Error("Employee nonce changed; retry the same permission with a fresh signature");
+  if(!Number.isSafeInteger(access.block_height)||delegate.maxBlockHeight<=BigInt(access.block_height)||delegate.maxBlockHeight>BigInt(access.block_height+SPONSORED_VALID_BLOCKS))throw new Error("Adapter meta-transaction expired or has an excessive validity window");
+  await previewAdapterPermission(identity.walletAddress,company,permission);
+  const action=new Action({signedDelegate:{delegateAction:delegate,signature:new Signature({keyType:delegate.publicKey.keyType,data:Buffer.from(signature.slice(2),"hex")})}});
+  return {enabled:true,outcome:await adapterResult(await submitOuter(id,identity.walletAddress,intentHash,identity.walletAddress,[action]),permission,identity.walletAddress)};
 }

@@ -14,7 +14,8 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:check": "node scripts/check_db.mjs",
-    "reimbursement:configure": "node scripts/configure_reimbursement.mjs"
+    "reimbursement:configure": "node scripts/configure_reimbursement.mjs",
+    "adapter:configure": "node scripts/configure_agent_adapter.mjs"
   },
   "dependencies": {
     "@allocard/delegation-sdk": "workspace:*",

@@ -1,5 +1,7 @@
 "use client";
 
+import { CompanyResearchActivity } from "@/components/purchasing-research-panel";
+
 import { useSettlementRefresh } from "@/hooks/use-account-queries";
 import { DashboardLoading } from "@/components/dashboard-loading";
 
@@ -329,7 +331,7 @@ export function EmployerClient({
   const refreshAfterSettlement = useSettlementRefresh();
   const currentAuthAddress = auth.status === "authenticated" ? (auth.address) : undefined;
   const { profile, setProfile, dashboardState, setDashboardState, mutate: mutateDashboard, refresh: refreshDashboard, error: queryError } =
-    useDashboardData("employer", getCompanyDashboardState, initialProfile, initialDashboardState);
+    useDashboardData<CompanyDashboardState>("employer", initialProfile, initialDashboardState);
   const [selectedDelegationId, setSelectedDelegationId] = useState<string | null>(
     null,
   );
@@ -973,6 +975,8 @@ export function EmployerClient({
           onDirectTopUp={handleTopUpTreasury}
           isToppingUp={isToppingUp}
         />
+
+        <CompanyResearchActivity companyId={company.id} />
 
         <Tabs defaultValue="canvas" className="w-full">
           <TabsList className="mb-4">

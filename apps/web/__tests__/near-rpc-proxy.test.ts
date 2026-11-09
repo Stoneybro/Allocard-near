@@ -17,6 +17,16 @@ function signed(signerId:string) {
 beforeEach(()=>vi.resetAllMocks());
 afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs();});
 describe("same-origin NEAR RPC gateway",()=>{
+ it("reports and logs an unobserved transaction without hiding the provider reason",async()=>{
+  const log=vi.spyOn(console,"error").mockImplementation(()=>{});
+  try {
+   vi.stubGlobal("fetch",vi.fn(async()=>Response.json({error:{code:-32000,message:"Server error",cause:{name:"TIMEOUT_ERROR",info:{cause:"NOT_OBSERVED"}}}})));
+   const response=await POST(request("tx",{tx_hash:"existing-hash",sender_account_id:"employee.testnet",wait_until:"FINAL"}));
+   expect((await response.json()).error.message).toBe("Server error: TIMEOUT_ERROR (NOT_OBSERVED)");
+   expect(log).toHaveBeenCalledWith("[near/rpc] upstream rejected request",expect.objectContaining({method:"tx",txHash:"existing-hash",detail:"TIMEOUT_ERROR (NOT_OBSERVED)"}));
+  } finally {log.mockRestore();}
+ });
+
  it.each([
   ["access key ed25519:example does not exist while viewing", "signing key is not registered"],
   ["account employee.testnet does not exist while viewing", "account does not exist"],

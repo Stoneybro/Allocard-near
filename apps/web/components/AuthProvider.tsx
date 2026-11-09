@@ -14,7 +14,7 @@ import { withTimeout } from "@/lib/request-timeout";
 export type AuthState =
   | { status: "connecting" }
   | { status: "unauthenticated"; connect: () => void; connecting: boolean; error?: string }
-  | { status: "authenticated"; address: string; accountId: string; providerUserId: string; email: string; authMethod: "privy"; disconnect: () => Promise<void>; establishSession: () => Promise<SessionIdentity>; caller: NearCaller; sendActions: NearActionSender };
+  | { status: "authenticated"; address: string; accountId: string; providerUserId: string; email: string; authMethod: "privy"; disconnect: () => Promise<void>; establishSession: () => Promise<SessionIdentity>; caller: NearCaller; sendActions: NearActionSender; createAdapterPermission: ReturnType<typeof createPrivyNearTransport>["createAdapterPermission"] };
 const AuthContext = createContext<AuthState>({ status: "connecting" });
 const privyConfig = {
   loginMethods: ["email", "google"] as ("email" | "google")[],
@@ -139,6 +139,11 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
     const base = createPrivyNearTransport(address, signHash);
     const invalidate = () => queryClient.invalidateQueries({ queryKey: accountQueryKey(principal, address) });
     return {
+      createAdapterPermission: async (...args: Parameters<typeof base.createAdapterPermission>) => {
+        const result = await base.createAdapterPermission(...args);
+        void invalidate().catch(() => undefined);
+        return result;
+      },
       caller: { ...base.caller, functionCall: async (...args: Parameters<NonNullable<NearCaller["functionCall"]>>) => {
         const result = await base.caller.functionCall!(...args);
         void invalidate().catch(() => undefined);

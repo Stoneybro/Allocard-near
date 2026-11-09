@@ -59,3 +59,41 @@ describe("browser company registration sponsorship", () => {
     expect(signer).not.toHaveBeenCalled();
   });
 });
+
+describe("browser adapter permission sponsorship",()=>{
+ const permission={treasury:"shared.testnet#"+"c".repeat(64),delegationId:"11111111-1111-4111-8111-111111111111",parentId:"7",spec:{delegate:"a".repeat(64),valid_from_ms:"0",redelegation_depth:0,rules:[{asset:{type:"NativeNear" as const},recipients:{type:"Any" as const},lifetime_limit:"10",acknowledge_unbounded_budget:false}]}};
+ it("signs only a bounded child permission with zero deposit",async()=>{
+  const {sponsoredCreateAdapter}=await import("@/lib/near-sponsor-client");
+  const rpc=vi.fn().mockResolvedValueOnce(Response.json({enabled:true,nonce:"2",maxBlockHeight:"220"})).mockResolvedValueOnce(Response.json({outcome:{status:{SuccessValue:"Ijki"}}}));vi.stubGlobal("fetch",rpc);
+  const sign=vi.fn(async()=>`0x${"00".repeat(64)}` as `0x${string}`);
+  await sponsoredCreateAdapter(employee,permission,sign);
+  const {sponsoredAdapterDelegate}=await import("@/lib/near-sponsored-action");
+  const delegate=sponsoredAdapterDelegate(employee,permission,"2","220");
+  expect(delegate.actions[0].functionCall?.deposit).toBe(0n);
+  expect(sign).toHaveBeenCalledWith(`0x${createHash("sha256").update(sponsoredSigningBytes(delegate)).digest("hex")}`);
+  expect(JSON.parse(rpc.mock.calls[1][1].body)).toMatchObject({operation:"submit-adapter",delegationId:permission.delegationId,parentId:"7"});
+ });
+ it("recovers an existing outcome without another signature",async()=>{
+  const {sponsoredCreateAdapter}=await import("@/lib/near-sponsor-client");
+  vi.stubGlobal("fetch",vi.fn().mockResolvedValue(Response.json({enabled:true,outcome:{status:{SuccessValue:"Ijki"}}})));const sign=vi.fn();
+  await sponsoredCreateAdapter(employee,permission,sign);expect(sign).not.toHaveBeenCalled();
+ });
+ it("never charges an unfunded employee as a fallback when sponsorship is disabled",async()=>{
+  const {sponsoredCreateAdapter}=await import("@/lib/near-sponsor-client");
+  vi.stubGlobal("fetch",vi.fn().mockResolvedValue(Response.json({enabled:false})));const sign=vi.fn();
+  await expect(sponsoredCreateAdapter(employee,permission,sign)).rejects.toThrow("sponsorship is disabled");expect(sign).not.toHaveBeenCalled();
+ });
+});
+
+it("retains the exact adapter intent after an interrupted submit and recovers without another signature",async()=>{
+ const {sponsoredCreateAdapter}=await import("@/lib/near-sponsor-client");
+ const storage=new Map<string,string>();
+ vi.stubGlobal("localStorage",{getItem:(key:string)=>storage.get(key)??null,setItem:(key:string,value:string)=>storage.set(key,value),removeItem:(key:string)=>storage.delete(key)});
+ const permission={treasury:"shared.testnet",delegationId:"11111111-1111-4111-8111-111111111111",parentId:"7",spec:{delegate:"a".repeat(64),valid_from_ms:"100",redelegation_depth:0,rules:[{asset:{type:"NativeNear" as const},recipients:{type:"Any" as const},lifetime_limit:"10",acknowledge_unbounded_budget:false}]}};
+ const rpc=vi.fn().mockResolvedValueOnce(Response.json({enabled:true,nonce:"2",maxBlockHeight:"220"})).mockRejectedValueOnce(new Error("network reset")).mockResolvedValueOnce(Response.json({enabled:true,outcome:{status:{SuccessValue:"Ijki"}}}));vi.stubGlobal("fetch",rpc);
+ const sign=vi.fn(async()=>`0x${"00".repeat(64)}` as `0x${string}`);
+ await expect(sponsoredCreateAdapter(employee,permission,sign)).rejects.toThrow("could not be confirmed");
+ await sponsoredCreateAdapter(employee,{...permission,spec:{...permission.spec,valid_from_ms:"200"}},sign);
+ expect(sign).toHaveBeenCalledTimes(1);
+ expect(JSON.parse(rpc.mock.calls[2][1].body).spec.valid_from_ms).toBe("100");
+});

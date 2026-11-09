@@ -6,7 +6,8 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import { accountQueryKey } from "@/lib/query-keys";
 import { withTimeout } from "@/lib/request-timeout";
-import { getWalletProfile, getWorkspaceOptions, type WalletProfile } from "@/app/actions/identity";
+import { getWorkspaceOptions, type WalletProfile } from "@/app/actions/identity";
+import { dashboardRead } from "@/lib/dashboard-read";
 
 export function useAccountScope() {
   const auth = useAuth();
@@ -26,7 +27,7 @@ export function useWorkspaceOptions() {
 
 /** Profile, company selection, permissions, team, policy and budgets share one cache. */
 export function useDashboardData<T extends { company: { id: string } }>(
-  role: "employer" | "employee", load: (address: string) => Promise<T>,
+  role: "employer" | "employee",
   initialProfile?: WalletProfile | null, initialDashboard?: T | null,
 ) {
   const router = useRouter();
@@ -36,7 +37,7 @@ export function useDashboardData<T extends { company: { id: string } }>(
   const matchingInitial = !!address && initialProfile?.user?.walletAddress === address;
   const profileQuery = useQuery<WalletProfile | null>({
     queryKey: profileKey, enabled: !!address, refetchInterval: 30_000,
-    queryFn: () => withTimeout(getWalletProfile(address!), "Your profile took too long to load. Please retry."),
+    queryFn: ({ signal }) => dashboardRead<WalletProfile | null>("profile", address!, signal),
     initialData: matchingInitial ? initialProfile : undefined,
   });
   const profile = address ? profileQuery.data ?? null : null;
@@ -44,7 +45,7 @@ export function useDashboardData<T extends { company: { id: string } }>(
   const dashboardKey = useMemo(() => [...key, "dashboard", role, companyId] as const, [key, role, companyId]);
   const dashboardQuery = useQuery<T | null>({
     refetchInterval: 30_000, queryKey: dashboardKey, enabled: !!address && profile?.status === role && !!companyId,
-    queryFn: () => withTimeout(load(address!), "Your dashboard took too long to load. Please retry."),
+    queryFn: ({ signal }) => dashboardRead<T | null>(role, address!, signal),
     initialData: matchingInitial && initialDashboard?.company.id === companyId ? initialDashboard : undefined,
   });
   useEffect(() => {

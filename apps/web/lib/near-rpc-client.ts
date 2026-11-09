@@ -1,4 +1,5 @@
 /** Browser requests use the app origin; RPC provider credentials stay on the server. */
+import { NearRpcError, describeNearRpcError } from "./near-rpc-error";
 export const BROWSER_NEAR_RPC_URL = "/api/near/rpc";
 export async function nearBrowserRpc(method: string, params: unknown) {
   let response: Response;
@@ -11,6 +12,10 @@ export async function nearBrowserRpc(method: string, params: unknown) {
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload || payload.error) {
     const message = typeof payload?.error?.message === "string" ? payload.error.message : "NEAR connection unavailable. Retry after checking the RPC configuration.";
+    if (payload?.error?.cause) {
+      const detail = describeNearRpcError(payload.error);
+      throw new NearRpcError(message, detail.rpcCause, detail.invalidReason);
+    }
     throw new Error(message);
   }
   return payload.result;

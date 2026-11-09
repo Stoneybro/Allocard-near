@@ -1,0 +1,17 @@
+.git
+.agent-work
+**/node_modules
+**/.next
+**/.eve
+**/.output
+**/target
+**/coverage
+**/.env*
+**/*.log
+**/*.tsbuildinfo
+.aws
+.codex
+.agents
+**/.aws
+**/.codex
+**/.agents

@@ -48,6 +48,10 @@ export async function finishSponsorJob(id: string, state: "confirmed" | "failed"
 export async function releaseUnbroadcastJob(id: string) {
   await db.delete(jobs).where(and(eq(jobs.id, id), eq(jobs.state, "reserved"), isNull(jobs.transactionHash)));
 }
+/** Only an explicit RPC validation rejection permits releasing a submitted intent. */
+export async function releaseRejectedSponsorJob(id: string, transactionHash: string) {
+  await db.delete(jobs).where(and(eq(jobs.id, id), eq(jobs.state, "submitted"), eq(jobs.transactionHash, transactionHash)));
+}
 
 /** One registration deposit grant per verified provider identity, for its lifetime. */
 export async function takeCompanyRegistrationGrant(principalHash: string) {

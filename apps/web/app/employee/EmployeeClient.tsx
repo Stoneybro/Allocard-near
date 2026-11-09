@@ -1,12 +1,18 @@
 "use client";
 
+import { PurchasingResearchPanel } from "@/components/purchasing-research-panel";
+import { ADAPTER_NAME } from "@/lib/agent-adapter/shared";
+
 import { useSettlementRefresh } from "@/hooks/use-account-queries";
 import { DashboardLoading } from "@/components/dashboard-loading";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAccountScope, useDashboardData } from "@/hooks/use-account-queries";
 import { preparePendingPayment } from "@/lib/pending-payment";
+import { recoverAdapterPermission } from "@/lib/recover-adapter-permission";
+import { clearAdapterPermissionIntent } from "@/lib/near-sponsor-client";
+import { clearPendingNearTransaction, readPendingNearTransaction } from "@/lib/near-pending-transaction";
 
-import { useCallback, useMemo, useState, useTransition } from "react";
+import { useCallback, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -29,7 +35,6 @@ import {
   activateEmployeeDelegation,
   revokeEmployeeDelegation,
   saveEmployeeRedelegationCaveats,
-  getEmployeeDashboardState,
   getAgentSmartAccountAddress,
   setWorkspaceContext,
   type EmployeeDashboardState,
@@ -91,7 +96,7 @@ import { DirectSpendForm } from "./DirectSpendForm";
 import { cn } from "@/lib/utils";
 import { formatWalletAddress, generateEmployeeReferenceId, isValidWalletAddress } from "@/lib/wallet";
 import { TOKEN_SYMBOL, getAddressExplorerUrl, getTxExplorerUrl } from "@/lib/chain";
-import type { PermissionSpec } from "@allocard/delegation-sdk";
+import { decodeMutationId, type PermissionSpec } from "@allocard/delegation-sdk";
 import {
   getUnifiedNearCaller,
   getTreasuryClient,
@@ -322,10 +327,14 @@ export function EmployeeClient({
   const isMobile = useIsMobile();
   const currentAuthAddress = auth.status === "authenticated" ? (auth.address) : undefined;
   const { profile, dashboardState, setDashboardState, mutate: mutateDashboard, refresh: refreshDashboard, error: queryError } =
-    useDashboardData("employee", getEmployeeDashboardState, initialProfile, initialDashboardState);
+    useDashboardData<EmployeeDashboardState>("employee", initialProfile, initialDashboardState);
   const workspaceOptions = (profile && "workspaces" in profile && profile.workspaces) || [];
   const activeCompanyId = profile?.user?.companyId ?? "";
   const [isPending, startTransition] = useTransition();
+  const [creatingAgent, setCreatingAgent] = useState(false);
+  const [activatingDelegation, setActivatingDelegation] = useState(false);
+  const activationLock = useRef(false);
+  const [recoveryHash, setRecoveryHash] = useState("");
   const [actionError, setError] = useState<string | null>(null);
   const [selectedDelegationId, setSelectedDelegationId] = useState<string | null>(null);
   const [caveatForm, setCaveatForm] = useState<CaveatForm>(buildEmptyCaveatForm(""));
@@ -556,13 +565,14 @@ export function EmployeeClient({
         return;
       }
 
+      setCreatingAgent(true);
       startTransition(async () => {
         try {
           const state = await createAgentRedelegation({ walletAddress, agentId });
           setDashboardState(state);
           await refreshDashboard();
-          toast.info("Agent Budget Created", {
-            description: "Configure spending rules and caveats to activate sub-delegation.",
+          toast.info("Adapter configuration ready", {
+            description: "No permission has been signed and no funds have moved. Review the rules, then sign to activate.",
           });
 
           const pending = state.outboundDelegations.find(
@@ -588,6 +598,8 @@ export function EmployeeClient({
               description: message,
             });
           }
+        } finally {
+          setCreatingAgent(false);
         }
       });
     },
@@ -625,7 +637,7 @@ export function EmployeeClient({
 
   // Task 6: save caveats then sign and activate the delegation
   const handleActivateDelegation = useCallback(() => {
-    if (auth.status !== "authenticated" || !selectedDelegation || !auth.address) return;
+    if (activationLock.current || auth.status !== "authenticated" || !selectedDelegation || !auth.address) return;
     const walletAddress = auth.address;
 
     const errors = validateCaveatForm(caveatForm, availableMaxNear);
@@ -635,6 +647,8 @@ export function EmployeeClient({
     );
     if (hasErrors) return;
 
+    activationLock.current = true;
+    setActivatingDelegation(true);
     setError(null);
     startTransition(async () => {
       try {
@@ -658,23 +672,29 @@ export function EmployeeClient({
         const parsedLimit = caveatForm.maxAmountNear ? parseTokenAmount(caveatForm.maxAmountNear, 24) : null;
         const parsedPerTx = caveatForm.perTransactionCapNear ? parseTokenAmount(caveatForm.perTransactionCapNear, 24) : null;
 
+        if (!savedState.company.smartAccountAddress || !parentPermissionId) throw new Error("A treasury and confirmed parent permission are required");
+        const childCaller = await getUnifiedNearCaller(auth);
+        const childClient = getTreasuryClient(childCaller, savedState.company.smartAccountAddress);
+        const liveParent = await childClient.getPermission(parentPermissionId);
+        const parentRule = liveParent?.rules.find(rule => rule.asset.type === "NativeNear");
+        if (!liveParent || !parentRule || liveParent.revoked || liveParent.delegate !== walletAddress) throw new Error("Employee permission is unavailable");
         const childSpec: PermissionSpec = {
           delegate: agentSmartAccountAddress,
           valid_from_ms: Date.now().toString(),
-          expires_at_ms: null,
-          max_executions: caveatForm.limitedCallsEnabled && caveatForm.limitedCalls ? Number(caveatForm.limitedCalls) : null,
+          expires_at_ms: liveParent.expires_at_ms,
+          max_executions: caveatForm.limitedCallsEnabled && caveatForm.limitedCalls ? Number(caveatForm.limitedCalls) : liveParent.max_executions,
           rules: [
             {
               asset: { type: "NativeNear" },
               recipients: caveatForm.allowedTargets && caveatForm.allowedTargets.length > 0
                 ? { type: "Only", accounts: splitAddresses(caveatForm.allowedTargets) }
-                : { type: "Any" },
-              min_per_action: null,
-              max_per_action: parsedPerTx,
+                : parentRule.recipients,
+              min_per_action: parentRule.min_per_action,
+              max_per_action: parsedPerTx ?? parentRule.max_per_action,
               lifetime_limit: parsedLimit,
-              fixed_window: null,
-              streaming: null,
-              approval: null,
+              fixed_window: parentRule.fixed_window,
+              streaming: parentRule.streaming,
+              approval: parentRule.approval,
               acknowledge_unbounded_budget: !parsedLimit,
             },
           ],
@@ -684,9 +704,8 @@ export function EmployeeClient({
 
         if (!dashboardState?.company?.smartAccountAddress) throw new Error("A signing wallet and treasury are required");
         if (!savedState.inboundDelegation?.delegationHash) throw new Error("A confirmed parent permission is required");
-        const caller = await getUnifiedNearCaller(auth);
-        const client = getTreasuryClient(caller, dashboardState.company.smartAccountAddress);
-        const delegationHash = await client.createChildPermission(parentPermissionId, childSpec);
+        const sponsored = await auth.createAdapterPermission({ treasury: savedState.company.smartAccountAddress, delegationId: selectedDelegation.id, parentId: parentPermissionId, spec: childSpec });
+        const delegationHash = decodeMutationId(sponsored && typeof sponsored === "object" && "adapterPermissionId" in sponsored ? sponsored.adapterPermissionId : sponsored);
 
         const activatedState = await activateEmployeeDelegation({
           walletAddress,
@@ -696,23 +715,56 @@ export function EmployeeClient({
         });
         setDashboardState(activatedState);
         await refreshDashboard();
+        clearAdapterPermissionIntent(walletAddress, selectedDelegation.id);
         setSelectedDelegationId(null);
 
         const agent = dashboardState?.agents.find(a => a.id === selectedDelegation.delegateeId);
         const agentName = agent?.name ?? "AI Agent";
 
-        toast.success("Agent Sub-Delegation Activated", {
-          description: `Assigned ${caveatForm.maxAmountNear} ${TOKEN_SYMBOL} budget to ${agentName} on NEAR Testnet`,
+        toast.success("Adapter permission activated", {
+          description: `${agentName} now has a confirmed child permission with a ${caveatForm.maxAmountNear} ${TOKEN_SYMBOL} limit. Gas was sponsored; funds remain in the company treasury.`,
           action: {
             label: "View Explorer",
             onClick: () => window.open(getAddressExplorerUrl(agentSmartAccountAddress), "_blank"),
           },
         });
       } catch (caughtError) {
-        setError(caughtError instanceof Error ? caughtError.message : "Could not activate delegation");
+        const message = caughtError instanceof Error ? caughtError.message : "Could not activate delegation";
+        setError(message);
+        console.error("[employee adapter activation]", message);
+        toast.error("Adapter permission not confirmed", { description: message });
+      } finally {
+        activationLock.current = false;
+        setActivatingDelegation(false);
       }
     });
   }, [selectedDelegation, auth, caveatForm, availableMaxNear, dashboardState?.inboundDelegation]);
+
+  const handleRecoverDelegation = async () => {
+    if (activationLock.current || auth.status !== "authenticated" || !selectedDelegation || !dashboardState?.company.smartAccountAddress || !dashboardState.inboundDelegation?.delegationHash) return;
+    activationLock.current = true;
+    setActivatingDelegation(true);
+    setError(null);
+    try {
+      const agent = dashboardState.agents.find(row => row.id === selectedDelegation.delegateeId);
+      if (!agent?.smartAccountAddress) throw new Error("Adapter account is unavailable");
+      const delegationHash = await recoverAdapterPermission({ hash: recoveryHash.trim(), wallet: auth.address, treasury: dashboardState.company.smartAccountAddress, parentId: dashboardState.inboundDelegation.delegationHash, delegate: agent.smartAccountAddress });
+      const state = await activateEmployeeDelegation({ walletAddress: auth.address, delegationId: selectedDelegation.id, delegationHash, signedDelegation: null });
+      setDashboardState(state);
+      await refreshDashboard();
+      setSelectedDelegationId(null);
+      setRecoveryHash("");
+      toast.success("Existing adapter permission recovered", { description: "The confirmed transaction was linked. No new transaction was signed and no funds moved." });
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Could not recover the transaction";
+      setError(message);
+      console.error("[employee adapter recovery]", message);
+      toast.error("Transaction not recovered", { description: message });
+    } finally {
+      activationLock.current = false;
+      setActivatingDelegation(false);
+    }
+  };
 
   // Persist a request before signing. Retrying an uncertain dispatch reuses it.
   const handleExecuteSpend = async (details: { toAddress: string; amountNear: string; purpose?: string; isFlagged?: boolean }) => {
@@ -876,6 +928,11 @@ export function EmployeeClient({
           spentNear={summary.spentNear}
         />
 
+        <PurchasingResearchPanel companyId={company.id}
+          adapterId={dashboardState.agents.find(agent => agent.name === ADAPTER_NAME)?.id}
+          delegationId={dashboardState.outboundDelegations.find(row => row.status === "active" && row.delegateeId === dashboardState.agents.find(agent => agent.name === ADAPTER_NAME)?.id)?.id}
+          onConfigure={() => { const adapter = dashboardState.agents.find(agent => agent.name === ADAPTER_NAME); if (adapter) handleSelectAgent(adapter.id); }} />
+
         {/* Direct Spend Workspace */}
         <div className="w-full">
           <DirectSpendForm
@@ -907,11 +964,30 @@ export function EmployeeClient({
             <DrawerDescription>
               {selectedDelegation?.status === "active"
                 ? "These rules are active and enforced on-chain. Values are constrained by your inbound delegation."
-                : "Configure what this agent is allowed to spend. Values cannot exceed your remaining delegated balance."}
+                : "Configure what this agent is allowed to spend. Gas is sponsored; your wallet does not need NEAR for this permission. Values cannot exceed your delegated balance."}
             </DrawerDescription>
           </DrawerHeader>
 
           <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-4 py-2">
+            {actionError && <p role="alert" className="break-words text-sm text-muted-foreground">{actionError}</p>}
+            {selectedDelegation?.status === "pending_config" && <div className="space-y-2 rounded-md border p-3">
+              <Label htmlFor="adapter-recovery-hash">Already signed a transaction?</Label>
+              <p className="text-xs text-muted-foreground">This field recovers older wallet-funded transactions. For a sponsored permission, retry Sign &amp; Activate with the same rules to recover its original transaction.</p>
+              <Input id="adapter-recovery-hash" value={recoveryHash} onChange={event => setRecoveryHash(event.target.value)} placeholder="NEAR transaction hash" disabled={activatingDelegation} />
+              <Button type="button" variant="outline" size="sm" disabled={!recoveryHash.trim() || activatingDelegation || creatingAgent} onClick={handleRecoverDelegation}>Check and recover transaction</Button>
+              <AlertDialog><AlertDialogTrigger asChild><Button type="button" variant="ghost" size="sm" disabled={!recoveryHash.trim() || activatingDelegation}>Reset rejected transaction</Button></AlertDialogTrigger>
+                <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Did the RPC explicitly reject this transaction?</AlertDialogTitle><AlertDialogDescription>Only reset if the RPC returned INVALID_TRANSACTION for this exact hash. A timeout or NOT_OBSERVED response is insufficient. This clears the local pending record and allows a later signature; it does not undo an on-chain transaction. If unsure, check and recover first.</AlertDialogDescription></AlertDialogHeader>
+                  <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => {
+                    if (auth.status !== "authenticated") return;
+                    const pending = readPendingNearTransaction(auth.address);
+                    if (!pending || pending.hash !== recoveryHash.trim()) { toast.error("This hash does not match the pending transaction in this browser"); return; }
+                    clearPendingNearTransaction(auth.address);
+                    setError(null);
+                    toast.info("Rejected transaction reset", { description: "Correct the validation error before signing again. No transaction was submitted." });
+                  }}>The RPC rejected this exact transaction</AlertDialogAction></AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>}
             {selectedDelegation && (
               <div>
                 <Badge
@@ -1163,13 +1239,13 @@ export function EmployeeClient({
                   </AlertDialogContent>
                 </AlertDialog>
               ) : selectedDelegation?.status === "pending_config" ? (
-                <Button onClick={handleActivateDelegation} disabled={isPending}>
-                  {isPending ? (
+                <Button type="button" onClick={handleActivateDelegation} disabled={creatingAgent || activatingDelegation}>
+                  {activatingDelegation ? (
                     <LoaderCircleIcon data-icon="inline-start" className="animate-spin" />
                   ) : (
                     <ShieldCheckIcon data-icon="inline-start" />
                   )}
-                  Sign & Activate Delegation
+                  {activatingDelegation ? "Signing and confirming permission…" : creatingAgent ? "Preparing configuration…" : "Sign & Activate Delegation"}
                 </Button>
               ) : null}
             </DrawerFooter>
