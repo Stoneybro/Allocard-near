@@ -896,6 +896,7 @@ export function EmployerClient({
 
   return (
     <DashboardShell
+      activationRequired={!company.smartAccountAddress}
       companyName={companyName}
       employees={dashboardState.employees.map((employee) => ({
         id: employee.id,
@@ -946,20 +947,30 @@ export function EmployerClient({
         {error && <p role="alert" className="text-sm text-muted-foreground">{error}</p>}
         {/* Smart account activation panel */}
         {company && !company.smartAccountAddress && (
-          <div className="flex items-center justify-center rounded-lg border border-border bg-muted/40 p-4">
+          <section aria-labelledby="company-activation-title" className="flex flex-col items-start gap-5 rounded-xl border border-primary/20 border-l-4 border-l-primary bg-primary/5 p-5 sm:p-6">
+            <div className="flex items-start gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-primary/15 bg-background">
+                <ShieldCheckIcon className="size-5" aria-hidden="true" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Next step</p>
+                <h2 id="company-activation-title" className="text-base font-semibold">Set up company spending</h2>
+                <p className="text-sm leading-6 text-muted-foreground">Activate your company account to fund your treasury and set spending limits for your team.</p>
+              </div>
+            </div>
             <SmartAccountActivationButton
               companyKey={company.id}
               walletAddress={currentAuthAddress!}
               existingSmartAccountAddress={company.smartAccountAddress}
               onActivated={(result) => handleSmartAccountActivated(result.smartAccountAddress)}
             />
-          </div>
+          </section>
         )}
 
         <SectionCards
           employeeCount={dashboardState.summary.employeeCount}
           balanceLoading={treasuryBalance.isPending && !!company.smartAccountAddress}
-          smartAccountBalance={ethBalance ?? "—"}
+          smartAccountBalance={company.smartAccountAddress ? ethBalance ?? "—" : "0"}
           activeDelegationCount={dashboardState.summary.activeDelegationCount}
           delegatedNativeNearAllowance={
             dashboardState.summary.delegatedNativeNearAllowance

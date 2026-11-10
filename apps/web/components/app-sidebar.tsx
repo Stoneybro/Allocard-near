@@ -2,7 +2,6 @@
 
 import { Skeleton } from "@/components/ui/skeleton";
 import * as React from "react";
-import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import type { WorkspaceOption } from "@/app/actions/identity";
 import {
@@ -412,11 +411,9 @@ function CanvasSection({
 
 function SidebarLogoutButton() {
   const auth = useAuth();
-  const router = useRouter();
 
   const handleLogout = async () => {
     try {
-      router.replace("/");
       if (auth.status === "authenticated") {
         await auth.disconnect();
       }
@@ -432,6 +429,7 @@ function SidebarLogoutButton() {
       variant="outline"
       size="sm"
       onClick={handleLogout}
+      data-activation-exempt
       className="w-full justify-start text-xs font-medium text-sidebar-foreground border-sidebar-border bg-sidebar hover:bg-sidebar-accent hover:text-sidebar-accent-foreground dark:border-sidebar-border dark:bg-sidebar dark:hover:bg-sidebar-accent focus-visible:border-sidebar-ring focus-visible:ring-sidebar-ring/50 cursor-pointer transition-colors px-2.5 h-8 gap-2 rounded-md"
     >
       <LogOutIcon className="size-3.5 shrink-0" />
@@ -442,13 +440,11 @@ function SidebarLogoutButton() {
 
 function LogoutMenuItem() {
   const auth = useAuth();
-  const router = useRouter();
 
   return (
     <DropdownMenuItem
       onClick={() => {
         if (auth.status === "authenticated") {
-          router.replace("/");
           void auth.disconnect();
         }
       }}

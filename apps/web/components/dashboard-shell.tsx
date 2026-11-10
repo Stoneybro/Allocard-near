@@ -9,9 +9,11 @@ import {
 } from "@/components/app-sidebar";
 import { SiteHeader } from "@/components/site-header";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { CompanyActivationGate } from "@/components/company-activation-gate";
 
 export function DashboardShell({
   loading = false,
+  activationRequired = false,
   children,
   companyName,
   companyId,
@@ -33,6 +35,7 @@ export function DashboardShell({
   roleLabel,
 }: {
   loading?: boolean;
+  activationRequired?: boolean;
   children: ReactNode;
   companyName: string;
   companyId?: string;
@@ -54,6 +57,7 @@ export function DashboardShell({
   roleLabel: string;
 }) {
   return (
+    <CompanyActivationGate required={activationRequired}>
     <SidebarProvider
       style={
         {
@@ -90,5 +94,6 @@ export function DashboardShell({
         </div>
       </SidebarInset>
     </SidebarProvider>
+    </CompanyActivationGate>
   );
 }

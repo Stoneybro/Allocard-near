@@ -38,6 +38,7 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<{ principal: string; identity: SessionIdentity } | null>(null);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [retry, setRetry] = useState(0);
   const principal = privy.authenticated ? privy.user?.id ?? null : null;
   const wallet = privy.user?.linkedAccounts.find(account => account.type === "wallet" && account.chainType === "near" && account.walletClientType === "privy");
@@ -50,7 +51,7 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
   const previousPrincipal = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!privy.ready) return;
+    if (!privy.ready || signingOut) return;
     let cancelled = false;
     const changedPrincipal = previousPrincipal.current !== principal;
     const hadPrincipal = previousPrincipal.current !== null;
@@ -91,14 +92,21 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
       })(), "Sign-in timed out. Please try again.", 60_000);
       if (identity.providerUserId !== principal) throw new Error("Your account changed. Please sign in again.");
       if (!cancelled) setSession(current => current?.principal === principal && current.identity.walletAddress === identity.walletAddress && current.identity.email === identity.email ? current : { principal, identity });
-    })().catch(caught => {
+    })().catch(async caught => {
       if (!cancelled) {
         creation.current = null;
+        if (caught instanceof SessionClientError && caught.code === "SESSION_REVOKED") {
+          // Privy may restore the token from a sign-in we already revoked.
+          // End that provider session so the next click opens a fresh login.
+          setSession(null);
+          await sdk.current.logout();
+          return;
+        }
         setError(caught instanceof Error ? caught.message : "Sign-in failed");
       }
     }).finally(() => { if (!cancelled) setBusy(false); });
     return () => { cancelled = true; };
-  }, [privy.ready, principal, accountId, retry, queryClient]);
+  }, [privy.ready, principal, accountId, retry, queryClient, signingOut]);
 
   // Keep the same verified identity visible during background synchronization.
   // A different user or wallet can never reuse the previous identity.
@@ -157,6 +165,7 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
     };
   }, [address, principal, queryClient, signHash]);
   const disconnect = useCallback(async () => {
+    setSigningOut(true);
     setSession(null);
     await queryClient.cancelQueries({ queryKey: ["allocard"] });
     queryClient.removeQueries({ queryKey: ["allocard"] });
@@ -164,11 +173,11 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
       await clearSession();
     } finally {
       try {
-        if (typeof window !== "undefined" && window.location.pathname !== "/") {
-          window.location.replace("/");
-        }
-      } catch { /* Ignore in test environments where navigation is not implemented */ }
-      await sdk.current.logout();
+        await sdk.current.logout();
+      } finally {
+        // Keep protected pages hidden until the landing page has loaded.
+        window.location.replace("/");
+      }
     }
   }, [queryClient]);
   const connect = useCallback(() => {
@@ -176,6 +185,7 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
     else sdk.current.login();
   }, [principal]);
 
+  if (signingOut) return <div className="flex min-h-dvh items-center justify-center bg-background text-sm text-muted-foreground" role="status">Signing out…</div>;
   if (identity && transport) return <AuthContext.Provider value={{ status: "authenticated", address: identity.walletAddress, accountId: identity.walletAddress, providerUserId: identity.providerUserId, email: identity.email, authMethod: "privy", disconnect, establishSession, ...transport }}>{children}</AuthContext.Provider>;
   if (!privy.ready || (principal && busy) || (privy.authenticated && !principal)) return <AuthContext.Provider value={{ status: "connecting" }}>{children}</AuthContext.Provider>;
   return <AuthContext.Provider value={{ status: "unauthenticated", connecting: false, error, connect }}>{children}</AuthContext.Provider>;

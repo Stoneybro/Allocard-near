@@ -14,10 +14,12 @@ vi.mock("@privy-io/react-auth/extended-chains", () => ({ useCreateWallet: () => 
 vi.mock("@/lib/privy-near", () => ({ createPrivyNearTransport: () => ({ caller: { functionCall: mocks.baseCall }, sendActions: mocks.baseSend }) }));
 vi.mock("@/lib/session-client", async importOriginal => ({ ...await importOriginal<typeof import("@/lib/session-client")>(), createPrivySession: mocks.createPrivySession, clearSession: mocks.clearSession }));
 import { AuthProvider, useAuth, type AuthState } from "@/components/AuthProvider";
+import { SessionClientError } from "@/lib/session-client";
 const identity = { walletAddress: "a".repeat(64), providerUserId: "did:privy:alice", email: "alice@example.com" };
 let state: AuthState;
 let queryClient: ReturnType<typeof useQueryClient>;
 let root: Root;
+let host: HTMLDivElement;
 const seen: string[] = [];
 function Probe() {
   const current = useAuth(); const currentClient = useQueryClient();
@@ -38,10 +40,52 @@ beforeEach(() => {
   mocks.clearSession.mockResolvedValue(undefined);
   mocks.createPrivySession.mockReset().mockResolvedValue(identity);
   mocks.baseCall.mockResolvedValue({ success: true }); mocks.baseSend.mockResolvedValue({ success: true });
-  root = createRoot(document.createElement("div"));
+  host = document.createElement("div");
+  root = createRoot(host);
 });
 afterEach(async () => { await act(async () => root.unmount()); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 describe("Privy-only authentication", () => {
+  it("discards a restored revoked Privy session and opens a fresh login on the next click", async () => {
+    signIn();
+    mocks.createPrivySession.mockRejectedValueOnce(new SessionClientError("This sign-in was logged out. Sign in with Privy again.", 403, "SESSION_REVOKED"));
+    mocks.privy.logout.mockImplementationOnce(async () => {
+      mocks.privy.authenticated = false;
+      mocks.privy.user = null;
+    });
+    await render();
+    await render();
+    expect(mocks.privy.logout).toHaveBeenCalledTimes(1);
+    expect(state).toMatchObject({ status: "unauthenticated" });
+    expect("error" in state && state.error).toBeFalsy();
+    await act(async () => { if (state.status === "unauthenticated") state.connect(); });
+    expect(mocks.privy.login).toHaveBeenCalledTimes(1);
+    expect(mocks.createPrivySession).toHaveBeenCalledTimes(1);
+    signIn();
+    await render();
+    expect(state.status).toBe("authenticated");
+    expect(mocks.createPrivySession).toHaveBeenCalledTimes(2);
+  });
+  it("hides protected pages throughout sign-out without rendering the login screen", async () => {
+    signIn(); await render();
+    if (state.status !== "authenticated") throw new Error("Expected authentication");
+    const disconnect = state.disconnect;
+    let finishRevocation!: () => void;
+    mocks.clearSession.mockImplementationOnce(() => new Promise<void>(resolve => { finishRevocation = resolve; }));
+    mocks.privy.logout.mockImplementationOnce(() => new Promise(() => {}));
+    queryClient.setQueryData(["allocard", "private"], "secret");
+    seen.length = 0;
+    await act(async () => { void disconnect(); });
+    expect(host.textContent).toBe("Signing out…");
+    expect(queryClient.getQueryData(["allocard", "private"])).toBeUndefined();
+    expect(mocks.privy.logout).not.toHaveBeenCalled();
+    await act(async () => { finishRevocation(); });
+    expect(mocks.privy.logout).toHaveBeenCalledTimes(1);
+    mocks.privy.authenticated = false; mocks.privy.user = null;
+    await render();
+    expect(host.textContent).toBe("Signing out…");
+    expect(seen).not.toContain("unauthenticated");
+    expect(mocks.createPrivySession).toHaveBeenCalledTimes(1);
+  });
   it("opens Privy and ignores the obsolete wallet-selector preference", async () => {
     localStorage.setItem("allocard_auth_method", "wallet");
     await render();

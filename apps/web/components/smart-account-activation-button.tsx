@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { ArrowRight, LoaderCircle } from "lucide-react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useAccountScope } from "@/hooks/use-account-queries";
 import { withTimeout } from "@/lib/request-timeout";
@@ -75,21 +76,29 @@ export function SmartAccountActivationButton({
     });
 
   return (
-    <div className="flex flex-col items-center gap-2">
+    <div className="flex w-full flex-col items-start gap-2 sm:w-auto">
       <Button
+        data-activation-exempt
+        className="h-11 w-full gap-2 px-5 shadow-sm sm:w-auto sm:min-w-64"
+        aria-busy={pending}
         disabled={pending || (mode === "company" && (!shared || !companyKey))}
         onClick={activate}
       >
+        {pending && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}
         {pending
           ? mode === "company"
-            ? "Activating company account…"
-            : "Activating account…"
+            ? "Activating company account"
+            : "Activating account"
           : mode === "company"
             ? "Activate your company account"
             : "Activate your account"}
+        {!pending && <ArrowRight className="size-4" aria-hidden="true" />}
       </Button>
+      <p role="status" className="min-h-5 text-xs leading-5 text-muted-foreground">
+        {pending ? "This may take a few seconds." : ""}
+      </p>
       {(error || configError) && (
-        <p role="alert" className="text-xs text-destructive text-center">
+        <p role="alert" className="text-xs text-destructive">
           {error || configError}
         </p>
       )}
