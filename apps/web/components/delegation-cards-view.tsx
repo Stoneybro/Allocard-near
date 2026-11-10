@@ -1,17 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { BotIcon, UserRoundIcon, PlusIcon, NetworkIcon, ChevronRightIcon, Building2Icon } from "lucide-react";
+import { Fragment, useMemo, useState } from "react";
+import { BotIcon, PlusIcon, NetworkIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
+import { DelegationResearchActivity } from "@/components/purchasing-research-panel";
+import { ADAPTER_NAME } from "@/lib/agent-adapter/shared";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { formatWalletAddress } from "@/lib/wallet";
 import { TOKEN_SYMBOL } from "@/lib/chain";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import type { DelegationCanvasCompany, DelegationCanvasEmployee, DelegationCanvasAgent, DelegationCanvasDelegation } from "@/components/dashboard-flow-canvas";
 
 export interface DelegationCardsViewProps {
@@ -31,7 +34,8 @@ export interface DelegationCardsViewProps {
 }
 
 
-export function DelegationCardsView({ loading = false, company, employees, agents = [], delegations, onViewModeChange, headerAction, onConfigureDelegation, onRevokeDelegation, onRemoveDelegation, onAddEmployee, onAddAgent }: DelegationCardsViewProps) {
+export function DelegationCardsView({ loading = false, company, employees, agents = [], delegations: allDelegations, onViewModeChange, headerAction, onConfigureDelegation, onRevokeDelegation, onRemoveDelegation, onAddEmployee, onAddAgent }: DelegationCardsViewProps) {
+  const delegations = useMemo(() => allDelegations.filter(delegation => delegation.status !== "revoked"), [allDelegations]);
   const [isIssueDialogOpen, setIsIssueDialogOpen] = useState(false);
   const employeeById = new Map(employees.map(employee => [employee.id, employee]));
   const agentById = new Map(agents.map(agent => [agent.id, agent]));
@@ -53,67 +57,91 @@ export function DelegationCardsView({ loading = false, company, employees, agent
     return { roots, children };
   }, [delegations]);
 
-  function renderDelegation(delegation: DelegationCanvasDelegation, path: Set<string>): ReactNode {
+  const [search, setSearch] = useState("");
+  const [activityDelegation, setActivityDelegation] = useState<DelegationCanvasDelegation | null>(null);
+  const [confirmation, setConfirmation] = useState<DelegationCanvasDelegation | null>(null);
+  const query = search.trim().toLowerCase();
+  const nameOf = (delegation: DelegationCanvasDelegation) => delegation.delegateeType === "user"
+    ? employeeById.get(delegation.delegateeId ?? "")?.label ?? "Employee"
+    : agentById.get(delegation.delegateeId ?? "")?.name ?? "AI agent";
+  const issuerOf = (delegation: DelegationCanvasDelegation) => {
+    if (delegation.delegatorType === "company") return "Company";
+    const parent = delegations.find(item => item.id === delegation.parentDelegationId);
+    if (parent) return nameOf(parent);
+    return delegation.delegatorType === "user"
+      ? employeeById.get(delegation.delegatorId)?.label ?? "Employee"
+      : agentById.get(delegation.delegatorId)?.name ?? "AI agent";
+  };
+  function matchesBranch(delegation: DelegationCanvasDelegation, path = new Set<string>()): boolean {
+    if (path.has(delegation.id)) return false;
+    const next = new Set(path).add(delegation.id);
+    return `${nameOf(delegation)} ${issuerOf(delegation)}`.toLowerCase().includes(query)
+      || (children.get(delegation.id) ?? []).some(child => matchesBranch(child, next));
+  }
+  const visibleRoots = roots.filter(root => !query || matchesBranch(root));
+
+  function renderDelegation(delegation: DelegationCanvasDelegation, path: Set<string>, depth = 0): ReactNode {
     if (path.has(delegation.id)) return null;
     const nextPath = new Set(path).add(delegation.id);
-    const employee = delegation.delegateeId ? employeeById.get(delegation.delegateeId) : undefined;
-    const agent = delegation.delegateeId ? agentById.get(delegation.delegateeId) : undefined;
-    const isEmployee = delegation.delegateeType === "user";
-    const title = isEmployee ? employee?.label ?? "Employee" : agent?.name ?? "AI agent";
+    const title = nameOf(delegation);
     const descendants = children.get(delegation.id) ?? [];
-    const isCollapsed = collapsed.has(delegation.id);
+    const isExpanded = !collapsed.has(delegation.id) || Boolean(query);
     const isActive = delegation.status === "active";
     const isPending = delegation.status === "pending_config";
+    const status = isActive ? "Active" : isPending ? "Needs setup" : delegation.status;
     const canManage = delegation.delegatorType === "company";
-    const Icon = isEmployee ? UserRoundIcon : BotIcon;
+    const canRevoke = isActive && (canManage || (delegation.delegateeType === "agent" && Boolean(delegation.parentDelegationId)));
+    const hasActions = (canManage && (onConfigureDelegation || (isPending && onRemoveDelegation))) || (canRevoke && onRevokeDelegation);
+    const hasResearchActivity = delegation.delegateeType === "agent" && agentById.get(delegation.delegateeId ?? "")?.name === ADAPTER_NAME;
+    const issuer = issuerOf(delegation);
     return (
-      <li key={delegation.id} className="min-w-0">
-        <div className="group flex flex-col gap-3 border-b border-border/60 py-4 sm:flex-row sm:items-center sm:gap-6">
-          <div className="flex min-w-0 flex-1 items-center gap-3">
-            {descendants.length > 0 ? (
-              <button type="button" aria-label={`${isCollapsed ? "Expand" : "Collapse"} delegations for ${title}`} aria-expanded={!isCollapsed} onClick={() => setCollapsed(previous => {
-                const next = new Set(previous);
-                if (next.has(delegation.id)) next.delete(delegation.id); else next.add(delegation.id);
-                return next;
-              })} className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted/60 hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring">
-                <ChevronRightIcon className={`size-4 transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
-              </button>
-            ) : <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted/60 text-muted-foreground"><Icon className="size-4" /></span>}
-            <div className="min-w-0">
-              <p className="break-words text-sm font-medium">{title}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">{isEmployee ? "Employee" : "AI agent"}{descendants.length > 0 && ` · ${descendants.length} delegation${descendants.length === 1 ? "" : "s"}`}</p>
+      <Fragment key={delegation.id}>
+        <TableRow data-delegation-id={delegation.id} className={depth ? "bg-muted/25" : undefined}>
+          <TableCell className="py-4 whitespace-normal">
+            <div className="flex min-w-0 items-center gap-1 pl-[calc(var(--depth)*16px)] sm:gap-2 md:pl-[calc(var(--depth)*32px)]" style={{ "--depth": Math.min(depth, 4) } as CSSProperties}>
+              <Button variant="ghost" size="icon" className={descendants.length ? "size-8 shrink-0" : "size-8 shrink-0 md:hidden"}
+                aria-label={`${isExpanded ? "Collapse" : "Expand"} details for ${title}`}
+                aria-expanded={isExpanded}
+                onClick={() => setCollapsed(previous => { const next = new Set(previous); if (next.has(delegation.id)) next.delete(delegation.id); else next.add(delegation.id); return next; })}>
+                <ChevronRightIcon className={`size-4 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+              </Button>
+              {!descendants.length && <span className="hidden w-8 shrink-0 md:block" />}
+              <div className="min-w-0">
+                <p className="break-words font-medium tracking-tight">{depth > 0 && <span aria-hidden="true" className="mr-1 text-muted-foreground">↳</span>}{title}</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{delegation.delegateeType === "user" ? "Employee" : "AI agent"}{descendants.length > 0 && ` · ${descendants.length} redelegation${descendants.length === 1 ? "" : "s"}`}</p>
+              </div>
             </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-3 pl-12 sm:justify-end sm:pl-0">
-            <div className="min-w-24 sm:text-right">
-              <p className="text-sm font-medium tabular-nums">{isActive ? `${delegation.remainingNear ?? "—"} ${TOKEN_SYMBOL}` : "—"}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">{isActive ? `remaining${delegation.allowance ? ` of ${delegation.allowance}` : ""}` : isPending ? "Set a spending limit" : "Spending disabled"}</p>
-            </div>
-            <Badge variant="outline" className={`font-normal ${isActive ? "border-emerald-600/20 text-emerald-700 dark:text-emerald-400" : "text-muted-foreground"}`}>{isActive ? "Active" : isPending ? "Needs setup" : "Revoked"}</Badge>
-            {canManage && <div className="flex items-center gap-1">
-              {delegation.status !== "revoked" && onConfigureDelegation && <Button variant={isPending ? "outline" : "ghost"} size="sm" onClick={() => onConfigureDelegation(delegation.id)} aria-label={`${isPending ? "Configure" : "View rules for"} ${title}`}>{isPending ? "Configure" : "Rules"}</Button>}
-              {((isActive && onRevokeDelegation) || (isPending && onRemoveDelegation)) && <AlertDialog>
-                <AlertDialogTrigger asChild><Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" aria-label={`${isActive ? "Revoke" : "Remove"} delegation for ${title}`}>{isActive ? "Revoke" : "Remove"}</Button></AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>{isActive ? "Revoke" : "Remove"} delegation for {title}?</AlertDialogTitle>
-                    <AlertDialogDescription>{isActive ? "This revokes spending authority. Delegations beneath this permission will also lose spending authority." : "This discards the pending configuration. You can add a new delegation later."}</AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => isActive ? onRevokeDelegation?.(delegation.id) : onRemoveDelegation?.(delegation.id)}>{isActive ? "Revoke delegation" : "Remove delegation"}</AlertDialogAction></AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>}
-            </div>}
-          </div>
-        </div>
-        {descendants.length > 0 && !isCollapsed && <ul aria-label={`Delegated by ${title}`} className="ml-4 border-l border-border pl-3 sm:ml-4 sm:pl-6">{descendants.map(child => renderDelegation(child, nextPath))}</ul>}
-      </li>
+          </TableCell>
+          <TableCell className="hidden whitespace-normal text-muted-foreground md:table-cell">{issuer}</TableCell>
+          <TableCell className="hidden text-right tabular-nums md:table-cell">{delegation.allowance ?? "—"}</TableCell>
+          <TableCell className="text-right font-medium tabular-nums whitespace-normal break-words">{isActive ? delegation.remainingNear ?? "—" : "—"}</TableCell>
+          <TableCell className="text-right">
+            {(hasActions || hasResearchActivity) ? <div className="flex flex-col items-end gap-1.5 lg:flex-row lg:flex-wrap lg:justify-end">
+              {hasResearchActivity && <Button variant="outline" size="sm" className="h-8 px-2 text-xs" aria-label={`View activity for ${title}, delegated by ${issuer}`} onClick={() => setActivityDelegation(delegation)}>View activity</Button>}
+              {canManage && onConfigureDelegation && <Button variant="outline" size="sm" className="h-8 px-2 text-xs" aria-label={`${isPending ? "Configure" : "View rules for"} ${title}`} onClick={() => onConfigureDelegation(delegation.id)}>{isPending ? "Configure" : "View rules"}</Button>}
+              {((canRevoke && onRevokeDelegation) || (canManage && isPending && onRemoveDelegation)) && <Button variant="outline" size="sm" className="h-8 border-border bg-muted/50 px-3 text-xs font-medium text-foreground shadow-xs hover:bg-muted" aria-label={`${isActive ? "Revoke" : "Remove"} delegation for ${title}`} onClick={() => setConfirmation(delegation)}>{isActive ? "Revoke" : "Remove"}</Button>}
+            </div> : <span className="text-muted-foreground">—<span className="sr-only"> Managed by {issuer}</span></span>}
+          </TableCell>
+        </TableRow>
+        {isExpanded && <TableRow className="bg-muted/25 md:hidden"><TableCell colSpan={5} className="whitespace-normal px-4 py-3">
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
+            <div><dt className="text-muted-foreground">Delegated by</dt><dd className="mt-1 font-medium">{issuer}</dd></div>
+            <div><dt className="text-muted-foreground">Status</dt><dd className="mt-1 font-medium">{status}</dd></div>
+            <div><dt className="text-muted-foreground">Spending limit</dt><dd className="mt-1 font-medium tabular-nums">{delegation.allowance ?? "—"} {TOKEN_SYMBOL}</dd></div>
+          </dl>
+        </TableCell></TableRow>}
+        {isExpanded && descendants.map(child => renderDelegation(child, nextPath, depth + 1))}
+      </Fragment>
     );
   }
 
   return (
-    <section aria-label="Delegations" className="min-w-0 space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div><h3 className="text-lg font-semibold tracking-tight">Delegations</h3><p className="mt-1 text-sm text-muted-foreground">Follow spending authority from your treasury to your team and agents.</p></div>
+    <section aria-label="Delegations" className="min-w-0 space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative w-full sm:max-w-64">
+          <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+          <Input aria-label="Search delegations" placeholder="Search delegations…" value={search} onChange={event => setSearch(event.target.value)} className="h-9 pl-9" disabled={loading} />
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           {/* Quick Add delegation Dialog */}
           <Dialog open={isIssueDialogOpen} onOpenChange={setIsIssueDialogOpen}>
@@ -279,17 +307,42 @@ export function DelegationCardsView({ loading = false, company, employees, agent
           <Button disabled={loading} variant="ghost" size="sm" onClick={() => onViewModeChange("canvas")} className="hidden md:inline-flex"><NetworkIcon className="size-3.5" />Canvas</Button>
         </div>
       </div>
-      <div className="border-y border-border py-5">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted"><Building2Icon className="size-5 text-muted-foreground" /></span>
-            <div className="min-w-0"><div className="break-words text-sm font-semibold">{loading ? <Skeleton className="h-5 w-36" /> : company.name}</div><p className="mt-0.5 text-xs text-muted-foreground">Company treasury · Source of spending authority</p></div>
-          </div>
-          <div className="pl-13 sm:pl-0 sm:text-right"><div className="text-lg font-semibold tabular-nums">{loading ? <Skeleton className="h-7 w-28" /> : <>{company.ethBalance ?? "—"} <span className="text-xs font-normal text-muted-foreground">{TOKEN_SYMBOL}</span></>}</div><p className="text-xs text-muted-foreground">Treasury balance</p></div>
-        </div>
-        <p className="mt-4 text-xs text-muted-foreground">Delegated limits share this treasury. Funds stay here until spent.</p>
+      <div className="overflow-hidden rounded-xl border border-border/70 bg-card">
+        <Table aria-label={`Delegations from ${company.name}`} className="table-fixed">
+          <TableHeader className="bg-muted/40">
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="w-[46%] pl-4 text-xs text-muted-foreground md:w-[32%]">Delegate</TableHead>
+              <TableHead className="hidden w-[18%] text-xs text-muted-foreground md:table-cell">Delegated by</TableHead>
+              <TableHead className="hidden w-[15%] text-right text-xs text-muted-foreground md:table-cell">Limit ({TOKEN_SYMBOL})</TableHead>
+              <TableHead className="w-[27%] whitespace-normal text-right text-xs text-muted-foreground md:w-[15%]">Remaining ({TOKEN_SYMBOL})</TableHead>
+              <TableHead className="w-[27%] pr-4 text-right text-xs text-muted-foreground md:w-[20%]">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? [0, 1, 2].map(row => <TableRow key={row}><TableCell className="p-4"><Skeleton className="h-5 w-28 max-w-full" /></TableCell><TableCell className="hidden md:table-cell"><Skeleton className="h-5 w-20" /></TableCell><TableCell className="hidden md:table-cell"><Skeleton className="h-5 w-12" /></TableCell><TableCell><Skeleton className="ml-auto h-5 w-12" /></TableCell><TableCell><Skeleton className="ml-auto h-8 w-16 max-w-full" /></TableCell></TableRow>)
+              : visibleRoots.length ? visibleRoots.map(root => renderDelegation(root, new Set()))
+              : <TableRow><TableCell colSpan={5} className="whitespace-normal px-4 py-12 text-center"><p className="font-medium">{query ? "No matching delegations" : "No delegations yet"}</p><p className="mt-1 text-xs text-muted-foreground">{query ? "Try another name or clear your search." : "Add an employee or agent to set up spending authority."}</p></TableCell></TableRow>}
+          </TableBody>
+        </Table>
       </div>
-      {loading ? <div className="ml-4 space-y-4 border-l border-border pl-3 sm:pl-6">{[0, 1, 2].map(row => <div key={row} className="flex items-center gap-3 border-b border-border/60 py-4"><Skeleton className="size-9 shrink-0" /><div className="flex-1 space-y-2"><Skeleton className="h-4 w-32" /><Skeleton className="h-3 w-48 max-w-full" /></div><Skeleton className="h-7 w-20" /></div>)}</div> : roots.length > 0 ? <ul aria-label={`Delegations from ${company.name}`} className="ml-4 border-l border-border pl-3 sm:pl-6">{roots.map(root => renderDelegation(root, new Set()))}</ul> : <div className="py-10 text-center"><p className="text-sm font-medium">No delegations yet</p><p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">Add an employee or agent, then set the limits for their spending authority.</p></div>}
+      <Dialog open={Boolean(activityDelegation)} onOpenChange={open => { if (!open) setActivityDelegation(null); }}>
+        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Research activity</DialogTitle>
+            <DialogDescription>{activityDelegation ? `${nameOf(activityDelegation)} · Delegated by ${issuerOf(activityDelegation)}. Research runs for this delegation.` : ""}</DialogDescription>
+          </DialogHeader>
+          {activityDelegation && <DelegationResearchActivity key={activityDelegation.id} companyId={company.id} delegationId={activityDelegation.id} />}
+        </DialogContent>
+      </Dialog>
+      <AlertDialog open={Boolean(confirmation)} onOpenChange={open => { if (!open) setConfirmation(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmation?.status === "active" ? "Revoke" : "Remove"} delegation for {confirmation ? nameOf(confirmation) : ""}?</AlertDialogTitle>
+            <AlertDialogDescription>{confirmation?.status === "active" ? confirmation.parentDelegationId ? "This revokes this delegation and its descendants. The issuing employee’s own delegation and other agent delegations remain unchanged." : "This revokes spending authority for this delegation and all its descendants." : "This discards the pending configuration. You can add a new delegation later."}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => { if (confirmation) { if (confirmation.status === "active") onRevokeDelegation?.(confirmation.id); else onRemoveDelegation?.(confirmation.id); } }}>{confirmation?.status === "active" ? "Revoke delegation" : "Remove delegation"}</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

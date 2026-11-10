@@ -12,9 +12,10 @@ import { progressTask, cancelQueued } from "@/lib/agent-adapter/service";
 import { workerReady } from "@/lib/agent-adapter/worker";
 export const runtime="nodejs";
 const headers={"Cache-Control":"no-store, private"};
-function failure(error: unknown) {
+function failure(error: unknown, context?: { action: string; stage: string }) {
   const message=error instanceof z.ZodError ? "Invalid research request" : error instanceof Error ? error.message : "Research service unavailable";
   const status=message.startsWith("Unauthorized:")?401:message.startsWith("Forbidden:")?403:error instanceof z.ZodError?400:/expired|changed|conflict|capacity|budget|cancel/i.test(message)?409:503;
+  if(context)console.error("[agent-adapter] request failed", {...context,status,message});
   return Response.json({error:message},{status,headers});
 }
 export async function GET(request: Request) {
@@ -24,7 +25,9 @@ export async function GET(request: Request) {
     if(url.searchParams.get("view")==="company") {
       const [company]=await db.select({id:companies.id}).from(companies).where(and(eq(companies.id,companyId),eq(companies.ownerId,user.id))).limit(1);
       if(!company)throw new Error("Forbidden: only this company owner may read research activity");
-      return Response.json((await companyTasks(companyId)).map(viewTask),{headers});
+      const delegationId=url.searchParams.get("delegationId");
+      const scopedDelegationId=delegationId===null?undefined:z.string().uuid().parse(delegationId);
+      return Response.json((await companyTasks(companyId,scopedDelegationId)).map(viewTask),{headers});
     }
     await requireEmployeeCompany(user.id,companyId);
     const id=url.searchParams.get("id");
@@ -36,19 +39,22 @@ export async function GET(request: Request) {
 }
 export async function POST(request: Request) {
   if(!sameSiteOrigin(request)) return Response.json({error:"Wrong origin"},{status:403,headers});
+  const context={action:"unknown",stage:"session"};
   try {
     const user=await requireSessionUser(); const text=await request.text(); if(text.length>8192) return Response.json({error:"Request too large"},{status:413,headers});
     const input=JSON.parse(text); const action=z.enum(["prepare","confirm","progress","cancel"]).parse(input.action);
+    context.action=action;
     if(action==="prepare") {
-      const parsed=taskInput.parse(input.task); await authorizeAdapter(user.id,user.embeddedWalletAddress,parsed.companyId,parsed.delegationId);
+      const parsed=taskInput.parse(input.task); context.stage="permission-check"; await authorizeAdapter(user.id,user.embeddedWalletAddress,parsed.companyId,parsed.delegationId);
       // Validate deployment without invoking the model or creating a marketplace job.
-      await workerReady();
+      context.stage="worker-readiness"; await workerReady();
+      context.stage="proposal-save";
       return Response.json(viewTask(await createProposal({...parsed,employeeId:user.id})),{headers});
     }
-    const {id,digest}=confirmInput.parse(input.task); let row=await ownTask(id,user.id); await requireEmployeeCompany(user.id,row.companyId);
+    context.stage="task-check";const {id,digest}=confirmInput.parse(input.task); let row=await ownTask(id,user.id); await requireEmployeeCompany(user.id,row.companyId);
     if(row.digest!==digest) throw new Error("Proposal changed. Review it again.");
     if(action==="cancel") return Response.json(viewTask(await cancelQueued(row)),{headers});
     if(action==="confirm") { await authorizeAdapter(user.id,user.embeddedWalletAddress,row.companyId,row.delegationId); row=await confirmProposal(row,digest); }
     return Response.json(viewTask(await progressTask(row,user.embeddedWalletAddress)),{headers});
-  } catch(error) { return failure(error); }
+  } catch(error) { return failure(error,context); }
 }

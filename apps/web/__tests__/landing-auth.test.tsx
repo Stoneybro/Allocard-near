@@ -12,14 +12,61 @@ import { LandingPageClient } from "@/app/LandingPageClient";
 const router = { push: mocks.push, prefetch: mocks.prefetch };
 let root: Root; let host: HTMLDivElement; let client: QueryClient;
 async function render() { await act(async () => { root.render(<QueryClientProvider client={client}><LandingPageClient /></QueryClientProvider>); }); }
+async function reloadLanding() {
+  await act(async () => root.unmount());
+  client.clear();
+  client = new QueryClient();
+  root = createRoot(host);
+  await render();
+}
 beforeEach(() => {
   vi.clearAllMocks(); Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  sessionStorage.clear();
   mocks.auth = { status: "unauthenticated", connect: mocks.connect };
   mocks.profile.mockResolvedValue({ status: "employer" });
   host = document.createElement("div"); root = createRoot(host); client = new QueryClient();
 });
 afterEach(async () => { await act(async () => root.unmount()); client.clear(); });
 describe("landing sign-in routing", () => {
+  it.each([
+    ["employer", "/employer"],
+    ["employee", "/employee"],
+    ["new", "/onboarding"],
+  ])("resumes %s sign-in after a reload without redirecting a later landing visit", async (status, destination) => {
+    mocks.profile.mockResolvedValue({ status });
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>("#nav-cta")!.click());
+    mocks.auth = { status: "connecting" };
+    await reloadLanding();
+    expect(mocks.push).not.toHaveBeenCalled();
+    mocks.auth = { status: "authenticated", address: "a".repeat(64), providerUserId: "did:privy:alice" };
+    await render();
+    expect(mocks.push).toHaveBeenCalledTimes(1);
+    expect(mocks.push).toHaveBeenCalledWith(destination);
+    mocks.push.mockClear();
+    await reloadLanding();
+    expect(mocks.push).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("Go to Dashboard");
+  });
+  it.each(["expired", "invalid", "future"])("ignores %s pending sign-in on a later visit", async (kind) => {
+    const value = kind === "expired" ? Date.now() - 11 * 60_000 : kind === "future" ? Date.now() + 60_000 : "true";
+    sessionStorage.setItem("allocard_pending_login_at", String(value));
+    mocks.auth = { status: "authenticated", address: "a".repeat(64), providerUserId: "did:privy:alice" };
+    await render();
+    expect(mocks.push).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("allocard_pending_login_at")).toBeNull();
+  });
+  it("lets the user retry a failed workspace lookup without leaving a pending redirect", async () => {
+    mocks.profile.mockRejectedValueOnce(new Error("Workspace unavailable"));
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>("#nav-cta")!.click());
+    mocks.auth = { status: "authenticated", address: "a".repeat(64), providerUserId: "did:privy:alice" };
+    await reloadLanding();
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Workspace unavailable");
+    expect(sessionStorage.getItem("allocard_pending_login_at")).toBeNull();
+    await act(async () => host.querySelector<HTMLButtonElement>("#nav-cta")!.click());
+    expect(mocks.push).toHaveBeenCalledWith("/employer");
+  });
   it("opens Privy directly and routes only after authentication", async () => {
     await render();
     await act(async () => host.querySelector<HTMLButtonElement>("#nav-cta")!.click());

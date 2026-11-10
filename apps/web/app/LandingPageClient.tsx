@@ -11,6 +11,16 @@ import { withTimeout } from "@/lib/request-timeout";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 
+const LOGIN_INTENT_KEY = "allocard_pending_login_at";
+const LOGIN_INTENT_TTL = 10 * 60_000;
+
+function storeLoginIntent(startedAt: number | null) {
+  try {
+    if (startedAt === null) sessionStorage.removeItem(LOGIN_INTENT_KEY);
+    else sessionStorage.setItem(LOGIN_INTENT_KEY, String(startedAt));
+  } catch { /* Sign-in can still finish in this page when storage is unavailable. */ }
+}
+
 function routeForStatus(status?: "new" | "picker" | "employer" | "employee" | null) {
   if (status === "employer") return "/employer";
   if (status === "employee") return "/employee";
@@ -25,7 +35,7 @@ export function LandingPageClient({
   const router = useRouter();
   const auth = useAuth();
   const queryClient = useQueryClient();
-  const requestedLogin = useRef(false);
+  const requestedLogin = useRef<number | null>(null);
   const queuedConnect = useRef(false);
   const [routeError, setRouteError] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "routing">("idle");
@@ -41,11 +51,15 @@ export function LandingPageClient({
     router.prefetch("/onboarding");
   }, [router]);
 
-  // Clean any legacy sessionStorage keys
+  // Restore explicit sign-in intent after an OAuth reload, never from auth alone.
   useEffect(() => {
-    if (typeof window !== "undefined") {
+    try {
       sessionStorage.removeItem("allocard_user_logging_in");
-    }
+      const startedAt = Number(sessionStorage.getItem(LOGIN_INTENT_KEY));
+      if (startedAt > 0 && startedAt <= Date.now() && Date.now() - startedAt < LOGIN_INTENT_TTL) {
+        requestedLogin.current = startedAt;
+      } else storeLoginIntent(null);
+    } catch { /* Keep the in-memory flow usable when storage is unavailable. */ }
   }, []);
 
   const address = auth.status === "authenticated" ? auth.address : null;
@@ -53,7 +67,8 @@ export function LandingPageClient({
   const openWorkspace = useCallback(async () => {
     if (!address || !principal || isNavigatingRef.current) return;
     isNavigatingRef.current = true;
-    requestedLogin.current = false;
+    requestedLogin.current = null;
+    storeLoginIntent(null);
     setRouteError(null);
     setPhase("routing");
     try {
@@ -71,6 +86,12 @@ export function LandingPageClient({
   }, [address, principal, queryClient, router]);
   useEffect(() => {
     if (!requestedLogin.current) return;
+    if (Date.now() - requestedLogin.current >= LOGIN_INTENT_TTL) {
+      requestedLogin.current = null;
+      queuedConnect.current = false;
+      storeLoginIntent(null);
+      return;
+    }
     // Navigation follows the external Privy authentication event.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (address) void openWorkspace();
@@ -82,14 +103,16 @@ export function LandingPageClient({
   const handleGetStarted = (target: "nav" | "hero" = "hero") => {
     setActiveTarget(target);
     if (auth.status === "unauthenticated") {
-      requestedLogin.current = true;
+      requestedLogin.current = Date.now();
+      storeLoginIntent(requestedLogin.current);
       setRouteError(null);
       auth.connect();
     } else if (auth.status === "authenticated") {
       void openWorkspace();
     } else {
       queuedConnect.current = true;
-      requestedLogin.current = true;
+      requestedLogin.current = Date.now();
+      storeLoginIntent(requestedLogin.current);
     }
   };
   const isBusy = phase !== "idle";
@@ -217,7 +240,7 @@ export function LandingPageClient({
           <div className="w-full max-w-4xl mx-auto flex items-center justify-center">
             <div className="relative w-full drop-shadow-[0_25px_60px_rgba(255,255,255,0.08)] transition-all duration-500 hover:scale-[1.01]">
               <Image
-                src="/AllocardVirtualCard.png"
+                src="/AllocardNearCard.png"
                 alt="Allocard spending authorization"
                 width={1572}
                 height={694}

@@ -18,7 +18,7 @@ describe("dashboard loading shell", () => {
   it("keeps employer navigation, card labels and delegation structure visible", () => {
     const doc = render("employer");
     expect(doc.querySelector("header h1")?.textContent).toBe("Company dashboard");
-    for (const label of ["Workspace", "Employees", "Treasury Balance", "Active Delegations", "Budgeted NEAR", "Delegations", "Activity Log", "Company treasury · Source of spending authority"]) expect(doc.body.textContent).toContain(label);
+    for (const label of ["Workspace", "Employees", "Treasury Balance", "Active Delegations", "Delegated NEAR", "Delegations", "Activity Log"]) expect(doc.body.textContent).toContain(label);
     expect(doc.body.textContent).not.toContain("No delegations yet");
     expect(doc.body.textContent).not.toContain("No active employees yet");
     expect(doc.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(4);

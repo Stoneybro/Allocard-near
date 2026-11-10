@@ -243,7 +243,7 @@ function DelegationNode({ data }: NodeProps<Node<DelegationNodeData>>) {
         </div>
       )}
 
-      {data.canConfigure && data.delegationId ? (
+      {(data.canConfigure || (data.kind === "agent" && data.status === "active" && data.onRevoke)) && data.delegationId ? (
         data.status === "revoked" ? (
           <div className="nodrag mt-3 flex gap-2">
             <Badge variant="destructive">Revoked</Badge>
@@ -376,18 +376,12 @@ function DelegationNode({ data }: NodeProps<Node<DelegationNodeData>>) {
         ) : data.kind === "agent" && data.status === "active" ? (
           /* Active agent: View Rules + Revoke */
           <div className="nodrag mt-3 flex gap-2" onMouseDown={e => e.stopPropagation()}>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 px-2 text-xs"
-              onClick={(e) => {
-                e.stopPropagation();
-                data.onConfigure?.(data.delegationId!);
-              }}
+            {data.canConfigure && <Button
+              size="sm" variant="outline" className="h-7 px-2 text-xs"
+              onClick={(e) => { e.stopPropagation(); data.onConfigure?.(data.delegationId!); }}
             >
-              <Settings2Icon className="mr-1 size-3" />
-              View Rules
-            </Button>
+              <Settings2Icon className="mr-1 size-3" />View Rules
+            </Button>}
             {data.onRevoke && (
               <AlertDialog>
                 <AlertDialogTrigger asChild>
@@ -526,7 +520,7 @@ export function DashboardFlowCanvas({
   company,
   employees,
   agents,
-  delegations,
+  delegations: allDelegations,
   headerAction,
   onConfigureDelegation,
   onDropEmployee,
@@ -559,6 +553,7 @@ export function DashboardFlowCanvas({
   onRevokeDelegation?: (delegationId: string) => void;
   onRemoveDelegation?: (delegationId: string) => void;
 }) {
+  const delegations = useMemo(() => allDelegations.filter(delegation => delegation.status !== "revoked"), [allDelegations]);
   const nodeTypes = useMemo(() => ({ delegation: DelegationNode }), []);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const { nodes: derivedNodes, edges: derivedEdges } = useMemo(() => {
@@ -572,8 +567,6 @@ export function DashboardFlowCanvas({
           title: company.name,
           subtitle: "Company smart account",
           address: company.smartAccountAddress ?? undefined,
-          balance: company.ethBalance !== undefined ? `${company.ethBalance} ${TOKEN_SYMBOL}` : undefined,
-          balanceLabel: "Balance",
           status: "root",
           kind: "master",
         },
@@ -644,8 +637,7 @@ export function DashboardFlowCanvas({
             status: delegation.status,
             kind: "agent",
             isPlaceholder: agent.isPlaceholder,
-            // Redelegated agents (employee → agent) are read-only on the employer canvas
-            // because the employer's smart account didn't sign them
+            // Editing remains limited to company-issued permissions; owners can revoke child agents.
             canConfigure: !delegation.parentDelegationId,
             onConfigure: onConfigureDelegation,
             onRevoke: onRevokeDelegation,
@@ -728,21 +720,11 @@ export function DashboardFlowCanvas({
 
   return (
     <div className="flex h-[620px] min-h-[520px] flex-col overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
-      <div className="flex items-center justify-between gap-4 border-b border-neutral-100 px-5 py-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="min-w-0">
-            <h3 className="text-lg font-semibold text-foreground">
-              Delegation Canvas
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              Visualize and manage your entire organizational delegation tree.
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center">
+      {headerAction && (
+        <div className="flex flex-wrap items-center justify-end gap-2 border-b border-neutral-100 px-4 py-3">
           {headerAction}
         </div>
-      </div>
+      )}
 
       <div
         ref={canvasRef}

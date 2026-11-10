@@ -1,6 +1,5 @@
 "use client";
 
-import { CompanyResearchActivity } from "@/components/purchasing-research-panel";
 
 import { useSettlementRefresh } from "@/hooks/use-account-queries";
 import { DashboardLoading } from "@/components/dashboard-loading";
@@ -979,8 +978,6 @@ export function EmployerClient({
           isToppingUp={isToppingUp}
         />
 
-        <CompanyResearchActivity companyId={company.id} />
-
         <Tabs defaultValue="canvas" className="w-full">
           <TabsList className="mb-4">
             <TabsTrigger value="canvas">Delegations</TabsTrigger>
@@ -1001,7 +998,7 @@ export function EmployerClient({
                       onClick={() => setViewMode("cards")}
                     >
                       <LayoutGridIcon className="size-3.5" />
-                      Hierarchy View
+                      Table View
                     </Button>
                     <Button
                       type="button"

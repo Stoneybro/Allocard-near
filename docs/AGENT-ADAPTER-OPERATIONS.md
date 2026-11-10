@@ -97,3 +97,9 @@ Saving a draft or opening a signature prompt is not transaction submission. New 
 A different recipient or amount can replace an unsubmitted draft immediately. Confirmed failed payments can be replaced; confirmed successful payments with different new details are archived with their execution evidence under the original request ID before starting the new payment. That browser archive preserves evidence for history reconciliation; it does not claim server history synchronization has succeeded. The UI does not poll or describe unsubmitted drafts as pending transactions.
 
 Older records without reliable submission metadata remain conservative: their outcome must be reconciled, or the original request must be proven unused after expiry. Unknown outcomes are not relabelled as failed merely to remove a lock.
+
+## Proposal preparation readiness
+
+The local app must point `ALLOCARD_AGENT_URL` at a worker deployment exposing `/allocard/health` and `/allocard/jobs`. The older production worker returned 404 for that channel; the configured demo preview exposes it and passes the non-billable readiness check. Protected previews additionally require the server-only `ALLOCARD_WORKER_BYPASS` credential. Local configuration now uses the demo worker; restart the development server after changing its environment.
+
+Preparation errors appear immediately beside the action and in a toast. Server logs identify whether the failure occurred during permission checking, worker readiness or proposal persistence. Timeouts and missing/unauthorized worker endpoints have readable messages. Preparing a proposal does not invoke the research model; a successful response opens the confirmation dialog.

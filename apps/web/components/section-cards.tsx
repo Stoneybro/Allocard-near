@@ -1,22 +1,10 @@
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  NetworkIcon,
-  ShieldCheckIcon,
-  UsersRoundIcon,
-  WalletIcon,
-  PlusCircleIcon,
-  Loader2,
-} from "lucide-react";
+"use client";
 
-import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { PlusIcon, Loader2, WalletIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardAction,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { TOKEN_SYMBOL } from "@/lib/chain";
 
 export function SectionCards({
@@ -39,91 +27,78 @@ export function SectionCards({
   isToppingUp?: boolean;
 }) {
   return (
-    <div className="grid grid-cols-1 gap-4 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card *:data-[slot=card]:shadow-xs lg:grid-cols-4 dark:*:data-[slot=card]:bg-card">
-      <Card size="sm" className="@container/card">
-        <CardHeader>
-          <CardDescription>Employees</CardDescription>
-          <CardTitle className="text-xl font-semibold tabular-nums @[250px]/card:text-2xl">
-            {loading ? <Skeleton className="h-7 w-16" /> : employeeCount}
-          </CardTitle>
-          <CardAction>
-            <Badge variant="outline" className="px-1 py-0">
-              <UsersRoundIcon className="h-3.5 w-3.5" />
-            </Badge>
-          </CardAction>
-        </CardHeader>
-        <p className="px-4 text-[11px] text-muted-foreground">
-          Total onboarded team members.
-        </p>
-      </Card>
+    <TooltipProvider delayDuration={300}>
+      <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-4">
+        <Card className="min-w-0 gap-5 rounded-2xl border-foreground/10 bg-foreground text-background shadow-sm [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]">
+          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+            <CardDescription className="flex items-center gap-2 text-sm font-medium text-background/70">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button type="button" className="flex cursor-default items-center gap-2 rounded-sm text-left underline decoration-background/25 decoration-dotted underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-background/60 focus-visible:ring-offset-4 focus-visible:ring-offset-foreground">
+                    <WalletIcon className="size-4" aria-hidden="true" />
+                    Treasury Balance
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent sideOffset={8} className="max-w-64 text-pretty leading-relaxed">
+                  Corporate treasury balance on NEAR Testnet, used to fund company spending.
+                </TooltipContent>
+              </Tooltip>
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+            <div className="min-w-0 flex-1 basis-40" aria-live="polite" aria-busy={loading || balanceLoading}>
+              {loading || balanceLoading ? (
+                <Skeleton className="my-1 h-12 w-40 max-w-full bg-background/15" />
+              ) : (
+                <p className="break-words text-4xl font-medium tracking-tight tabular-nums sm:text-5xl">
+                  {smartAccountBalance ?? "—"}{" "}
+                  <span className="text-sm font-medium tracking-normal text-background/55">{TOKEN_SYMBOL}</span>
+                </p>
+              )}
+            </div>
+            <Button
+              className="h-11 flex-1 basis-28 gap-2 rounded-xl bg-background px-5 font-semibold text-foreground shadow-xs hover:bg-background/90 focus-visible:ring-background/50 sm:flex-none"
+              onClick={onTopUp}
+              disabled={!onTopUp || loading || isToppingUp}
+              aria-haspopup="dialog"
+            >
+              {isToppingUp ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : <PlusIcon className="size-4" aria-hidden="true" />}
+              {isToppingUp ? "Adding funds…" : "Add funds"}
+            </Button>
+          </CardContent>
+        </Card>
 
-      <Card size="sm" className="@container/card">
-        <CardHeader>
-          <CardDescription>Treasury Balance</CardDescription>
-          <CardTitle className="text-xl font-semibold tabular-nums @[250px]/card:text-2xl">
-            {loading || balanceLoading ? <Skeleton className="h-7 w-28" /> : <>{smartAccountBalance} {TOKEN_SYMBOL}</>}
-          </CardTitle>
-          <CardAction>
-            {onTopUp ? (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-6 text-[11px] gap-1 px-2 border-border text-foreground hover:bg-muted cursor-pointer"
-                onClick={onTopUp}
-                disabled={loading || isToppingUp}
-              >
-                {isToppingUp ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <PlusCircleIcon className="h-3 w-3" />
-                )}
-                <span>Top Up {TOKEN_SYMBOL}</span>
-              </Button>
-            ) : (
-              <Badge variant="outline" className="px-1 py-0">
-                <WalletIcon className="h-3.5 w-3.5" />
-              </Badge>
-            )}
-          </CardAction>
-        </CardHeader>
-        <p className="px-4 text-[11px] text-muted-foreground">
-          Corporate treasury balance on NEAR Testnet.
-        </p>
-      </Card>
-
-      <Card size="sm" className="@container/card">
-        <CardHeader>
-          <CardDescription>Active Delegations</CardDescription>
-          <CardTitle className="text-xl font-semibold tabular-nums @[250px]/card:text-2xl">
-            {loading ? <Skeleton className="h-7 w-16" /> : activeDelegationCount}
-          </CardTitle>
-          <CardAction>
-            <Badge variant="outline" className="px-1 py-0">
-              <NetworkIcon className="h-3.5 w-3.5" />
-            </Badge>
-          </CardAction>
-        </CardHeader>
-        <p className="px-4 text-[11px] text-muted-foreground">
-          Employees and AI agents with active allowances.
-        </p>
-      </Card>
-
-      <Card size="sm" className="@container/card">
-        <CardHeader>
-          <CardDescription>Budgeted {TOKEN_SYMBOL}</CardDescription>
-          <CardTitle className="text-xl font-semibold tabular-nums @[250px]/card:text-2xl">
-            {loading ? <Skeleton className="h-7 w-28" /> : <>{delegatedNativeNearAllowance} {TOKEN_SYMBOL}</>}
-          </CardTitle>
-          <CardAction>
-            <Badge variant="outline" className="px-1 py-0">
-              <ShieldCheckIcon className="h-3.5 w-3.5" />
-            </Badge>
-          </CardAction>
-        </CardHeader>
-        <p className="px-4 text-[11px] text-muted-foreground">
-          Total amount budgeted to employees and agents.
-        </p>
-      </Card>
-    </div>
+        <Card className="min-w-0 justify-center gap-0 rounded-2xl border-border/70 shadow-xs [--card-spacing:--spacing(4)] sm:[--card-spacing:--spacing(6)]">
+          <CardContent className="px-0">
+            <dl className="grid grid-cols-3 items-stretch divide-x divide-border/70">
+              {[
+                { label: "Employees", value: employeeCount, description: "Total onboarded team members." },
+                { label: "Active Delegations", value: activeDelegationCount, description: "Employees and AI agents with active spending allowances." },
+                { label: `Delegated ${TOKEN_SYMBOL}`, value: delegatedNativeNearAllowance, description: `Total ${TOKEN_SYMBOL} budgeted to employees and agents through delegations.` },
+              ].map(({ label, value, description }) => (
+                <div key={label} className="flex min-w-0 flex-col px-3 sm:px-6">
+                  <dt className="min-h-8 text-xs font-medium leading-4 text-muted-foreground sm:min-h-10 sm:text-sm sm:leading-5">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button type="button" className="cursor-default rounded-sm text-left underline decoration-muted-foreground/40 decoration-dotted underline-offset-4 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card">
+                          {label}
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent sideOffset={8} className="max-w-64 text-pretty leading-relaxed">
+                        {description}
+                      </TooltipContent>
+                    </Tooltip>
+                  </dt>
+                  <dd className="mt-2 break-words text-[1.75rem] font-medium leading-none tracking-[-0.035em] text-foreground tabular-nums sm:mt-3 sm:text-4xl">
+                    {loading ? <Skeleton className="h-9 w-16 max-w-full" /> : value ?? "—"}
+                    {label === `Delegated ${TOKEN_SYMBOL}` && <span className="sr-only"> {TOKEN_SYMBOL}</span>}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </CardContent>
+        </Card>
+      </div>
+    </TooltipProvider>
   );
 }

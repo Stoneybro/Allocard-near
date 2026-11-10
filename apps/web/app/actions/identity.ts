@@ -1,5 +1,6 @@
 "use server";
 
+import { resolveEmployerRevocation } from "@/lib/employer-revocation";
 import { adapterAccount } from "@/lib/agent-adapter/config";
 import { ADAPTER_NAME } from "@/lib/agent-adapter/shared";
 
@@ -1277,11 +1278,20 @@ export async function revokeDelegation(input: {
   delegationId: string;
 }) {
   await validateSessionWallet(input.walletAddress);
-  const { profile, delegation } = await getEmployerDelegationOrThrow(input.walletAddress, input.delegationId);
+  const profile = await getEmployerProfileOrThrow(input.walletAddress);
+  const path = await resolveEmployerRevocation(input.delegationId, profile.company.id, profile.company.smartAccountAddress, async id => {
+    const [row] = await db.select().from(delegations).where(eq(delegations.id, id)).limit(1);
+    return row;
+  });
+  const delegation = path[0];
   if (delegation.status === "active") {
     if (!profile.company.smartAccountAddress || !delegation.delegationHash) throw new Error("Missing treasury permission mapping");
-    const permission = await treasuryReader(profile.company.smartAccountAddress).getPermission(delegation.delegationHash);
-    if (!permission?.revoked) throw new Error("Revoke the permission on-chain before marking it revoked");
+    const reader = treasuryReader(profile.company.smartAccountAddress);
+    const permissions = await reader.getPermissionPath(delegation.delegationHash);
+    if (permissions.length !== path.length || permissions.some((permission, index) => permission.id !== path[index].delegationHash)) {
+      throw new Error("On-chain delegation ancestry does not match this company");
+    }
+    if (!permissions[0]?.revoked) throw new Error("Revoke the permission on-chain before marking it revoked");
   }
 
   const descendantIds = await getDescendantDelegationIds([input.delegationId]);

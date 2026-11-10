@@ -58,6 +58,6 @@ export async function updateTask(id: string, values: Partial<typeof tasks.$infer
   await db.update(tasks).set(values).where(and(eq(tasks.id, id), sql`${tasks.state} IN (${sql.join(states.map(state => sql`${state}`), sql`, `)})`));
 }
 
-export async function companyTasks(companyId: string) {
-  return db.select().from(tasks).where(eq(tasks.companyId, companyId)).orderBy(desc(tasks.createdAt)).limit(50);
+export async function companyTasks(companyId: string, delegationId?: string) {
+  return db.select().from(tasks).where(and(eq(tasks.companyId, companyId), delegationId ? eq(tasks.delegationId, delegationId) : undefined)).orderBy(desc(tasks.createdAt)).limit(50);
 }

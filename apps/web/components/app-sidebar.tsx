@@ -432,9 +432,9 @@ function SidebarLogoutButton() {
       variant="outline"
       size="sm"
       onClick={handleLogout}
-      className="w-full justify-start text-xs font-medium text-destructive border-destructive/25 bg-destructive/5 hover:bg-destructive/15 hover:text-destructive hover:border-destructive/40 cursor-pointer transition-colors px-2.5 h-8 gap-2 rounded-md"
+      className="w-full justify-start text-xs font-medium text-sidebar-foreground border-sidebar-border bg-sidebar hover:bg-sidebar-accent hover:text-sidebar-accent-foreground dark:border-sidebar-border dark:bg-sidebar dark:hover:bg-sidebar-accent focus-visible:border-sidebar-ring focus-visible:ring-sidebar-ring/50 cursor-pointer transition-colors px-2.5 h-8 gap-2 rounded-md"
     >
-      <LogOutIcon className="size-3.5 text-destructive shrink-0" />
+      <LogOutIcon className="size-3.5 shrink-0" />
       <span>Log out</span>
     </Button>
   );
