@@ -1,28 +1,12 @@
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  ShieldCheckIcon,
-  TrendingDownIcon,
-  WalletIcon,
-  BotIcon,
-} from "lucide-react";
+"use client";
 
-import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardAction,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { WalletIcon } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { TOKEN_SYMBOL } from "@/lib/chain";
 
-export function EmployeeSectionCards({
-  loading = false,
-  approvedLimitNear,
-  redelegatedNear,
-  remainingNear,
-  spentNear = "0",
-}: {
+export function EmployeeSectionCards({ loading = false, approvedLimitNear, redelegatedNear, remainingNear, spentNear = "0" }: {
   loading?: boolean;
   approvedLimitNear?: string;
   redelegatedNear?: string;
@@ -30,86 +14,33 @@ export function EmployeeSectionCards({
   spentNear?: string;
 }) {
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      {/* 1. Available Corporate Allowance */}
-      <Card size="sm" className="@container/card border-border/80 bg-card shadow-xs">
-        <CardHeader>
-          <CardDescription className="text-xs font-medium text-muted-foreground">
-            Available Allowance
-          </CardDescription>
-          <CardTitle className="text-xl font-bold tracking-tight tabular-nums @[250px]/card:text-2xl text-foreground">
-            {loading ? <Skeleton className="h-7 w-28" /> : <>{remainingNear} {TOKEN_SYMBOL}</>}
-          </CardTitle>
-          <CardAction>
-            <Badge variant="secondary" className="px-1.5 py-0.5 text-xs">
-              <ShieldCheckIcon className="h-3.5 w-3.5 text-foreground" />
-            </Badge>
-          </CardAction>
-        </CardHeader>
-        <p className="px-4 text-[11px] text-muted-foreground">
-          Corporate funds available for direct spend or agent tasks.
-        </p>
-      </Card>
-
-      {/* 2. Total Approved Cap */}
-      <Card size="sm" className="@container/card border-border/80 bg-card shadow-xs">
-        <CardHeader>
-          <CardDescription className="text-xs font-medium text-muted-foreground">
-            Authorized Spending Limit
-          </CardDescription>
-          <CardTitle className="text-xl font-bold tracking-tight tabular-nums @[250px]/card:text-2xl text-foreground">
-            {loading ? <Skeleton className="h-7 w-28" /> : <>{approvedLimitNear} {TOKEN_SYMBOL}</>}
-          </CardTitle>
-          <CardAction>
-            <Badge variant="outline" className="px-1.5 py-0.5 text-xs">
-              <WalletIcon className="h-3.5 w-3.5 text-muted-foreground" />
-            </Badge>
-          </CardAction>
-        </CardHeader>
-        <p className="px-4 text-[11px] text-muted-foreground">
-          Maximum allowance granted by your employer.
-        </p>
-      </Card>
-
-      {/* 3. Utilized Spend */}
-      <Card size="sm" className="@container/card border-border/80 bg-card shadow-xs">
-        <CardHeader>
-          <CardDescription className="text-xs font-medium text-muted-foreground">
-            Utilized Spend
-          </CardDescription>
-          <CardTitle className="text-xl font-bold tracking-tight tabular-nums @[250px]/card:text-2xl text-foreground">
-            {loading ? <Skeleton className="h-7 w-28" /> : <>{spentNear} {TOKEN_SYMBOL}</>}
-          </CardTitle>
-          <CardAction>
-            <Badge variant="outline" className="px-1.5 py-0.5 text-xs">
-              <TrendingDownIcon className="h-3.5 w-3.5 text-muted-foreground" />
-            </Badge>
-          </CardAction>
-        </CardHeader>
-        <p className="px-4 text-[11px] text-muted-foreground">
-          Total business spend executed through your card.
-        </p>
-      </Card>
-
-      {/* 4. Allocated to Agents */}
-      <Card size="sm" className="@container/card border-border/80 bg-card shadow-xs">
-        <CardHeader>
-          <CardDescription className="text-xs font-medium text-muted-foreground">
-            Allocated to Agents
-          </CardDescription>
-          <CardTitle className="text-xl font-bold tracking-tight tabular-nums @[250px]/card:text-2xl text-foreground">
-            {loading ? <Skeleton className="h-7 w-28" /> : <>{redelegatedNear} {TOKEN_SYMBOL}</>}
-          </CardTitle>
-          <CardAction>
-            <Badge variant="outline" className="px-1.5 py-0.5 text-xs">
-              <BotIcon className="h-3.5 w-3.5 text-muted-foreground" />
-            </Badge>
-          </CardAction>
-        </CardHeader>
-        <p className="px-4 text-[11px] text-muted-foreground">
-          Allowance currently assigned to autonomous AI agents.
-        </p>
-      </Card>
-    </div>
+    <TooltipProvider delayDuration={300}>
+      <div className="grid min-w-0 grid-cols-1 gap-3 lg:gap-4 xl:grid-cols-2">
+        <Card className="min-w-0 gap-5 rounded-2xl border-foreground/10 bg-foreground text-background shadow-sm [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]">
+          <CardHeader>
+            <CardDescription className="text-sm font-medium text-background/70">
+              <Tooltip><TooltipTrigger asChild><button type="button" className="flex cursor-default items-center gap-2 rounded-sm text-left underline decoration-background/25 decoration-dotted underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-background/60"><WalletIcon className="size-4" aria-hidden="true" />Available allowance</button></TooltipTrigger><TooltipContent sideOffset={8}>Company funds currently available under your spending permission.</TooltipContent></Tooltip>
+            </CardDescription>
+          </CardHeader>
+          <CardContent aria-busy={loading}>
+            {loading ? <Skeleton className="my-1 h-12 w-40 max-w-full bg-background/15" /> : <p className="break-words text-4xl font-medium tracking-tight tabular-nums sm:text-5xl">{remainingNear ?? "—"} <span className="text-sm font-medium tracking-normal text-background/55">{TOKEN_SYMBOL}</span></p>}
+          </CardContent>
+        </Card>
+        <Card className="min-w-0 justify-center gap-0 rounded-2xl border-border/70 shadow-xs [--card-spacing:--spacing(4)] sm:[--card-spacing:--spacing(6)]">
+          <CardContent className="px-0">
+            <dl className="grid grid-cols-3 divide-x divide-border/70">
+              {[
+                { label: "Spending limit", value: approvedLimitNear, description: "Maximum allowance granted by your employer." },
+                { label: "Spent", value: spentNear, description: "Business spending executed from your delegated allowance." },
+                { label: "Delegated to agents", value: redelegatedNear, description: "Spending limits assigned to your agents. These permissions share your allowance; they are not separate deposits." },
+              ].map(({ label, value, description }) => <div key={label} className="min-w-0 px-3 sm:px-6">
+                <dt className="min-h-8 text-xs font-medium leading-4 text-muted-foreground sm:min-h-10 sm:text-sm sm:leading-5"><Tooltip><TooltipTrigger asChild><button type="button" className="cursor-default rounded-sm text-left underline decoration-muted-foreground/40 decoration-dotted underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-ring">{label}</button></TooltipTrigger><TooltipContent sideOffset={8} className="max-w-64 text-pretty leading-relaxed">{description}</TooltipContent></Tooltip></dt>
+                <dd className="mt-2 break-words text-[1.75rem] font-medium leading-none tracking-[-0.035em] tabular-nums sm:mt-3 sm:text-4xl">{loading ? <Skeleton className="h-9 w-16 max-w-full" /> : value ?? "—"}<span className="sr-only"> {TOKEN_SYMBOL}</span></dd>
+              </div>)}
+            </dl>
+          </CardContent>
+        </Card>
+      </div>
+    </TooltipProvider>
   );
 }

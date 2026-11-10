@@ -25,7 +25,7 @@ import {
 import {
   CheckIcon,
   CopyIcon,
-  CreditCardIcon,
+  LandmarkIcon,
   Settings2Icon,
 
   UserRoundIcon,
@@ -114,7 +114,7 @@ function StatusBadge({
   isPlaceholder?: boolean;
 }) {
   if (status === "root") {
-    return <Badge variant="secondary">Master card</Badge>;
+    return <Badge variant="secondary">Master treasury</Badge>;
   }
 
   if (isPlaceholder) {
@@ -175,7 +175,7 @@ function CopyAddressButton({ address, dark }: { address?: string; dark?: boolean
 function DelegationNode({ data }: NodeProps<Node<DelegationNodeData>>) {
   const Icon =
     data.kind === "master"
-      ? CreditCardIcon
+      ? LandmarkIcon
       : data.kind === "employee"
         ? UserRoundIcon
         : BotIcon;
@@ -565,7 +565,7 @@ export function DashboardFlowCanvas({
         position: { x: 0, y: 0 },
         data: {
           title: company.name,
-          subtitle: "Company smart account",
+          subtitle: "Company treasury",
           address: company.smartAccountAddress ?? undefined,
           status: "root",
           kind: "master",
@@ -592,7 +592,7 @@ export function DashboardFlowCanvas({
         data: {
           delegationId: delegation.id,
           title: employee.label,
-          subtitle: "Smart account",
+          subtitle: "Treasury",
           address: employee.smartAccountAddress ?? undefined,
           balance:
             delegation.status === "active" && delegation.allowance !== undefined

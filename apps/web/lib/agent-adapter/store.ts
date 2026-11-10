@@ -21,8 +21,8 @@ export async function ownTask(id: string, employeeId: string) {
   const [row] = await db.select().from(tasks).where(and(eq(tasks.id, id), eq(tasks.employeeId, employeeId))).limit(1);
   if (!row) throw new Error("Forbidden: research task not found"); return row;
 }
-export async function listTasks(employeeId: string, companyId: string) {
-  return db.select().from(tasks).where(and(eq(tasks.employeeId, employeeId), eq(tasks.companyId, companyId))).orderBy(desc(tasks.createdAt)).limit(25);
+export async function listTasks(employeeId: string, companyId: string, delegationId?: string) {
+  return db.select().from(tasks).where(and(eq(tasks.employeeId, employeeId), eq(tasks.companyId, companyId), delegationId ? eq(tasks.delegationId, delegationId) : undefined)).orderBy(desc(tasks.createdAt)).limit(25);
 }
 export async function confirmProposal(row: TaskRow, digest: string) {
   if (row.digest !== digest) throw new Error("Proposal changed. Review it again.");

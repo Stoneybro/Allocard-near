@@ -1,5 +1,6 @@
 "use server";
 
+import { confirmEmployeeAgentRevocation } from "@/lib/employee-revocation";
 import { resolveEmployerRevocation } from "@/lib/employer-revocation";
 import { adapterAccount } from "@/lib/agent-adapter/config";
 import { ADAPTER_NAME } from "@/lib/agent-adapter/shared";
@@ -238,7 +239,7 @@ export async function activateSmartAccount(input: {
   const profile = await getWalletProfile(walletAddress);
 
   if (profile.status === "new" || !profile.user) {
-    throw new Error("Create an Allocard profile before activating a smart account");
+    throw new Error("Create an Allocard profile before activating a treasury");
   }
 
   if (profile.status === "employer") {
@@ -763,7 +764,7 @@ export async function addEmployeeByEmail(input: { walletAddress: string; email: 
   const email = normalizeVerifiedEmail(inviteInput);
   const identity = await getSessionIdentity();
   if (identity && email === identity.email.toLowerCase()) {
-    throw new Error("You cannot add your own employer account as an employee. To test delegation and card access, enter a colleague or secondary email address.");
+    throw new Error("You cannot add your own employer account as an employee. To test delegation and spending access, enter a colleague or secondary email address.");
   }
 
   const [existing] = await db.select().from(pendingEmployees).where(and(
@@ -1149,7 +1150,7 @@ export async function activateDelegation(input: {
   );
 
   if (!profile.company.smartAccountAddress) {
-    throw new Error("Activate the company smart account first");
+    throw new Error("Activate the company treasury first");
   }
 
   if (delegation.status === "active" && delegation.delegationHash !== input.delegationHash) {
@@ -1212,13 +1213,13 @@ export async function activateDelegation(input: {
       .limit(1);
 
     if (!agent?.smartAccountAddress) {
-      throw new Error("The agent does not have a smart account configured yet");
+      throw new Error("The agent does not have a treasury configured yet");
     }
 
     // Reject placeholder addresses — real addresses are set during Piece 3-5 deployment.
     if (agent.smartAccountAddress.startsWith("0x000000000000000000000000000000000000000")) {
       throw new Error(
-        `${agent.name} smart account has not been deployed yet. Complete the agent deployment setup first.`,
+        `${agent.name} treasury has not been deployed yet. Complete the agent deployment setup first.`,
       );
     }
   }
@@ -2077,8 +2078,24 @@ export async function revokeEmployeeDelegation(input: {
   await validateSessionWallet(input.walletAddress);
   const { user } = profile;
 
-  // Scoped check: only the employee's own outbound delegations
-  await getEmployeeOwnDelegationOrThrow(user.id, input.delegationId);
+  // Keep employee ownership checks independent of the company ancestry proof.
+  const ownedDelegation = await getEmployeeOwnDelegationOrThrow(user.id, input.delegationId);
+  const treasury = profile.company.smartAccountAddress;
+  if (!treasury) throw new Error("Company treasury is unavailable");
+  const reader = treasuryReader(treasury, { cacheMs: 0 });
+  if (ownedDelegation.status === "revoked") {
+    if (ownedDelegation.treasuryReference !== treasury) throw new Error("Delegation belongs to another treasury");
+    await confirmEmployeeAgentRevocation([ownedDelegation], input.walletAddress, async id => {
+      const permission = await reader.getPermission(id);
+      return permission ? [permission] : [];
+    });
+    return getEmployeeDashboardState(input.walletAddress);
+  }
+  const path = await resolveEmployerRevocation(input.delegationId, profile.company.id, treasury, async id => {
+    const [row] = await db.select().from(delegations).where(eq(delegations.id, id)).limit(1);
+    return row;
+  });
+  await confirmEmployeeAgentRevocation(path, input.walletAddress, id => reader.getPermissionPath(id));
 
   const descendantIds = await getDescendantDelegationIds([input.delegationId]);
   const idsToRevoke = [input.delegationId, ...descendantIds];

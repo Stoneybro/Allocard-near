@@ -240,7 +240,7 @@ export function LandingPageClient({
           <div className="w-full max-w-4xl mx-auto flex items-center justify-center">
             <div className="relative w-full drop-shadow-[0_25px_60px_rgba(255,255,255,0.08)] transition-all duration-500 hover:scale-[1.01]">
               <Image
-                src="/AllocardNearCard.png"
+                src="/AllocardTreasuryCard.png"
                 alt="Allocard spending authorization"
                 width={1572}
                 height={694}

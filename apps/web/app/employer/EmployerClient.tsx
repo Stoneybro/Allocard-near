@@ -345,7 +345,7 @@ export function EmployerClient({
   const companyName = company?.name ?? "Allocard";
   const smartAccountLabel = company?.smartAccountAddress
     ? formatWalletAddress(company.smartAccountAddress)
-    : "Smart account pending";
+    : "Treasury pending";
 
   const isMobile = useIsMobile();
   const [viewMode, setViewMode] = useState<"cards" | "canvas">("cards");
@@ -511,7 +511,7 @@ export function EmployerClient({
           perTransactionCapNear: result.formValues.perTransactionCapNear || prev.perTransactionCapNear,
           allowedTargets: result.formValues.allowedTargets || prev.allowedTargets,
         }));
-        toast.success("Card Limits Configured by NEAR AI", {
+        toast.success("Spending Limits Configured by NEAR AI", {
           description: "Limits, recurring period, and caveats were parsed from your prompt.",
         });
       }
@@ -902,7 +902,7 @@ export function EmployerClient({
         label: generateEmployeeReferenceId(employee.walletAddress),
         detail: employee.smartAccountAddress
           ? formatWalletAddress(employee.smartAccountAddress)
-          : "Smart account pending",
+          : "Treasury pending",
       }))}
       pendingEmployees={dashboardState.pendingEmployees}
       onInviteEmployeeByEmail={handleAddEmployeeByEmail}
@@ -1084,7 +1084,7 @@ export function EmployerClient({
             <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-6">
               <h3 className="text-lg font-semibold mb-4">Employer Activity Log</h3>
               <p className="text-sm text-muted-foreground mb-6">
-                A unified view of all direct employee spends and corporate card delegations within your company.
+                A unified view of all direct employee spends and corporate expense delegations within your company.
               </p>
               <ActivityLogTable companyId={company.id} />
             </div>
@@ -1337,12 +1337,12 @@ export function EmployerClient({
 
             <Separator />
 
-            {/* Section 4: Natural Language Card Prompt */}
+            {/* Section 4: Natural Language Spending Rules */}
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between">
                 <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
                   <Sparkles className="h-4 w-4 text-primary" />
-                  {"4. Natural Language Card Rules"}
+                  {"4. Natural Language Spending Rules"}
                 </h4>
                 {selectedDelegation?.status !== "active" && (
                   <Button

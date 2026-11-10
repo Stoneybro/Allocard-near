@@ -26,7 +26,7 @@ import {
   CircleUserRoundIcon,
   EllipsisVerticalIcon,
   LogOutIcon,
-  WalletCardsIcon,
+  WalletIcon,
 } from "lucide-react"
 
 export function NavUser({
@@ -92,9 +92,9 @@ export function NavUser({
                 Account
               </DropdownMenuItem>
               <DropdownMenuItem>
-                <WalletCardsIcon
+                <WalletIcon
                 />
-                Smart account
+                Treasury
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />

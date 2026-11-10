@@ -2,41 +2,17 @@
 
 import React, { useState } from "react";
 import dynamic from "next/dynamic";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import {
-  ArrowRightLeftIcon,
-  CheckIcon,
-  CopyIcon,
-  ExternalLinkIcon,
-  GlobeIcon,
-  Loader2,
-  SparklesIcon,
-  WalletIcon,
-} from "lucide-react";
+import { CheckIcon, ChevronDownIcon, CopyIcon, ExternalLinkIcon, Loader2, PlusIcon } from "lucide-react";
 import { TOKEN_SYMBOL } from "@/lib/chain";
 import { parseTreasuryReference } from "@allocard/delegation-sdk";
 
-const AuroraIntentWidget = dynamic(
-  () => import("./aurora-intent-widget"),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="flex flex-col items-center justify-center p-12 space-y-3 min-h-[380px] text-center">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        <p className="text-xs text-muted-foreground">Loading Aurora Intent Connect...</p>
-      </div>
-    ),
-  }
-);
+const AuroraIntentWidget = dynamic(() => import("./aurora-intent-widget"), {
+  ssr: false,
+  loading: () => <div role="status" className="flex min-h-64 items-center justify-center gap-2 text-xs text-muted-foreground"><Loader2 className="size-4 animate-spin" aria-hidden="true" />Loading funding options…</div>,
+});
 
 export interface TopUpTreasuryDialogProps {
   open: boolean;
@@ -48,198 +24,67 @@ export interface TopUpTreasuryDialogProps {
   isToppingUp?: boolean;
 }
 
-export function TopUpTreasuryDialog({
-  open,
-  onOpenChange,
-  treasuryAddress,
-  adminAddress,
-  currentBalance,
-  onDirectTopUp,
-  isToppingUp = false,
-}: TopUpTreasuryDialogProps) {
+export function TopUpTreasuryDialog({ open, onOpenChange, treasuryAddress, adminAddress, currentBalance, onDirectTopUp, isToppingUp = false }: TopUpTreasuryDialogProps) {
   const [copied, setCopied] = useState(false);
-
-  // Parse contract ID and company ID from treasury reference
   let contractId = "";
   let companyId: string | undefined;
-
   if (treasuryAddress) {
     try {
       const parsed = parseTreasuryReference(treasuryAddress);
       contractId = parsed.contractId;
       companyId = parsed.companyId;
-    } catch {
-      contractId = treasuryAddress;
-    }
+    } catch { contractId = treasuryAddress; }
   }
-
-  // Destination address for Aurora solver settlement:
-  // If we have an admin account on NEAR, solvers can send to either admin or contract account
   const destinationAddress = contractId || adminAddress || "";
-
-  const handleCopy = async (text: string) => {
+  const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(destinationAddress);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Fallback
-    }
+    } catch { setCopied(false); }
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[520px] max-h-[92vh] overflow-y-auto p-6">
-        <DialogHeader className="space-y-1.5 pb-2">
-          <div className="flex items-center gap-2">
-            <DialogTitle className="text-lg font-semibold tracking-tight">
-              Top Up Treasury
-            </DialogTitle>
-            <Badge variant="outline" className="text-[10px] uppercase font-mono tracking-wider text-muted-foreground">
-              NEAR Testnet
-            </Badge>
-          </div>
-          <DialogDescription className="text-xs text-muted-foreground">
-            Fund your corporate spending treasury from any wallet on any blockchain or directly on NEAR Testnet.
-          </DialogDescription>
+      <DialogContent className="max-h-[90dvh] gap-5 overflow-y-auto rounded-2xl p-4 sm:max-w-[504px] sm:p-6">
+        <DialogHeader className="gap-1 pr-6">
+          <DialogTitle className="text-xl font-semibold tracking-tight">Add funds</DialogTitle>
+          <DialogDescription className="text-xs leading-relaxed">Choose how to fund your treasury.</DialogDescription>
         </DialogHeader>
-
-        {destinationAddress && (
-          <div className="rounded-lg border border-border/70 bg-muted/30 p-2.5 text-xs flex items-center justify-between gap-2">
-            <div className="flex flex-col min-w-0">
-              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                Destination Treasury
-              </span>
-              <span className="font-mono text-[11px] text-foreground truncate">
-                {destinationAddress}
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              {currentBalance !== undefined && (
-                <span className="text-[11px] font-mono text-muted-foreground mr-1">
-                  {currentBalance} {TOKEN_SYMBOL}
-                </span>
-              )}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
-                onClick={() => handleCopy(destinationAddress)}
-                title="Copy address"
-              >
-                {copied ? (
-                  <CheckIcon className="h-3.5 w-3.5 text-emerald-500" />
-                ) : (
-                  <CopyIcon className="h-3.5 w-3.5" />
-                )}
+        <Tabs defaultValue="crosschain" className="min-w-0 w-full gap-4">
+          <TabsList className="grid h-10 w-full grid-cols-2 p-1">
+            <TabsTrigger value="crosschain" className="min-w-0 text-xs">Other wallets</TabsTrigger>
+            <TabsTrigger value="direct" className="min-w-0 text-xs">NEAR wallet</TabsTrigger>
+          </TabsList>
+          <TabsContent value="crosschain" className="min-w-0 mt-0">
+            {destinationAddress ? <AuroraIntentWidget destinationNearAddress={destinationAddress} /> : <p role="status" className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">Activate your treasury to add funds.</p>}
+          </TabsContent>
+          <TabsContent value="direct" className="mt-0 space-y-5">
+            <div className="rounded-xl border border-border/70 p-5">
+              <div className="flex items-baseline justify-between gap-3"><p className="text-sm font-medium">Wallet deposit</p><span className="text-xs text-muted-foreground">Testnet</span></div>
+              <p className="my-4 text-3xl font-medium tracking-tight tabular-nums">1.7 <span className="text-sm text-muted-foreground">{TOKEN_SYMBOL}</span></p>
+              <p className="mb-4 text-xs leading-relaxed text-muted-foreground">From your connected wallet. Includes storage and gas allocation.</p>
+              <Button className="h-11 w-full gap-2 rounded-lg" onClick={onDirectTopUp} disabled={!onDirectTopUp || isToppingUp}>
+                {isToppingUp ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : <PlusIcon className="size-4" aria-hidden="true" />}
+                {isToppingUp ? "Adding funds…" : `Add 1.7 ${TOKEN_SYMBOL}`}
               </Button>
             </div>
-          </div>
-        )}
-
-        <Tabs defaultValue="crosschain" className="w-full mt-2">
-          <TabsList className="grid w-full grid-cols-2 h-9 p-0.5">
-            <TabsTrigger value="crosschain" className="text-xs gap-1.5">
-              <GlobeIcon className="h-3.5 w-3.5" />
-              <span>Cross-Chain (Any Wallet)</span>
-            </TabsTrigger>
-            <TabsTrigger value="direct" className="text-xs gap-1.5">
-              <WalletIcon className="h-3.5 w-3.5" />
-              <span>Direct NEAR Testnet</span>
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="crosschain" className="mt-4 space-y-3">
-            <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs space-y-1">
-              <div className="flex items-center gap-1.5 font-medium text-foreground">
-                <SparklesIcon className="h-3.5 w-3.5 text-primary" />
-                <span>Aurora Intent Connect</span>
-              </div>
-              <p className="text-[11px] text-muted-foreground leading-relaxed">
-                Connect MetaMask, Phantom, Coinbase, or any wallet. Pay from <strong>Ethereum, Base, Solana, Arbitrum, Optimism, Polygon, or Bitcoin</strong>. Solvers handle bridging and swap execution directly to NEAR Testnet.
-              </p>
-            </div>
-
-            {destinationAddress ? (
-              <AuroraIntentWidget destinationNearAddress={destinationAddress} />
-            ) : (
-              <div className="text-center p-6 text-xs text-muted-foreground">
-                Treasury address unavailable. Ensure your company account is deployed.
-              </div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="direct" className="mt-4 space-y-4">
-            <div className="space-y-3">
-              <div className="rounded-lg border border-border p-3.5 space-y-2 bg-card">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <h4 className="text-xs font-semibold text-foreground">
-                      Connected Wallet Deposit
-                    </h4>
-                    <p className="text-[11px] text-muted-foreground">
-                      Fund 1.7 {TOKEN_SYMBOL} from your active NEAR testnet wallet (allocates native balance, storage, and gas).
-                    </p>
-                  </div>
-                </div>
-
-                {onDirectTopUp && (
-                  <Button
-                    size="sm"
-                    className="w-full text-xs gap-2 mt-2"
-                    onClick={onDirectTopUp}
-                    disabled={isToppingUp}
-                  >
-                    {isToppingUp ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <ArrowRightLeftIcon className="h-3.5 w-3.5" />
-                    )}
-                    <span>Deposit 1.7 {TOKEN_SYMBOL} from Wallet</span>
-                  </Button>
-                )}
-              </div>
-
-              <div className="rounded-lg border border-border p-3.5 space-y-2 bg-card">
-                <div className="space-y-0.5">
-                  <h4 className="text-xs font-semibold text-foreground">
-                    NEAR Testnet Faucet
-                  </h4>
-                  <p className="text-[11px] text-muted-foreground">
-                    Need testnet funds? Request free {TOKEN_SYMBOL} tokens from the official NEAR testnet faucet.
-                  </p>
-                </div>
-
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full text-xs gap-1.5"
-                  asChild
-                >
-                  <a
-                    href="https://near-faucet.io"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <span>Open NEAR Testnet Faucet</span>
-                    <ExternalLinkIcon className="h-3 w-3" />
-                  </a>
-                </Button>
-              </div>
-
-              {companyId && (
-                <div className="rounded-lg border border-border/60 bg-muted/20 p-3 space-y-1.5 text-[11px]">
-                  <span className="font-semibold text-foreground">Company Reference ID:</span>
-                  <div className="font-mono text-[10px] break-all bg-background p-1.5 rounded border border-border/50 text-muted-foreground">
-                    {companyId}
-                  </div>
-                </div>
-              )}
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span className="text-muted-foreground">Need test tokens?</span>
+              <Button variant="link" size="sm" className="h-auto p-0 text-xs" asChild><a href="https://near-faucet.io" target="_blank" rel="noopener noreferrer">Get test {TOKEN_SYMBOL}<ExternalLinkIcon className="size-3" aria-hidden="true" /></a></Button>
             </div>
           </TabsContent>
         </Tabs>
+        {destinationAddress && <details className="group min-w-0 border-t border-border/60 pt-3 text-xs">
+          <summary className="flex cursor-pointer list-none items-center justify-between rounded-sm text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">Treasury details<ChevronDownIcon className="size-3.5 transition-transform group-open:rotate-180" aria-hidden="true" /></summary>
+          <dl className="mt-3 space-y-3 rounded-lg bg-muted/40 p-3">
+            <div className="flex items-center justify-between gap-3"><dt className="text-muted-foreground">Network</dt><dd>NEAR Testnet</dd></div>
+            {currentBalance !== undefined && <div className="flex flex-wrap items-center justify-between gap-2"><dt className="text-muted-foreground">Balance</dt><dd className="break-all tabular-nums">{currentBalance} {TOKEN_SYMBOL}</dd></div>}
+            <div><dt className="text-muted-foreground">Destination</dt><dd className="mt-1 flex min-w-0 items-center gap-2"><span className="min-w-0 flex-1 break-all font-mono text-[11px]">{destinationAddress}</span><Button variant="ghost" size="icon" className="size-8 shrink-0" onClick={handleCopy} aria-label={copied ? "Address copied" : "Copy destination address"}>{copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}</Button></dd></div>
+            {companyId && <div><dt className="text-muted-foreground">Company reference</dt><dd className="mt-1 break-all font-mono text-[11px]">{companyId}</dd></div>}
+          </dl>
+        </details>}
       </DialogContent>
     </Dialog>
   );
 }
-

@@ -1,7 +1,8 @@
 "use client";
 
-import { PurchasingResearchPanel } from "@/components/purchasing-research-panel";
-import { ADAPTER_NAME } from "@/lib/agent-adapter/shared";
+import { revokeAndSyncEmployeeAgent } from "@/lib/employee-revocation";
+import { EmployeeAgentsWorkspace } from "@/components/employee-agents-workspace";
+import { EmployeeSpendingWorkspace } from "@/components/employee-spending-workspace";
 
 import { useSettlementRefresh } from "@/hooks/use-account-queries";
 import { DashboardLoading } from "@/components/dashboard-loading";
@@ -328,6 +329,8 @@ export function EmployeeClient({
   const workspaceOptions = (profile && "workspaces" in profile && profile.workspaces) || [];
   const activeCompanyId = profile?.user?.companyId ?? "";
   const [isPending, startTransition] = useTransition();
+  const revocationLock = useRef(false);
+  const [revokingAgent, setRevokingAgent] = useState(false);
   const [creatingAgent, setCreatingAgent] = useState(false);
   const [activatingDelegation, setActivatingDelegation] = useState(false);
   const activationLock = useRef(false);
@@ -603,31 +606,34 @@ export function EmployeeClient({
     [auth, parentMaxNear, dashboardState, handleConfigureDelegation],
   );
 
-  // Task 7b: revoke an employee's own outbound delegation
+  // Revoke on-chain before reconciling the saved delegation and its descendants.
   const handleRevokeDelegation = useCallback(
     (delegationId: string) => {
-      if (auth.status !== "authenticated" || !auth.address) return;
+      if (revocationLock.current || auth.status !== "authenticated" || !auth.address) return;
       const walletAddress = auth.address;
-      const targetDelegation = dashboardState?.outboundDelegations.find(d => d.id === delegationId);
-      const agent = dashboardState?.agents.find(a => a.id === targetDelegation?.delegateeId);
-      const agentName = agent?.name ?? "AI Agent";
-      const agentAddress = agent?.smartAccountAddress || agent?.signerAddress || "";
-
+      const target = dashboardState?.outboundDelegations.find(row => row.id === delegationId);
+      const treasury = dashboardState?.company.smartAccountAddress;
+      if (!target || target.status !== "active" || !target.delegationHash || !treasury) {
+        toast.error("An active agent permission and company treasury are required.");
+        return;
+      }
+      const permissionId = target.delegationHash;
+      const agent = dashboardState?.agents.find(item => item.id === target.delegateeId);
+      revocationLock.current = true;
+      setRevokingAgent(true);
       runEmployeeMutation(async () => {
-        const nextState = await revokeEmployeeDelegation({ walletAddress, delegationId });
-
-        toast.success("Agent Delegation Revoked", {
-          description: `Spending authority for ${agentName} has been revoked on NEAR Testnet.`,
-          action: agentAddress ? {
-            label: "View Explorer",
-            onClick: () => window.open(getAddressExplorerUrl(agentAddress), "_blank"),
-          } : undefined,
-        });
-
-        return nextState;
+        try {
+          const caller = await getUnifiedNearCaller(auth);
+          const client = getTreasuryClient(caller, treasury);
+          const nextState = await revokeAndSyncEmployeeAgent(permissionId, client, () => revokeEmployeeDelegation({ walletAddress, delegationId }));
+          toast.success("Agent delegation revoked", { description: `Spending access for ${agent?.name ?? "this agent"} has been revoked on NEAR Testnet.` });
+          setSelectedDelegationId(current => current === delegationId ? null : current);
+          return nextState;
+        } finally {
+          revocationLock.current = false;
+          setRevokingAgent(false);
+        }
       });
-
-      setSelectedDelegationId((current) => (current === delegationId ? null : current));
     },
     [auth, dashboardState, runEmployeeMutation],
   );
@@ -859,7 +865,7 @@ export function EmployeeClient({
 
   const smartAccountLabel = employee.smartAccountAddress
     ? formatWalletAddress(employee.smartAccountAddress)
-    : "Smart account pending";
+    : "Treasury pending";
 
   // ── JSX ────────────────────────────────────────────────────────────────────
 
@@ -894,16 +900,16 @@ export function EmployeeClient({
       onRefreshEmployees={refreshDashboard}
       employeesRefreshing={isPending}
     >
-      <div className="flex flex-col gap-6">
-        {/* Smart account activation banner */}
+      <div className="flex min-w-0 flex-col gap-4">
+        {/* Treasury activation banner */}
         {!employee.smartAccountAddress && (
           <div className="flex items-center justify-between rounded-lg border border-border bg-muted/50 px-4 py-3">
             <div>
               <p className="text-sm font-medium text-foreground">
-                Smart account not yet activated
+                Treasury not yet activated
               </p>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                Activate your smart account so the company can delegate spending authority to you.
+                Activate your treasury so the company can delegate spending authority to you.
               </p>
             </div>
             <SmartAccountActivationButton
@@ -931,13 +937,12 @@ export function EmployeeClient({
           spentNear={summary.spentNear}
         />
 
-        <PurchasingResearchPanel companyId={company.id}
-          adapterId={dashboardState.agents.find(agent => agent.name === ADAPTER_NAME)?.id}
-          delegationId={dashboardState.outboundDelegations.find(row => row.status === "active" && row.delegateeId === dashboardState.agents.find(agent => agent.name === ADAPTER_NAME)?.id)?.id}
-          onConfigure={() => { const adapter = dashboardState.agents.find(agent => agent.name === ADAPTER_NAME); if (adapter) handleSelectAgent(adapter.id); }} />
-
-        {/* Direct Spend Workspace */}
-        <div className="w-full">
+        <EmployeeSpendingWorkspace
+          agents={<EmployeeAgentsWorkspace companyId={company.id} agents={dashboardState.agents}
+            delegations={dashboardState.outboundDelegations}
+            canAdd={dashboardState.inboundDelegation?.status === "active"} busy={creatingAgent || activatingDelegation || revokingAgent || isPending}
+            onSelectAgent={handleSelectAgent} onConfigure={handleConfigureDelegation} onRevoke={handleRevokeDelegation} />}
+          directPayment={
           <DirectSpendForm
             companyId={dashboardState.company.id}
             key={`${dashboardState.company?.smartAccountAddress ?? "none"}:${auth.status === "authenticated" ? auth.accountId : "signed-out"}`}
@@ -946,7 +951,8 @@ export function EmployeeClient({
             remainingBalanceNear={formatNearTrimmed(remainingYocto)}
             onExecute={handleExecuteSpend}
           />
-        </div>
+          }
+        />
       </div>
 
       {/* ── Caveat Configuration Drawer (Tasks 5 & 6) ──────────────────────── */}
@@ -1214,7 +1220,7 @@ export function EmployeeClient({
               {selectedDelegation?.status === "active" ? (
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
-                    <Button variant="destructive" disabled={isPending}>
+                    <Button variant="destructive" disabled={isPending || revokingAgent}>
                       <BanIcon data-icon="inline-start" />
                       Revoke delegation
                     </Button>

@@ -9,10 +9,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { parseUserOpError } from "@/lib/error-parser";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, ShieldCheck } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
 import { isNativeNearAccount, formatWalletAddress } from "@/lib/wallet";
 import { getTxExplorerUrl, TOKEN_SYMBOL } from "@/lib/chain";
 import { formatTokenAmount, parseTokenAmount } from "@allocard/delegation-sdk";
@@ -178,7 +178,7 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
   };
 
   return (
-    <Card className="w-full max-w-lg mx-auto shadow-xs border-border/80 bg-card">
+    <Card aria-label="Direct payment" className="w-full rounded-2xl border-border/70 bg-card shadow-xs">
       {pendingStatus.data?.execution && (
         <p role="status" className="px-6 pt-4 text-sm">
           Saved payment status: {pendingStatus.data.execution.status}. Retry the same payment to reconcile its history; status checks never sign transactions.
@@ -187,14 +187,6 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
       {pendingStatus.error && (
         <p role="alert" className="px-6 text-sm text-destructive">{pendingStatus.error.message}</p>
       )}
-      <CardHeader>
-        <CardTitle className="text-base font-semibold text-foreground">
-          Direct Corporate Spend
-        </CardTitle>
-        <CardDescription className="text-xs text-muted-foreground">
-          Settle vendor invoices or direct business expenses from your delegated corporate allowance on NEAR Testnet.
-        </CardDescription>
-      </CardHeader>
       <CardContent>
         {step === "input" && (
           <div className="space-y-4">
@@ -212,13 +204,6 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
               </p>
             )}
 
-            <Alert className="border-border/80 bg-muted/40 py-2.5">
-              <ShieldCheck className="h-4 w-4 text-foreground" />
-              <AlertTitle className="text-xs font-semibold text-foreground">Enforced Onchain Caveats</AlertTitle>
-              <AlertDescription className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
-                Payments are cryptographically restricted by your company&apos;s onchain rules (per-transaction caps, period allowances, and recipient restrictions). Any transfer exceeding these limits reverts automatically on NEAR.
-              </AlertDescription>
-            </Alert>
 
             <div className="space-y-2">
               <Label htmlFor="ds-to" className="text-xs font-medium">Recipient Account</Label>
@@ -227,7 +212,7 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
                 placeholder="vendor.testnet"
                 value={toAddress}
                 onChange={(e) => setToAddress(e.target.value)}
-                className="font-mono text-xs"
+                className="h-11 text-sm"
                 disabled={loading || isExecuting}
               />
             </div>
@@ -247,18 +232,20 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
                 value={amountNear}
                 onChange={(e) => setAmountNear(e.target.value)}
                 disabled={loading || isExecuting}
-                className="font-mono text-xs"
+                className="h-11 text-sm"
               />
             </div>
+
+            <p className="text-xs text-muted-foreground">Company spending limits and recipient rules apply.</p>
 
             <AlertDialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
               <Button
                 onClick={handleStartExecute}
                 disabled={loading || (!delegationId && !hasPendingRequest) || !toAddress || !amountNear || isExecuting}
-                className="w-full mt-2 text-xs"
+                className="mt-2 h-11 w-full rounded-lg text-sm"
               >
                 {isExecuting ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
-                {isExecuting ? "Executing on NEAR..." : "Execute Spend"}
+                {isExecuting ? "Processing payment…" : "Review payment"}
               </Button>
 
               <AlertDialogContent>
@@ -289,8 +276,8 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
 
         {step === "done" && (
           <div className="flex flex-col items-center justify-center py-6 space-y-5 text-center">
-            <div className="h-12 w-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
-              <CheckCircle2 className="h-6 w-6 text-emerald-600" />
+            <div className="h-12 w-12 rounded-full bg-muted border border-border flex items-center justify-center">
+              <CheckCircle2 className="h-6 w-6 text-foreground" />
             </div>
 
             <div className="space-y-1.5">

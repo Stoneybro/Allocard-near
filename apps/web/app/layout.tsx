@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Allocard",
-  description: "Trustless Corporate Expense Cards built on NEAR Protocol Delegation Contracts",
+  description: "Corporate Expense Management built on NEAR Protocol Delegation Contracts",
   icons: {
     icon: [
       { url: '/AllocardLogoBlack.svg', media: '(prefers-color-scheme: light)' },

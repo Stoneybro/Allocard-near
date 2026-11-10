@@ -21,4 +21,7 @@ describe("direct adapter authorization and approval",()=>{
  it("rechecks permission before confirming and dispatches only the approved job",async()=>{expect((await POST(request("confirm",{id,digest}))).status).toBe(200);expect(mocks.authorize).toHaveBeenCalledWith("alice","alice.testnet",companyId,delegationId);expect(mocks.confirm).toHaveBeenCalledWith(task,digest);expect(mocks.progress).toHaveBeenCalledWith({...task,state:"queued"},"alice.testnet");});
  it("does not read another workspace's job",async()=>{mocks.own.mockResolvedValue({...task,companyId:delegationId});expect((await GET(new Request(`http://localhost/api/agent-adapter?companyId=${companyId}&id=${id}`))).status).toBe(403);});
  it("does not confirm if permission has been revoked",async()=>{mocks.authorize.mockRejectedValue(new Error("Forbidden: revoked"));expect((await POST(request("confirm",{id,digest}))).status).toBe(403);expect(mocks.confirm).not.toHaveBeenCalled();});
+ it("scopes employee history to the selected delegation",async()=>{expect((await GET(new Request(`http://localhost/api/agent-adapter?companyId=${companyId}&delegationId=${delegationId}`))).status).toBe(200);expect(mocks.membership).toHaveBeenCalledWith("alice",companyId);expect(mocks.list).toHaveBeenCalledWith("alice",companyId,delegationId);});
+ it("rejects an invalid employee delegation history filter",async()=>{expect((await GET(new Request(`http://localhost/api/agent-adapter?companyId=${companyId}&delegationId=invalid`))).status).toBe(400);expect(mocks.list).not.toHaveBeenCalled();});
+
 });

@@ -2,6 +2,7 @@
 
 import { DashboardShell } from "@/components/dashboard-shell";
 import { SectionCards } from "@/components/section-cards";
+import { EmployeeSpendingWorkspace } from "@/components/employee-spending-workspace";
 import { EmployeeSectionCards } from "@/components/employee-section-cards";
 import { DelegationCardsView } from "@/components/delegation-cards-view";
 import { DirectSpendForm } from "@/app/employee/DirectSpendForm";
@@ -14,7 +15,7 @@ export function DashboardLoading({ role = "employer", companyName }: { role?: "e
   const employer = role === "employer";
   return (
     <DashboardShell loading role={role} companyName={companyName ?? ""} smartAccountLabel="" title={employer ? "Company dashboard" : "Employee dashboard"} roleLabel={employer ? "Company owner" : "Employee"}>
-      <div className={`flex flex-col ${employer ? "min-h-full gap-4" : "gap-6"}`} aria-busy="true" aria-label="Loading workspace">
+      <div className={`flex flex-col ${employer ? "min-h-full gap-4" : "gap-4"}`} aria-busy="true" aria-label="Loading workspace">
         <span role="status" className="sr-only">Loading workspace</span>
         {employer ? <>
           <SectionCards loading />
@@ -27,7 +28,7 @@ export function DashboardLoading({ role = "employer", companyName }: { role?: "e
           </Tabs>
         </> : <>
           <EmployeeSectionCards loading />
-          <div className="w-full"><DirectSpendForm loading companyId="" delegationId="" remainingBalanceNear="" onExecute={unavailableSpend} /></div>
+          <EmployeeSpendingWorkspace directPayment={<DirectSpendForm loading companyId="" delegationId="" remainingBalanceNear="" onExecute={unavailableSpend} />} agents={<div aria-busy="true" className="space-y-3 rounded-xl border p-4">{[0, 1, 2].map(row => <Skeleton key={row} className="h-14 w-full" />)}</div>} />
         </>}
       </div>
     </DashboardShell>

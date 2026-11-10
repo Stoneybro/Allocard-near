@@ -34,7 +34,9 @@ export async function GET(request: Request) {
     if (id) { const row=await ownTask(z.string().uuid().parse(id),user.id); if(row.companyId!==companyId) throw new Error("Forbidden: another workspace"); return Response.json(viewTask(row),{headers}); }
     const query=url.searchParams.get("q");
     if(query) return Response.json({agents:await discoverWorkers(z.string().min(2).max(200).parse(query))},{headers});
-    return Response.json((await listTasks(user.id,companyId)).map(viewTask),{headers});
+    const delegationFilter=url.searchParams.get("delegationId");
+    const scopedDelegation=delegationFilter===null?undefined:z.string().uuid().parse(delegationFilter);
+    return Response.json((await listTasks(user.id,companyId,scopedDelegation)).map(viewTask),{headers});
   } catch(error) { return failure(error); }
 }
 export async function POST(request: Request) {

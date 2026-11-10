@@ -153,9 +153,9 @@ export function DelegationCardsView({ loading = false, company, employees, agent
             </DialogTrigger>
             <DialogContent className="max-w-md">
               <DialogHeader>
-                <DialogTitle>Issue Virtual Card</DialogTitle>
+                <DialogTitle>Create Spending Delegation</DialogTitle>
                 <DialogDescription>
-                  Select a team member to grant spending authority directly from the company treasury.
+                  Select an employee to grant spending authority.
                 </DialogDescription>
               </DialogHeader>
 

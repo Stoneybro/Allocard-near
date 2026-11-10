@@ -134,7 +134,7 @@ const PLACEHOLDER_AGENTS: SidebarAgent[] = [
 
 function SmartAccountAddress({ label, fullAddress, role }: { label: string; fullAddress?: string | null; role?: "employer" | "employee" }) {
   const [copied, setCopied] = React.useState(false);
-  const isPending = label === "Smart account pending";
+  const isPending = label === "Treasury pending";
 
   const handleCopy = async () => {
     if (isPending) return;

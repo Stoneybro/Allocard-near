@@ -28,11 +28,11 @@ describe("dashboard loading shell", () => {
   it("keeps employee navigation and the actual spending form visible but disabled", () => {
     const doc = render("employee");
     expect(doc.querySelector("header h1")?.textContent).toBe("Employee dashboard");
-    for (const label of ["Available Allowance", "Authorized Spending Limit", "Utilized Spend", "Direct Corporate Spend", "Recipient Account", "Amount (NEAR)"]) expect(doc.body.textContent).toContain(label);
+    for (const label of ["Available allowance", "Spending limit", "Spent", "Delegated to agents", "Direct payment", "Agents", "Recipient Account", "Amount (NEAR)"]) expect(doc.body.textContent).toContain(label);
     expect(doc.querySelector<HTMLInputElement>("#ds-to")?.disabled).toBe(true);
     expect(doc.querySelector<HTMLInputElement>("#ds-amount")?.disabled).toBe(true);
-    expect([...doc.querySelectorAll("button")].find(button => button.textContent?.includes("Execute Spend"))?.disabled).toBe(true);
-    expect(doc.body.textContent).not.toContain("Smart account not yet activated");
+    expect([...doc.querySelectorAll("button")].find(button => button.textContent?.includes("Review payment"))?.disabled).toBe(true);
+    expect(doc.body.textContent).not.toContain("Treasury not yet activated");
   });
   it("skeletonizes an unavailable treasury balance independently of known summary values", () => {
     const html = renderToStaticMarkup(<SectionCards employeeCount={7} activeDelegationCount={3} delegatedNativeNearAllowance="12" balanceLoading />);

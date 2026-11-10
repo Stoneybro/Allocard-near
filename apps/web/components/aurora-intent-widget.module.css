@@ -1,0 +1,10 @@
+/* Override the vendor's fixed desktop width so the dialog controls sizing. */
+.container :global(.sw) {
+  width: 100%;
+  min-width: 0;
+}
+
+.container :global(.sw) > div {
+  width: 100%;
+  max-width: 100%;
+}
