@@ -9,7 +9,7 @@ export function SiteHeader({ title }: { title: string }) {
         <SidebarTrigger className="-ml-1" data-activation-exempt />
         <Separator
           orientation="vertical"
-          className="mx-2 data-[orientation=vertical]:h-4"
+          className="mx-2 h-4 data-vertical:self-center"
         />
         <h1 className="text-base font-semibold">{title}</h1>
         <div className="ml-auto flex items-center gap-2">

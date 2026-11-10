@@ -53,8 +53,8 @@ export function TopUpTreasuryDialog({ open, onOpenChange, treasuryAddress, admin
         </DialogHeader>
         <Tabs defaultValue="crosschain" className="min-w-0 w-full gap-4">
           <TabsList className="grid h-10 w-full grid-cols-2 p-1">
-            <TabsTrigger value="crosschain" className="min-w-0 text-xs">Other wallets</TabsTrigger>
-            <TabsTrigger value="direct" className="min-w-0 text-xs">NEAR wallet</TabsTrigger>
+            <TabsTrigger value="crosschain" className="min-w-0 text-xs">Aurora Intents</TabsTrigger>
+            <TabsTrigger value="direct" className="min-w-0 text-xs">Faucet</TabsTrigger>
           </TabsList>
           <TabsContent value="crosschain" className="min-w-0 mt-0">
             {destinationAddress ? <AuroraIntentWidget destinationNearAddress={destinationAddress} /> : <p role="status" className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">Activate your treasury to add funds.</p>}

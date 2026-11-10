@@ -18,7 +18,6 @@ import {
   WalletIcon,
 } from "lucide-react";
 
-import { Alert, AlertDescription } from "@/components/ui/alert";
 
 import {
   Dialog,
@@ -339,13 +338,6 @@ function CanvasSection({
               </div>
             </div>
 
-            {/* Drag & click instruction hint */}
-            <Alert className="py-2 px-3 bg-muted/50 border-border/60">
-              <AlertDescription className="text-[11px] text-muted-foreground leading-snug">
-                Drag or click an employee to add them to the canvas and configure their spending allowance.
-              </AlertDescription>
-            </Alert>
-
             {/* Prominent list — interactive draggable & clickable cards */}
             {employees.length === 0 ? (
               <div className="flex items-center justify-center rounded-lg border border-dashed border-border/80 bg-muted/20 px-3 py-4 text-center">
@@ -361,7 +353,7 @@ function CanvasSection({
                       key={employee.id}
                       id={`recipient-${employee.id}`}
                       draggable
-                      title={`${employee.label} — drag or click to add to canvas`}
+                      title={`Add a delegation for ${employee.label}`}
                       onClick={() => onAddEmployee?.(employee.id)}
                       onDragStart={(event) => {
                         event.dataTransfer.setData(
