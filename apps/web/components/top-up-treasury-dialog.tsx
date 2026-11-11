@@ -57,7 +57,7 @@ export function TopUpTreasuryDialog({ open, onOpenChange, treasuryAddress, admin
             <TabsTrigger value="direct" className="min-w-0 text-xs">Faucet</TabsTrigger>
           </TabsList>
           <TabsContent value="crosschain" className="min-w-0 mt-0">
-            {MOCK_USDC_ACCOUNT_ID && <p className="mb-3 text-xs leading-relaxed text-muted-foreground">Explore cross-chain funding. Demo preview; swaps won’t credit test USDC.</p>}
+            {MOCK_USDC_ACCOUNT_ID && <p className="mb-3 text-xs leading-relaxed text-muted-foreground">This demo runs on testnet, so Aurora Intents cannot fund your treasury. Use the Faucet tab to add demo funds.</p>}
             {destinationAddress ? <AuroraIntentWidget destinationNearAddress={destinationAddress} /> : <p role="status" className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">Activate your treasury to add funds.</p>}
           </TabsContent>
           <TabsContent value="direct" className="mt-0 space-y-5">

@@ -8,6 +8,7 @@ import {
 } from "@aurora-is-near/intents-swap-widget-standalone";
 import { Loader2 } from "lucide-react";
 import { useTheme } from "next-themes";
+import { Button } from "@/components/ui/button";
 import styles from "./aurora-intent-widget.module.css";
 
 export interface AuroraIntentWidgetProps {
@@ -24,6 +25,8 @@ export default function AuroraIntentWidget({
 }: AuroraIntentWidgetProps) {
   const { resolvedTheme } = useTheme();
   const dark = resolvedTheme === "dark";
+  const [error, setError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const [config, setConfig] = useState<AuroraConfig | null>(() => {
     const envKey = process.env.NEXT_PUBLIC_AURORA_INTENTS_API_KEY;
     if (envKey) {
@@ -38,13 +41,19 @@ export default function AuroraIntentWidget({
   });
 
   useEffect(() => {
-    if (config?.apiKey) return;
+    if (config) return;
     let cancelled = false;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
 
-    fetch("/api/aurora/config")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: AuroraConfig | null) => {
-        if (!cancelled && data) {
+    fetch("/api/aurora/config", { cache: "no-store", signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error("Aurora configuration unavailable");
+        return res.json();
+      })
+      .then((data: AuroraConfig) => {
+        if (!data?.apiKey?.trim()) throw new Error("Aurora configuration missing");
+        if (!cancelled) {
           setConfig({
             apiKey: data.apiKey || undefined,
             environment: data.environment || "production",
@@ -53,16 +62,24 @@ export default function AuroraIntentWidget({
       })
       .catch(() => {
         if (!cancelled) {
-          setConfig({
-            environment: "production",
-          });
+          setError(true);
         }
-      });
+      })
+      .finally(() => clearTimeout(timeout));
 
     return () => {
       cancelled = true;
+      clearTimeout(timeout);
+      controller.abort();
     };
-  }, [config?.apiKey]);
+  }, [config, attempt]);
+
+  if (error) {
+    return <div role="alert" className="rounded-lg border px-4 py-8 text-center">
+      <p className="text-sm">Aurora Intents couldn’t load. Please try again.</p>
+      <Button variant="outline" size="sm" className="mt-3" onClick={() => { setError(false); setAttempt((value) => value + 1); }}>Try again</Button>
+    </div>;
+  }
 
   if (!config) {
     return (
