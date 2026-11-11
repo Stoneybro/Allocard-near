@@ -18,6 +18,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { prepareEmployeeDemo } from "@/lib/demo-guide-preferences";
 
 
 
@@ -202,6 +203,7 @@ export default function OnboardingPage() {
                       </div>
                       <Button className="w-full" disabled={busy} onClick={() => performAction(membership.id, async () => {
                         const profile = await acceptEmployeeMembership({ walletAddress: address!, companyId: membership.companyId });
+                        prepareEmployeeDemo(address!, membership.companyId);
                         toast.success("Invitation Accepted", { description: `You have joined ${membership.companyName}.` });
                         return profile;
                       })}>

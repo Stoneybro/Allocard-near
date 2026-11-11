@@ -422,3 +422,13 @@ it("credits activation once and accepts consecutive faucet claims without daily 
   expect(mocks.quota).not.toHaveBeenCalled();
   expect(rpc.mock.calls.filter(call => JSON.parse(call[1].body as string).method === "send_tx")).toHaveLength(4);
 });
+
+it.each(["employee", "owner", "agent"])("still rejects a blocked %s when checking principals concurrently", async role => {
+ const root = configureAdapter(); mocks.adapterRows = adapterRows();
+ const blockedAccount = role === "employee" ? employee : role === "owner" ? "owner.testnet" : adapterPermission.spec.delegate;
+ const lookup = vi.fn(async ({ args }: { args: { account: string } }) => args.account === blockedAccount);
+ mocks.reader.mockReturnValue({ getPermissionPath: async () => [root], caller: { viewFunction: lookup }, contractId: "shared.testnet" });
+ await expect(prepareSponsoredAdapter(adapterPermission)).rejects.toThrow("Permission principal is blocked");
+ expect(new Set(lookup.mock.calls.map(([input]) => input.args.account))).toEqual(new Set([employee, "owner.testnet", adapterPermission.spec.delegate]));
+ expect(mocks.jobs.size).toBe(0);
+});

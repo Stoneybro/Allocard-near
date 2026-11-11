@@ -322,16 +322,19 @@ async function authorizeAdapterPermission(permission: import("./near-sponsored-a
 async function previewAdapterPermission(actor: string, company: typeof companies.$inferSelect, permission: import("./near-sponsored-action").SponsoredAdapterPermission) {
   const [owner] = await db.select().from(users).where(eq(users.id, company.ownerId)).limit(1);
   if (!owner) throw new Error("Company owner missing");
-  const config = await verifyTreasuryOwner(permission.treasury, owner.nearAccountId ?? owner.embeddedWalletAddress);
   const reader = treasuryReader(permission.treasury);
-  const path = await reader.getPermissionPath(permission.parentId);
+  const [config, path] = await Promise.all([
+    verifyTreasuryOwner(permission.treasury, owner.nearAccountId ?? owner.embeddedWalletAddress),
+    reader.getPermissionPath(permission.parentId),
+  ]);
   const parent = path[0];
   if (config.paused || path.length !== 1 || !parent || parent.id !== permission.parentId || parent.delegate !== actor || parent.issuer !== config.owner || parent.parent_id != null || parent.redelegation_depth < 1) throw new Error("A live company root permission allowing redelegation is required");
   const now = BigInt(Date.now());
   if (parent.revoked || parent.epoch !== config.authority_epoch || BigInt(parent.valid_from_ms) > now || (parent.expires_at_ms && BigInt(parent.expires_at_ms) <= now)) throw new Error("Employee permission is expired or revoked");
-  for (const principal of [actor, config.owner, permission.spec.delegate]) {
-    if (await reader.caller.viewFunction({contractId:reader.contractId,methodName:"is_principal_blocked",args:{account:principal}})) throw new Error("Permission principal is blocked");
-  }
+  const blocked = await Promise.all([...new Set([actor, config.owner, permission.spec.delegate])].map(principal =>
+    reader.caller.viewFunction({contractId:reader.contractId,methodName:"is_principal_blocked",args:{account:principal}}),
+  ));
+  if (blocked.some(Boolean)) throw new Error("Permission principal is blocked");
   const spec = permission.spec, rule = spec.rules[0], parentRule = parent.rules.find(v => sameAsset(v.asset, SPENDING_ASSET));
   if (!parentRule || BigInt(spec.valid_from_ms) < BigInt(parent.valid_from_ms) || (spec.expires_at_ms && BigInt(spec.expires_at_ms) <= now) || (parent.expires_at_ms && (!spec.expires_at_ms || BigInt(spec.expires_at_ms)>BigInt(parent.expires_at_ms))) || (parent.max_executions != null && (spec.max_executions == null || spec.max_executions>parent.max_executions))) throw new Error("Child permission exceeds its parent lifetime or execution limit");
   if (parent.max_executions != null) {

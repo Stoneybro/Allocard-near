@@ -50,6 +50,7 @@ async fn company_claims_and_spends_mock_usdc() -> Result<(), Box<dyn std::error:
     let owner = worker.dev_create_account().await?;
     let employee = worker.dev_create_account().await?;
     let recipient = worker.dev_create_account().await?;
+    let agent = worker.dev_create_account().await?;
     let company_id: String = shared
         .view("get_company_id")
         .args_json(json!({ "owner": owner.id(), "company_key": "mock-usdc-demo" }))
@@ -148,7 +149,7 @@ async fn company_claims_and_spends_mock_usdc() -> Result<(), Box<dyn std::error:
                     "asset": asset, "recipients": { "type": "Only", "accounts": [recipient.id()] },
                     "lifetime_limit": "5000000", "acknowledge_unbounded_budget": false
                 }],
-                "redelegation_depth": 0
+                "redelegation_depth": 1
             }
         }))
         .max_gas()
@@ -156,6 +157,19 @@ async fn company_claims_and_spends_mock_usdc() -> Result<(), Box<dyn std::error:
         .await?
         .into_result()?
         .json()?;
+    let child_id: String = employee.call(shared.id(), "create_child_permission")
+        .args_json(json!({"company_id": company_id,"parent_id": permission_id,"spec": {
+            "delegate": agent.id(), "valid_from_ms": "0", "max_executions": 5,
+            "rules": [{"asset": asset,"recipients": {"type":"Only","accounts":[recipient.id()]},"lifetime_limit":"3000000","acknowledge_unbounded_budget":false}],
+            "redelegation_depth":0
+        }})).max_gas().transact().await?.into_result()?.json()?;
+    let reserved: String = shared.view("get_reserved_budget").args_json(json!({"company_id":company_id,"permission_id":permission_id,"asset":asset,"exclude_child":null})).await?.json()?;
+    assert_eq!(reserved,"3000000");
+    let rejected = employee.call(shared.id(),"execute").args_json(json!({"company_id":company_id,"request":{
+        "api_version":1,"request_id":"b".repeat(64),"permission_id":permission_id,
+        "action":{"type":"Transfer","asset":asset,"receiver":recipient.id(),"amount":"2000001"},"deadline_ms":"2000000000000"
+    }})).max_gas().transact().await?;
+    assert!(rejected.is_failure(),"Direct spending must leave the agent's 3 USDC allocation available");
     let execution_id: String = employee.call(shared.id(), "execute").args_json(json!({
         "company_id": company_id,
         "request": {
@@ -176,5 +190,14 @@ async fn company_claims_and_spends_mock_usdc() -> Result<(), Box<dyn std::error:
         .await?
         .json()?;
     assert_eq!(balance, "1250000");
+    agent.call(shared.id(),"execute").args_json(json!({"company_id":company_id,"request":{
+        "api_version":1,"request_id":"c".repeat(64),"permission_id":child_id,
+        "action":{"type":"Transfer","asset":asset,"receiver":recipient.id(),"amount":"1000000"},"deadline_ms":"2000000000000"
+    }})).max_gas().transact().await?.into_result()?;
+    let reserved: String = shared.view("get_reserved_budget").args_json(json!({"company_id":company_id,"permission_id":permission_id,"asset":asset,"exclude_child":null})).await?.json()?;
+    assert_eq!(reserved,"2000000");
+    employee.call(shared.id(),"revoke_permission").args_json(json!({"company_id":company_id,"permission_id":child_id})).max_gas().transact().await?.into_result()?;
+    let reserved: String = shared.view("get_reserved_budget").args_json(json!({"company_id":company_id,"permission_id":permission_id,"asset":asset,"exclude_child":null})).await?.json()?;
+    assert_eq!(reserved,"0");
     Ok(())
 }

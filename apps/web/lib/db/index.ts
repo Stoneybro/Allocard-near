@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { neon, neonConfig } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "./schema";
@@ -34,3 +35,10 @@ export const db = new Proxy({} as ReturnType<typeof drizzle<typeof schema>>, {
     return (_db as any)[prop];
   },
 });
+
+/** Non-secret namespace fingerprint for authenticated worker connection checks. */
+export function databaseIdentity(): string | null {
+  if (!databaseUrl) return null;
+  const url = new URL(databaseUrl);
+  return createHash("sha256").update(url.hostname.replace(/-pooler(?=\.)/, "") + url.pathname).digest("hex").slice(0,16);
+}

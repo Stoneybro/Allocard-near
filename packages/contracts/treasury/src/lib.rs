@@ -1,3 +1,4 @@
+mod allocations;
 pub mod canonical;
 pub mod errors;
 pub mod events;
@@ -37,6 +38,7 @@ enum StorageKey {
     Executions,
     ReplayMap,
     Approvals,
+    PermissionChildren,
 }
 
 #[ext_contract(ext_ft)]
@@ -61,6 +63,7 @@ pub struct TreasuryContract {
     pub executions: LookupMap<ExecutionId, Execution>,
     pub replay_map: LookupMap<(AccountId, [u8; 32]), ExecutionId>,
     pub approvals: LookupMap<ApprovalKey, ApprovalRecord>,
+    pub permission_children: LookupMap<PermissionId, Vec<PermissionId>>,
 }
 
 impl TreasuryContract {
@@ -101,7 +104,7 @@ impl TreasuryContract {
         registered_assets.push(AssetId::NativeNear);
 
         let treasury_config = TreasuryConfig {
-            schema_version: if company_id.is_some() { 3 } else { 2 },
+            schema_version: if company_id.is_some() { 4 } else { 3 },
             network_domain: config.network_domain.clone(),
             owner: config.owner.clone(),
             pending_owner: None,
@@ -144,6 +147,7 @@ impl TreasuryContract {
             executions: LookupMap::new(prefix(StorageKey::Executions)),
             replay_map: LookupMap::new(prefix(StorageKey::ReplayMap)),
             approvals: LookupMap::new(prefix(StorageKey::Approvals)),
+            permission_children: LookupMap::new(prefix(StorageKey::PermissionChildren)),
         };
         contract.flush_collections();
         contract.assert_physical_solvency(0);
@@ -268,6 +272,7 @@ impl TreasuryContract {
         self.assert_path_active(parent_id.0, now_ms);
 
         validate_child_narrowing(&parent, &spec).unwrap_or_else(|e| env::panic_str(e));
+        let mut children = self.validate_child_allocation(&parent, &spec, now_ms);
 
         let metadata_hash = match spec.metadata_hash {
             Some(ref h) => Some(parse_request_id(h).unwrap_or_else(|e| env::panic_str(e))),
@@ -294,6 +299,8 @@ impl TreasuryContract {
         };
 
         self.permissions.insert(permission_id, permission);
+        children.push(permission_id);
+        self.permission_children.insert(parent_id.0, children);
 
         emit_event(EventLogData::PermissionCreated {
             permission_id: U64(permission_id),
@@ -811,6 +818,9 @@ impl TreasuryContract {
         )
         .unwrap_or_else(|e| env::panic_str(e));
 
+        self.check_allocated_budget(&path, &asset, amount, now_ms)
+            .unwrap_or_else(|e| env::panic_str(e));
+
         // Check required approvals and consume them
         for (perm_id, approver) in &outcome.required_approvals {
             self.assert_not_blocked(approver);
@@ -1095,6 +1105,12 @@ impl TreasuryContract {
         self.registered_assets.iter().cloned().collect()
     }
 
+    /// Unspent lifetime budget allocated to immediate children; optional path child
+    /// excludes that branch when evaluating a descendant's payment.
+    pub fn get_reserved_budget(&self, permission_id: U64, asset: AssetId, exclude_child: Option<U64>) -> U128 {
+        U128(self.reserved_budget(permission_id.0, &asset, exclude_child.map(|id| id.0), env::block_timestamp_ms()))
+    }
+
     pub fn get_usage(&self, permission_id: U64, asset: AssetId, scope: BudgetScope) -> Usage {
         let key = BudgetKey {
             permission_id: permission_id.0,
@@ -1215,6 +1231,10 @@ impl TreasuryContract {
             Err(e) => return default_fail(e, "Policy limit exceeded"),
         };
 
+        if let Err(error) = self.check_allocated_budget(&path, &asset, request.action.amount(), now_ms) {
+            return default_fail(error, "Funds are allocated to child permissions");
+        }
+
         let (_req_id, hash) = match crate::canonical::compute_execute_hash(
             &self.request_domain(),
             &env::current_account_id(),
@@ -1309,6 +1329,7 @@ impl TreasuryContract {
         self.executions.flush();
         self.replay_map.flush();
         self.approvals.flush();
+        self.permission_children.flush();
     }
 
     fn storage_checkpoint(&mut self) -> u64 {

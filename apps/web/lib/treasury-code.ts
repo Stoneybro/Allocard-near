@@ -14,3 +14,9 @@ export async function sharedTreasuryWasm() {
 export async function sharedTreasuryCodeHash() {
   return utils.serialize.base_encode(createHash("sha256").update(await sharedTreasuryWasm()).digest());
 }
+
+export async function legacyTreasuryCodeHash(shared: boolean) {
+  const name = shared ? "allocard_shared_v3.wasm" : "allocard_treasury_v2.wasm";
+  const wasm = await readFile(/*turbopackIgnore: true*/ resolve(process.cwd(), "../../packages/contracts/res", name));
+  return utils.serialize.base_encode(createHash("sha256").update(wasm).digest());
+}

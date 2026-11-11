@@ -4,15 +4,17 @@ import { parseAccessKeyRpcResponse } from "./near-nonce";
 import { coordinatedNearRead, waitForRpcCooldown, backoffNearRead, noteRpcRateLimit } from "./near-read-coordinator";
 import { NearReadError, rpcReadFailure } from "./near-read-error";
 import { AllocardTreasuryClient, type Execution, type Permission, parseTreasuryReference } from "@allocard/delegation-sdk";
-import { treasuryCodeHash, sharedTreasuryCodeHash } from "./treasury-code";
+import { treasuryCodeHash, sharedTreasuryCodeHash, legacyTreasuryCodeHash } from "./treasury-code";
 import { nearRpcServerUrl } from "./near-rpc-server";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- RPC queries have request-specific shapes validated by their callers.
 export async function nearQuery(params: Record<string, unknown>, options: { cacheMs?: number; rpcId?: unknown; dedupe?: boolean } = {}): Promise<any> {
   const normalized = { finality: "final", ...params };
   const url = nearRpcServerUrl();
   return coordinatedNearRead(url, normalized, () => queryUpstream(url, normalized, options.rpcId), options.cacheMs ?? 0, options.dedupe ?? false);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- RPC query result shape depends on request_type.
 async function queryUpstream(url: string, params: Record<string, unknown>, rpcId: unknown): Promise<any> {
   const operation = typeof params.method_name === "string" ? params.method_name : String(params.request_type ?? "query");
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -60,10 +62,12 @@ export async function verifyTreasuryOwner(contractId: string, owner: string) {
   const [config, account, expectedHash] = await Promise.all([
     treasuryReader(contractId).getConfig(), nearQuery({ request_type: "view_account", account_id: scope.contractId }), scope.companyId ? sharedTreasuryCodeHash() : treasuryCodeHash(),
   ]);
-  assertTreasuryCode(account, expectedHash);
+  const legacyVersion = scope.companyId ? 3 : 2;
+  const releaseHash = config.schema_version === legacyVersion ? await legacyTreasuryCodeHash(!!scope.companyId) : expectedHash;
+  assertTreasuryCode(account, releaseHash);
   const keys = await nearQuery({ request_type: "view_access_key_list", account_id: scope.contractId });
   if (!Array.isArray(keys.keys) || keys.keys.length !== 0) throw new Error("Treasury has retained access keys that could bypass spending policies");
-  if (config.schema_version !== (scope.companyId ? 3 : 2) || config.network_domain !== "near:testnet" || config.owner !== owner) {
+  if (![legacyVersion, legacyVersion + 1].includes(config.schema_version) || config.network_domain !== "near:testnet" || config.owner !== owner) {
     throw new Error("Treasury must be a compatible Allocard testnet contract owned by your signing account");
   }
   return config;

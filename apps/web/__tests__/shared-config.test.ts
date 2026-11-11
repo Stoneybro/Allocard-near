@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const state=vi.hoisted(()=>({account:{} as Record<string,unknown>,keys:[] as unknown[],config:{} as Record<string,unknown>}));
-vi.mock('@/lib/treasury-code',()=>({sharedTreasuryCodeHash:async()=> 'shared-code'}));
+vi.mock('@/lib/treasury-code',()=>({sharedTreasuryCodeHash:async()=> 'shared-code',legacyTreasuryCodeHash:async()=> 'shared-code'}));
 vi.mock('@/lib/near-server',()=>({nearQuery:async({request_type}:{request_type:string})=>request_type==='view_account'?state.account:request_type==='view_access_key_list'?{keys:state.keys}:{result:[...Buffer.from(JSON.stringify(state.config))]}}));
 import { verifiedSharedConfig } from '@/lib/shared-server';
 beforeEach(()=>{

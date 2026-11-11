@@ -3,7 +3,7 @@
 import { Fragment, useMemo, useState } from "react";
 import { BotIcon, PlusIcon, NetworkIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
 import { DelegationResearchActivity } from "@/components/purchasing-research-panel";
-import { ADAPTER_NAME } from "@/lib/agent-adapter/shared";
+import { ADAPTER_NAME, agentDisplayName } from "@/lib/agent-adapter/shared";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -42,7 +42,7 @@ export function DelegationCardsView({ loading = false, company, employees, agent
   const agentById = new Map(agents.map(agent => [agent.id, agent]));
   const assignedIds = new Set(delegations.filter(d => d.status !== "revoked").map(d => d.delegateeId));
   const availableEmployees = employees.filter(employee => !assignedIds.has(employee.id));
-  const availableAgents = agents.filter(agent => !agent.isPlaceholder && !assignedIds.has(agent.id));
+  const availableAgents = (onAddAgent ? agents : []).filter(agent => !agent.isPlaceholder && !assignedIds.has(agent.id));
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const { roots, children } = useMemo(() => {
     const ids = new Set(delegations.map(d => d.id));
@@ -64,7 +64,7 @@ export function DelegationCardsView({ loading = false, company, employees, agent
   const query = search.trim().toLowerCase();
   const nameOf = (delegation: DelegationCanvasDelegation) => delegation.delegateeType === "user"
     ? employeeById.get(delegation.delegateeId ?? "")?.label ?? "Employee"
-    : agentById.get(delegation.delegateeId ?? "")?.name ?? "AI agent";
+    : agentDisplayName(agentById.get(delegation.delegateeId ?? "")?.name ?? "AI agent");
   const fullEmailOf = (delegation: DelegationCanvasDelegation) => delegation.delegateeType === "user"
     ? employeeById.get(delegation.delegateeId ?? "")?.fullEmail ?? null
     : null;
@@ -74,7 +74,7 @@ export function DelegationCardsView({ loading = false, company, employees, agent
     if (parent) return nameOf(parent);
     return delegation.delegatorType === "user"
       ? employeeById.get(delegation.delegatorId)?.label ?? "Employee"
-      : agentById.get(delegation.delegatorId)?.name ?? "AI agent";
+      : agentDisplayName(agentById.get(delegation.delegatorId)?.name ?? "AI agent");
   };
   const issuerFullEmailOf = (delegation: DelegationCanvasDelegation) => {
     if (delegation.delegatorType === "company") return null;
@@ -253,7 +253,7 @@ export function DelegationCardsView({ loading = false, company, employees, agent
                           </div>
                           <div className="min-w-0">
                             <p className="text-xs font-semibold text-foreground truncate">
-                              {agent.name}
+                              {agentDisplayName(agent.name)}
                             </p>
                             <p className="text-[11px] font-mono text-muted-foreground truncate">
                               {agent.smartAccountAddress

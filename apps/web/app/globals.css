@@ -233,3 +233,30 @@
   .landing > footer > div { padding: 30px 20px; }
 }
 @media (prefers-reduced-motion: reduce) { .landing *, .landing *::before, .landing *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
+
+@property --demo-shine-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.demo-help-shine::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 2px;
+  pointer-events: none;
+  background: conic-gradient(from var(--demo-shine-angle), transparent 65%, var(--foreground) 85%, transparent 100%);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  animation: demo-border-shine 3s linear infinite;
+}
+
+@keyframes demo-border-shine {
+  to { --demo-shine-angle: 360deg; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .demo-help-shine::before { animation: none; background: var(--foreground); opacity: .35; }
+}

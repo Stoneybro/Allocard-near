@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { workerConfig } from "./config";
 import type { TaskRow } from "./store";
-const state = z.object({ state: z.enum(["running", "delivered", "failed", "cancelled"]), result: z.string().max(100000).nullable().optional(), message: z.string().max(500).nullable().optional(), sessionId: z.string().max(300).optional() });
+const state = z.object({ state: z.enum(["running", "delivered", "failed", "cancelled"]), result: z.string().max(100000).nullable().optional(), message: z.string().max(500).nullable().optional(), sessionId: z.string().max(300).optional(), retryable: z.boolean().optional() });
 export async function workerRequest(path: string, body?: unknown) {
   const { origin, secret } = workerConfig();
   const headers: Record<string, string> = { authorization: `Bearer ${secret}`, "content-type": "application/json" };

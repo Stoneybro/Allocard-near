@@ -42,7 +42,7 @@ impl SharedTreasury {
 
     pub fn get_platform_config(&self) -> PlatformConfig {
         PlatformConfig {
-            schema_version: 3,
+            schema_version: 4,
             network_domain: self.network_domain.clone(),
             creation_deposit: U128(CREATE_DEPOSIT),
             company_count: U64(self.company_count),
@@ -112,6 +112,10 @@ impl SharedTreasury {
     pub fn get_config(&self, company_id: String) -> TreasuryConfig {
         self.load(&company_id).get_config()
     }
+    pub fn get_reserved_budget(&self, company_id: String, permission_id: U64, asset: AssetId, exclude_child: Option<U64>) -> U128 {
+        self.load(&company_id).get_reserved_budget(permission_id, asset, exclude_child)
+    }
+
     pub fn get_permission(&self, company_id: String, permission_id: U64) -> Option<Permission> {
         self.load(&company_id).get_permission(permission_id)
     }
@@ -583,7 +587,7 @@ mod tests {
             U128(0)
         );
         assert!(s.get_config(a).storage_funding_remaining.0 > 0);
-        assert_eq!(s.get_config(b).schema_version, 3);
+        assert_eq!(s.get_config(b).schema_version, 4);
         assert_eq!(s.company_count, 2);
     }
     #[test]

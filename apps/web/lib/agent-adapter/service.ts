@@ -17,6 +17,12 @@ export async function progressTask(row: TaskRow, wallet: string) {
   } else if (["dispatching","running","needs_reconciliation"].includes(row.state)) {
     try {
       const status=await readWorker(row);
+      if (status?.retryable) {
+        await authorizeAdapter(row.employeeId,wallet,row.companyId,row.delegationId);
+        const resumed = await dispatchWorker(row);
+        await updateTask(row.id,{state:resumed.state,result:resumed.result??null,message:resumed.message??null,workerSession:resumed.sessionId},["dispatching","running","needs_reconciliation"]);
+        return ownTask(row.id,row.employeeId);
+      }
       if (status) await updateTask(row.id,{state:status.state,result:status.result??null,message:status.message??null,workerSession:status.sessionId},["dispatching","running","needs_reconciliation"]);
       // Never free a potentially live reservation just because an HTTP read failed.
       if (!status && row.startedAt && Date.now()-row.startedAt.getTime()>240000) await updateTask(row.id,{state:"needs_reconciliation",message:"No worker record found. An operator must reconcile this request before another run."},["dispatching","running"]);

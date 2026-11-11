@@ -23,3 +23,17 @@ describe("live native spending capacity", () => {
     expect(await nativeSpendingCapacity(context)).toBe("10");
   });
 });
+
+it("keeps unspent agent allocations out of direct spending after an agent spends", async () => {
+ const base = input();
+ const path = [{ ...permission, rules: [{ ...permission.rules[0], fixed_window: null }] }];
+ expect(await nativeSpendingCapacity({ ...base, path, available: "1000", usage: async () => ({ settled: "0", pending: "0" }), reserved: async () => "300" })).toBe("700");
+ expect(await nativeSpendingCapacity({ ...base, path, available: "900", usage: async () => ({ settled: "100", pending: "0" }), reserved: async () => "200" })).toBe("700");
+});
+it("excludes only the paying child's allocation while protecting sibling allocations", async () => {
+ const root = { ...permission, rules: [{ ...permission.rules[0], fixed_window: null }] };
+ const child = { ...root, id: "2", parent_id: "1", delegate: "agent.testnet", rules: [{ ...root.rules[0], lifetime_limit: "300" }] };
+ const reserved = vi.fn(async (_id: string, exclude: string | null) => exclude === "2" ? "700" : "0");
+ expect(await nativeSpendingCapacity({ ...input(), actor: child.delegate, path: [child, root], available: "1000", usage: async () => ({ settled: "0", pending: "0" }), reserved })).toBe("300");
+ expect(reserved).toHaveBeenCalledWith("1", "2");
+});

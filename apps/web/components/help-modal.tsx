@@ -1,121 +1,55 @@
+"use client";
+
 import { HelpCircleIcon } from "lucide-react";
+import { ACTIVATION_USDC, MOCK_USDC_ACCOUNT_ID } from "@/lib/chain";
+import { DemoGuideRestartButton, useDemoGuide } from "@/components/demo-guide";
 import { Button } from "@/components/ui/button";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { useState } from "react";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 
 export function HelpModal() {
+  const guide = useDemoGuide();
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = guide?.helpOpen ?? localOpen;
+  const changeOpen = guide?.setHelpOpen ?? setLocalOpen;
+  const employee = guide?.role === "employee";
+
   return (
-    <Sheet>
+    <Sheet open={open} onOpenChange={changeOpen}>
       <SheetTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-8 gap-1.5 text-muted-foreground hover:text-foreground"
-        >
+        <Button data-activation-exempt variant="outline" size="sm" aria-label="Help & Demo Tips" className="demo-help-shine relative h-8 gap-1.5 text-muted-foreground hover:text-foreground">
           <HelpCircleIcon className="size-4" />
           <span className="hidden sm:inline-block">Help & Demo Tips</span>
         </Button>
       </SheetTrigger>
-      <SheetContent className="w-full sm:max-w-xl overflow-y-auto sm:p-8">
-        <SheetHeader className="mb-8">
-          <SheetTitle className="text-2xl font-bold tracking-tight">How to use Allocard</SheetTitle>
-          <SheetDescription className="text-sm">
-            A quick walkthrough of the employer and employee flows, and tips for demoing the app.
-          </SheetDescription>
+      <SheetContent data-activation-exempt className="w-full gap-6 overflow-y-auto p-6 sm:max-w-sm">
+        <SheetHeader className="gap-2 p-0 pr-6">
+          <SheetTitle>Help &amp; Demo Tips</SheetTitle>
+          <SheetDescription className="leading-6">{employee ? "Keep this employee dashboard open in incognito while you set up the allowance in the employer window." : "Use a second email and an incognito window to try both roles. The separate sign-ins keep each person’s access independent."}</SheetDescription>
         </SheetHeader>
-
-        <div className="text-sm text-foreground/90 pb-8 px-2">
-          
-          <div className="mb-8 p-4 rounded-lg border border-border bg-muted/40">
-            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-2">
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold">!</span>
-              Demo Tip: Testing Both Roles
-            </h3>
-            <p className="text-muted-foreground text-sm mb-3 leading-relaxed">
-              Sign in with Google or email. You can switch between every company and role you belong to from the workspace selector.
-            </p>
-            <ul className="list-disc pl-5 space-y-1 text-muted-foreground text-sm mb-1">
-              <li>To test two different people at once, use separate browser profiles.</li>
-              <li>To test your own employer and employee access, add yourself, then switch roles in the sidebar.</li>
-            </ul>
-          </div>
-
-          <Accordion type="single" collapsible className="w-full" defaultValue="step-1">
-            <AccordionItem value="step-1">
-              <AccordionTrigger className="text-base font-semibold hover:no-underline">1. Setup & Onboarding</AccordionTrigger>
-              <AccordionContent className="text-muted-foreground pt-2 pb-4">
-                <ol className="list-decimal pl-5 space-y-2.5">
-                  <li><strong>Employer:</strong> Create a company and activate the master treasury.</li>
-    <li><strong>Employer:</strong> Add the employee's verified email from the company team list.</li>
-    <li><strong>Employee:</strong> Sign in with that email and accept the pending company membership inside Allocard.</li>
-                  <li><strong>Employee:</strong> Activate the employee treasury from the dashboard banner.</li>
-                </ol>
-              </AccordionContent>
-            </AccordionItem>
-
-            <AccordionItem value="step-2">
-              <AccordionTrigger className="text-base font-semibold hover:no-underline">2. Employer: Issue a Delegation</AccordionTrigger>
-              <AccordionContent className="text-muted-foreground pt-2 pb-4">
-                <ol className="list-decimal pl-5 space-y-2.5">
-                  <li>Switch to the employer window. The employee now appears in the sidebar.</li>
-                  <li>Drag the employee from the sidebar onto the canvas.</li>
-                  <li>Click <strong>Configure</strong> on the pending node.</li>
-                  <li>Set the spending limits (e.g., 100 NEAR) and click <strong>Activate Delegation</strong>.</li>
-                </ol>
-              </AccordionContent>
-            </AccordionItem>
-
-            <AccordionItem value="step-3">
-              <AccordionTrigger className="text-base font-semibold hover:no-underline">3. Employee: Direct Spend</AccordionTrigger>
-              <AccordionContent className="text-muted-foreground pt-2 pb-4">
-                <ol className="list-decimal pl-5 space-y-2.5">
-                  <li>Switch to the employee window.</li>
-                  <li>Go to the <strong>Direct Spend</strong> tab.</li>
-                  <li>Enter recipient, amount, and purpose.</li>
-                  <li>Click <strong>Review Spend</strong>. The contract checks math limits. Qwen AI checks policy.</li>
-                  <li>Proceed to execute. You spend directly from delegated authority.</li>
-                </ol>
-              </AccordionContent>
-            </AccordionItem>
-
-            <AccordionItem value="step-4">
-              <AccordionTrigger className="text-base font-semibold hover:no-underline">4. Employee: Redelegate to an Agent</AccordionTrigger>
-              <AccordionContent className="text-muted-foreground pt-2 pb-4">
-                <ol className="list-decimal pl-5 space-y-2.5">
-                  <li>Click the <strong>Cloud & Tooling Agent</strong> from the sidebar to assign a spending allowance.</li>
-                  <li>Click <strong>Configure</strong> and set child spending limits in NEAR.</li>
-                  <li>Click <strong>Sign and Activate Delegation</strong>.</li>
-                  <li>Click <strong>Procure Tooling</strong> on the active agent. Prompt what your team needs or browse verified ecosystem partners (Chainstack, Pagoda, FastAuth, Envio).</li>
-                  <li>The agent executes autonomously on NEAR Testnet, delivering provisioned credentials directly to you.</li>
-                </ol>
-              </AccordionContent>
-            </AccordionItem>
-
-            <AccordionItem value="step-5">
-              <AccordionTrigger className="text-base font-semibold hover:no-underline">5. Reimbursements</AccordionTrigger>
-              <AccordionContent className="text-muted-foreground pt-2 pb-4">
-                <ol className="list-decimal pl-5 space-y-2.5">
-                  <li>On the employer dashboard, open <strong>Reimbursements</strong> and select <strong>Set up reimbursement budget</strong>. Set the limits and authorize the budget.</li>
-                  <li>On the employee dashboard, select <strong>New reimbursement claim</strong> in Reimbursements. No personal allowance or canvas setup is needed.</li>
-                  <li>Upload a receipt and submit a claim.</li>
-                  <li>The receipt is checked against the claim, then the claim is assessed against company policy. Approved claims are paid within the authorized reimbursement budget. If setup is unfinished or payouts are paused, the dashboard explains what is needed.</li>
-                </ol>
-              </AccordionContent>
-            </AccordionItem>
-          </Accordion>
-        </div>
+        {!employee && MOCK_USDC_ACCOUNT_ID && <p className="text-sm leading-6 text-muted-foreground">Activation adds {Number(ACTIVATION_USDC).toLocaleString("en-US")} test USDC to your company treasury.</p>}
+        <ol className="list-decimal space-y-5 pl-5 text-sm leading-6 marker:text-muted-foreground">
+          {employee ? <>
+            <li><span className="font-medium">Set up the allowance.</span><br />Return to the employer window. Add a delegation for this employee, set an amount and policy, then activate it.</li>
+            <li><span className="font-medium">Try spending.</span><br />Come back here to make a direct payment or use an agent.</li>
+          </> : <>
+          <li><span className="font-medium">Add an employee.</span><br />Use another email you can access.</li>
+          <li><span className="font-medium">Accept the invitation.</span><br />Open allocard.xyz in incognito, sign in with that email, and complete onboarding.</li>
+          <li><span className="font-medium">Set a spending limit.</span><br />Back in the company window, add a delegation, configure it, and activate.</li>
+          <li><span className="font-medium">Try spending.</span><br />In the employee window, make a direct payment or set up an agent for research.</li>
+          </>}
+        </ol>
+        <Accordion type="single" collapsible className="border-t border-border pt-2">
+          <AccordionItem value="about">
+            <AccordionTrigger>What is this demo about?</AccordionTrigger>
+            <AccordionContent className="leading-6 text-muted-foreground">
+              <p>Allocard demonstrates delegated corporate spending. Instead of sending money to employees or loading funded cards for expenses, the employer grants permission to spend from a company treasury.</p>
+              <p>The allowance never enters the employee’s NEAR account. That account signs payment requests; the treasury pays recipients directly under onchain policy. The employer controls unused funds, sets spending limits and approved recipients, and can revoke future access.</p>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+        <DemoGuideRestartButton />
       </SheetContent>
     </Sheet>
   );

@@ -19,7 +19,7 @@ export async function readSharedDeployment(provider, id, expectedHash) {
   let verified = false;
   if (matches && keys.keys.length === 0) {
     const config = await provider.callFunction({ contractId: id, method: 'get_platform_config', args: {}, blockQuery: { finality: 'final' } });
-    verified = config.schema_version === 3 && config.network_domain === 'near:testnet';
+    verified = config.schema_version === 4 && config.network_domain === 'near:testnet';
   }
   return { state, keys: keys.keys, verified, empty: state.code_hash === EMPTY_CODE_HASH && !state.global_contract_hash && !state.global_contract_account_id };
 }

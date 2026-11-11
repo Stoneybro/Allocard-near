@@ -6,7 +6,7 @@ export async function sharedConfig(): Promise<SharedConfig> {
   const response = await fetch("/api/treasury/shared", { cache: "no-store" });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || "Shared treasury unavailable");
-  if (payload.schema_version !== 3 || payload.network_domain !== "near:testnet") throw new Error("Unsupported shared treasury");
+  if (![3, 4].includes(payload.schema_version) || payload.network_domain !== "near:testnet") throw new Error("Unsupported shared treasury");
   return payload;
 }
 export async function registerCompany(caller: NearCaller, config: SharedConfig, companyKey: string): Promise<string> {

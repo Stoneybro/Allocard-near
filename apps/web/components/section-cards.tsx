@@ -89,9 +89,8 @@ export function SectionCards({
                       </TooltipContent>
                     </Tooltip>
                   </dt>
-                  <dd className="mt-2 break-words text-[1.75rem] font-medium leading-none tracking-[-0.035em] text-foreground tabular-nums sm:mt-3 sm:text-4xl">
-                    {loading ? <Skeleton className="h-9 w-16 max-w-full" /> : value ?? "—"}
-                    {label === `Delegated ${TOKEN_SYMBOL}` && <span className="sr-only"> {TOKEN_SYMBOL}</span>}
+                  <dd className="mt-2 flex flex-wrap items-baseline gap-x-1.5 gap-y-1 break-words text-[1.75rem] font-medium leading-none tracking-[-0.035em] text-foreground tabular-nums sm:mt-3 sm:text-4xl">
+                    {loading ? <Skeleton className="h-9 w-16 max-w-full" /> : <><span className="min-w-0 break-words">{value ?? "—"}</span>{label === `Delegated ${TOKEN_SYMBOL}` && <span className="text-[10px] font-normal leading-normal tracking-normal text-muted-foreground sm:text-xs"> {TOKEN_SYMBOL}</span>}</>}
                   </dd>
                 </div>
               ))}

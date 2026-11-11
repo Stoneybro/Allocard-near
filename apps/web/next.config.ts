@@ -8,7 +8,7 @@ const nextConfig: NextConfig = {
   experimental: { useTypeScriptCli: false },
   transpilePackages: ["@allocard/delegation-sdk"],
   outputFileTracingRoot: process.cwd().endsWith("apps/web") ? process.cwd() + "/../.." : process.cwd(),
-  outputFileTracingIncludes: { "/*": ["../../packages/contracts/res/allocard_treasury.wasm", "../../packages/contracts/res/allocard_factory.wasm", "../../packages/contracts/res/allocard_shared.wasm"] },
+  outputFileTracingIncludes: { "/*": ["../../packages/contracts/res/allocard_treasury.wasm", "../../packages/contracts/res/allocard_factory.wasm", "../../packages/contracts/res/allocard_shared.wasm", "../../packages/contracts/res/allocard_shared_v3.wasm", "../../packages/contracts/res/allocard_treasury_v2.wasm"] },
 };
 
 export default nextConfig;

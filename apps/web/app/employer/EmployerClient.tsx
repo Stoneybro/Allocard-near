@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { FAUCET_USDC, MOCK_USDC_ACCOUNT_ID, NEAR_DECIMALS, SPENDING_DECIMALS, SPENDING_ASSET, TOKEN_SYMBOL, getAddressExplorerUrl, getTxExplorerUrl } from "@/lib/chain";
+import { ACTIVATION_USDC, FAUCET_USDC, MOCK_USDC_ACCOUNT_ID, NEAR_DECIMALS, SPENDING_DECIMALS, SPENDING_ASSET, TOKEN_SYMBOL, getAddressExplorerUrl, getTxExplorerUrl } from "@/lib/chain";
 import { isValidWalletAddress, formatWalletAddress } from "@/lib/wallet";
 import { parseTreasuryReference, type PermissionSpec } from "@allocard/delegation-sdk";
 import {
@@ -33,7 +33,6 @@ import {
 } from "@/lib/near";
 import {
   activateDelegation,
-  createAgentDelegation,
   createEmployeeDelegation,
   addEmployeeByEmail,
   getCompanyDashboardState,
@@ -589,23 +588,6 @@ export function EmployerClient({
     [runDashboardMutation, currentAuthAddress],
   );
 
-  const handleAddAgent = useCallback(
-    (agentId: string) =>
-      runDashboardMutation(async () => {
-        const nextState = await createAgentDelegation({
-          walletAddress: currentAuthAddress as string,
-          agentId,
-          canvasPositionX: 420,
-          canvasPositionY: 220,
-        });
-        toast.info("AI Agent Added", {
-          description: "Click Configure to set spending rules and caveats for this agent.",
-        });
-        return nextState;
-      }),
-    [runDashboardMutation, currentAuthAddress],
-  );
-
   const handleRevokeDelegation = useCallback(
     (delegationId: string) => {
       const targetDelegation = dashboardState?.delegations.find((d) => d.id === delegationId);
@@ -925,6 +907,13 @@ export function EmployerClient({
   return (
     <DashboardShell
       activationRequired={!company.smartAccountAddress}
+      demoGuide={{
+        scope: `${currentAuthAddress}:${company.id}`,
+        step: !company.smartAccountAddress ? 0
+          : dashboardState.delegations.some(row => row.status === "active" && row.delegatorType === "company" && row.delegateeType === "user" && !row.parentDelegationId) ? 4
+          : dashboardState.employees.length > 0 ? 3
+          : dashboardState.pendingEmployees.length > 0 ? 2 : 1,
+      }}
       companyName={companyName}
       employees={dashboardState.employees.map((employee) => {
         const identity = getEmployeeDisplayIdentity(employee);
@@ -979,17 +968,24 @@ export function EmployerClient({
         {error && <p role="alert" className="text-sm text-muted-foreground">{error}</p>}
         {/* Smart account activation panel */}
         {company && !company.smartAccountAddress && (
-          <section aria-labelledby="company-activation-title" className="flex flex-col items-start gap-5 rounded-xl border border-border bg-muted/40 p-6 sm:p-8">
-            <div className="max-w-xl space-y-2">
-              <h2 id="company-activation-title" className="text-xl font-semibold tracking-tight">Set up company spending</h2>
-              <p className="text-sm leading-6 text-muted-foreground">Activate your company account to fund your treasury and set spending limits for your team.</p>
+          <section aria-labelledby="company-activation-title" className="grid w-full max-w-3xl gap-5 rounded-xl border border-border p-5 sm:p-6 lg:grid-cols-2 lg:gap-6">
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <h2 id="company-activation-title" className="text-lg font-semibold tracking-tight">Set up company spending</h2>
+                <p className="text-sm leading-6 text-muted-foreground">{MOCK_USDC_ACCOUNT_ID ? `Start with ${Number(ACTIVATION_USDC).toLocaleString("en-US")} test USDC in your company treasury.` : "Activate to start setting team spending limits."}</p>
+              </div>
+              <SmartAccountActivationButton
+                companyKey={company.id}
+                walletAddress={currentAuthAddress!}
+                existingSmartAccountAddress={company.smartAccountAddress}
+                onActivated={(result) => handleSmartAccountActivated(result.smartAccountAddress)}
+              />
             </div>
-            <SmartAccountActivationButton
-              companyKey={company.id}
-              walletAddress={currentAuthAddress!}
-              existingSmartAccountAddress={company.smartAccountAddress}
-              onActivated={(result) => handleSmartAccountActivated(result.smartAccountAddress)}
-            />
+            <div className="space-y-2 border-t border-border pt-4 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+              <h3 className="text-sm font-medium">Before you try the demo</h3>
+              <p className="text-xs text-muted-foreground">About 3 minutes.</p>
+              <p className="text-sm leading-6 text-muted-foreground">Have a second email you can access and an incognito window ready. It’s an extra step so you can try both the employer and employee roles.</p>
+            </div>
           </section>
         )}
 
@@ -1062,20 +1058,6 @@ export function EmployerClient({
                 delegations={canvasDelegations}
                 onConfigureDelegation={handleConfigureDelegation}
                 onDropEmployee={handleDropEmployee}
-                onDropAgent={({ agentId, canvasPositionX, canvasPositionY }) =>
-                  runDashboardMutation(async () => {
-                    const nextState = await createAgentDelegation({
-                      walletAddress: currentAuthAddress as string,
-                      agentId,
-                      canvasPositionX,
-                      canvasPositionY,
-                    });
-                    toast.info("AI Agent Added to Canvas", {
-                      description: "Click Configure to set spending rules and caveats for this agent.",
-                    });
-                    return nextState;
-                  })
-                }
                 onMoveDelegation={handleMoveDelegation}
                 onRevokeDelegation={handleRevokeDelegation}
                 onRemoveDelegation={handleRemoveDelegation}
@@ -1112,7 +1094,6 @@ export function EmployerClient({
                 onRevokeDelegation={handleRevokeDelegation}
                 onRemoveDelegation={handleRemoveDelegation}
                 onAddEmployee={handleAddEmployee}
-                onAddAgent={handleAddAgent}
               />
             )}
           </TabsContent>

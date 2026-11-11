@@ -27,10 +27,13 @@ export async function readLiveNativeCapacity(reader: AllocardTreasuryClient, act
     if (!countCache.has(id)) countCache.set(id, reader.caller.viewFunction({ contractId: reader.contractId, methodName: "get_permission_usage", args: { permission_id: id } }).then(value => { if (!Number.isSafeInteger(value?.executions_count) || value.executions_count < 0) throw new NearReadError("get_permission_usage", "INVALID_RESPONSE", "Expected a valid execution count."); return value.executions_count; }));
     return countCache.get(id)!;
   };
-  const remaining = await nativeSpendingCapacity({ actor, path, config, available: ledger?.enabled ? ledger.available : "0", now: BigInt(Date.now()), usage, blocked, executionCount });
+  const reservationsSupported = config.schema_version >= (reader.companyId ? 4 : 3);
+  const reserved = reservationsSupported ? (id: string, exclude: string | null) => reader.getReservedBudget(id, SPENDING_ASSET, exclude) : undefined;
+  const allocated = reserved ? await reserved(permissionId, null) : "0";
+  const remaining = await nativeSpendingCapacity({ actor, path, config, available: ledger?.enabled ? ledger.available : "0", now: BigInt(Date.now()), usage, blocked, executionCount, reserved });
   const lifetime = await usage(permissionId, { type: "Lifetime" });
   const rule = path[0]?.rules.find(rule => sameAsset(rule.asset, SPENDING_ASSET));
-  return { remainingNear: formatTokenAmount(remaining, SPENDING_DECIMALS), approvedNear: formatTokenAmount(rule?.lifetime_limit ?? "0", SPENDING_DECIMALS), spentNear: formatTokenAmount(lifetime.settled, SPENDING_DECIMALS) };
+  return { reservationsSupported, allocatedNear: formatTokenAmount(allocated, SPENDING_DECIMALS), remainingNear: formatTokenAmount(remaining, SPENDING_DECIMALS), approvedNear: formatTokenAmount(rule?.lifetime_limit ?? "0", SPENDING_DECIMALS), spentNear: formatTokenAmount(lifetime.settled, SPENDING_DECIMALS) };
 }
 export function capacityReadError(caught: unknown): string {
   const detail = caught instanceof NearReadError ? caught.message : "The treasury returned an unexpected response.";

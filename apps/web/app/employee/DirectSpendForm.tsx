@@ -5,11 +5,10 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useSettlementRefresh, useAccountScope } from "@/hooks/use-account-queries";
 import type { Execution } from "@allocard/delegation-sdk";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { parseUserOpError } from "@/lib/error-parser";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertTriangle, CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
@@ -178,7 +177,11 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
   };
 
   return (
-    <Card aria-label="Direct payment" className="w-full rounded-2xl border-border/70 bg-card shadow-xs">
+    <Card aria-label="Direct payment" className="w-full min-w-0 max-w-[640px] rounded-2xl border-border/70 bg-card shadow-xs [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]">
+      <CardHeader className="gap-1.5">
+        <CardTitle className="text-lg tracking-tight">New payment</CardTitle>
+        <CardDescription className="text-xs leading-relaxed">Pay a recipient from your company allowance.</CardDescription>
+      </CardHeader>
       {pendingStatus.data?.execution && (
         <p role="status" className="px-6 pt-4 text-sm">
           Saved payment status: {pendingStatus.data.execution.status}. Retry the same payment to reconcile its history; status checks never sign transactions.
@@ -189,7 +192,7 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
       )}
       <CardContent>
         {step === "input" && (
-          <div className="space-y-4">
+          <div className="space-y-6">
             {error && (
               <Alert className="border-destructive/60 bg-destructive/10 text-destructive py-2.5">
                 <AlertTriangle className="h-4 w-4" />
@@ -218,12 +221,7 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
             </div>
 
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="ds-amount" className="text-xs font-medium">Amount ({TOKEN_SYMBOL})</Label>
-                <div className="text-[11px] font-mono text-muted-foreground">
-                  Available: {loading ? <Skeleton className="inline-block h-3 w-20 align-middle" /> : <>{remainingBalanceNear} {TOKEN_SYMBOL}</>}
-                </div>
-              </div>
+              <Label htmlFor="ds-amount" className="text-xs font-medium">Amount ({TOKEN_SYMBOL})</Label>
               <Input
                 id="ds-amount"
                 type="text"
@@ -235,8 +233,6 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
                 className="h-11 text-sm"
               />
             </div>
-
-            <p className="text-xs text-muted-foreground">Company spending limits and recipient rules apply.</p>
 
             <AlertDialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
               <Button

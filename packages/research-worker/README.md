@@ -1,0 +1,20 @@
+# Allocard research worker
+
+This worker runs the listed Purchasing Research agent v2 through the direct demo channel. It does not replace the NEAR AI Market listing or create paid marketplace hires.
+
+Production endpoint: `https://allocard-research-worker.vercel.app`.
+
+Required Production environment variables:
+
+- `ALLOCARD_AGENT_SECRET`: same service secret as the app.
+- `ALLOCARD_APP_URL`: canonical app origin (`https://www.allocard.xyz`).
+- `NEAR_AI_API_KEY`: NEAR AI Cloud model credentials.
+- `NEARAI_MODEL`: supported research model, currently `Qwen/Qwen3.8-27B`.
+
+The app's `ALLOCARD_AGENT_URL` must point to this worker. Health verifies the authenticated app callback and model/search pricing, not just the existence of a process.
+
+`POST /allocard/jobs` atomically claims the approved app task before invoking the model. Only the first successful claim gets the authoritative brief. The model runs under Vercel `waitUntil`, with a bounded timeout; completions and failures are persisted in the app database. `GET /allocard/jobs/:id/:digest` reads durable app status rather than an ephemeral runtime session.
+
+A retry cannot run a second model call for an existing claim. A task with no recorded claim can be dispatched again under the same approved task ID after the app rechecks employee access. Stale claimed tasks time out to a visible failure instead of occupying a concurrency slot indefinitely. Failed requests require a fresh employee-confirmed hire to run again.
+
+Run tests with `node packages/research-worker/tests/worker.test.mjs` from the repository root. Deploy this directory as a Vercel project with the included `vercel.json`. The marketplace Eve project stays independent.

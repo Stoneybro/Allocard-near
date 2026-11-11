@@ -11,6 +11,7 @@ vi.mock("@/app/actions/identity", () => ({ getWorkspaceOptions: mocks.options, g
 vi.mock("@/lib/dashboard-read", () => ({ dashboardRead: vi.fn().mockResolvedValue({ company: { id: "company" } }) }));
 import OnboardingPage from "@/app/onboarding/page";
 import { useDashboardData } from "@/hooks/use-account-queries";
+import { demoGuideStorageKey, employeeDemoScope } from "@/lib/demo-guide-preferences";
 function DashboardProbe({ role }: { role: "employer" | "employee" }) {
   const { profile } = useDashboardData(role, { status: "new", user: null, company: null });
   return <span>{profile?.status}</span>;
@@ -20,6 +21,7 @@ const identity = { address: "a".repeat(64), providerUserId: "did:privy:alice" };
 async function render() { await act(async () => { root.render(<QueryClientProvider client={client}><OnboardingPage /></QueryClientProvider>); }); }
 async function flush() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); }); }
 beforeEach(() => {
+  localStorage.clear();
   vi.clearAllMocks(); Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   mocks.auth = { status: "authenticated", ...identity, authMethod: "privy", disconnect: vi.fn(), establishSession: vi.fn() };
   mocks.options.mockResolvedValue({ memberships: [{ companyId: "company", companyName: "Acme", canEmployer: true, canEmployee: false }], pending: [] });
@@ -57,6 +59,9 @@ describe("onboarding workspace loading", () => {
     expect(mocks.options).toHaveBeenCalledTimes(1);
     expect(host.textContent).not.toContain("Refreshing…");
     if (action === "join") expect(mocks.select).not.toHaveBeenCalled();
+    const demoPreference = localStorage.getItem(demoGuideStorageKey(employeeDemoScope(identity.address, "company")));
+    if (action === "join") expect(JSON.parse(demoPreference!)).toMatchObject({ enabled: true, seenStep: 0 });
+    else expect(demoPreference).toBeNull();
     // A prefetched route may still carry the old server profile. The shared
     // cache must win so the dashboard guard cannot bounce back to onboarding.
     await act(async () => { root.render(<QueryClientProvider client={client}><DashboardProbe role={role} /></QueryClientProvider>); });

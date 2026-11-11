@@ -1,5 +1,6 @@
 "use server";
 
+import { extractNativeAllowanceYocto, companyDelegatedAmount } from "@/lib/delegation-accounting";
 import { fundMockUsdcTreasury } from "@/lib/near-sponsor-server";
 import { confirmEmployeeAgentRevocation } from "@/lib/employee-revocation";
 import { resolveEmployerRevocation } from "@/lib/employer-revocation";
@@ -364,34 +365,6 @@ function toCompanyDelegationCaveat(
   };
 }
 
-function extractNativeAllowanceYocto(value: unknown): bigint {
-  if (typeof value === "bigint") {
-    return value;
-  }
-
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return BigInt(Math.trunc(value));
-  }
-
-  if (typeof value === "string" && /^\d+$/.test(value)) {
-    return BigInt(value);
-  }
-
-  if (!value || typeof value !== "object") {
-    return 0n;
-  }
-
-  const record = value as Record<string, unknown>;
-  const amount =
-    record.amount ??
-    record.maxAmount ??
-    record.allowance ??
-    record.limit ??
-    record.value ??
-    record.valueYocto;
-
-  return extractNativeAllowanceYocto(amount);
-}
 
 function formatNearAllowance(yocto: bigint) {
   const formatted = formatTokenAmount(yocto.toString(), SPENDING_DECIMALS);
@@ -1034,48 +1007,9 @@ export async function createAgentDelegation(input: {
   canvasPositionX: number;
   canvasPositionY: number;
 }): Promise<CompanyDashboardState> {
-  const profile = await getEmployerProfileOrThrow(input.walletAddress);
   await validateSessionWallet(input.walletAddress);
-
-  const [agent] = await db
-    .select()
-    .from(agents)
-    .where(and(eq(agents.id, input.agentId), eq(agents.isActive, true)))
-    .limit(1);
-
-  if (!agent || !isNativeNearAccount(agent.smartAccountAddress)) {
-    throw new Error("This agent has no supported NEAR execution integration");
-  }
-
-  // Prevent duplicate active/pending-config delegations to the same agent.
-  const [existingDelegation] = await db
-    .select()
-    .from(delegations)
-    .where(
-      and(
-        eq(delegations.delegatorType, "company"),
-        eq(delegations.delegatorId, profile.company.id),
-        eq(delegations.delegateeType, "agent"),
-        eq(delegations.delegateeId, agent.id),
-        inArray(delegations.status, ["pending_config", "active"]),
-      ),
-    )
-    .limit(1);
-
-  if (existingDelegation) {
-    return getCompanyDashboardState(input.walletAddress);
-  }
-
-  await db.insert(delegations).values({
-    delegatorType: "company",
-    delegatorId: profile.company.id,
-    delegateeType: "agent",
-    delegateeId: agent.id,
-    canvasPositionX: input.canvasPositionX,
-    canvasPositionY: input.canvasPositionY,
-  });
-
-  return getCompanyDashboardState(input.walletAddress);
+  await getEmployerProfileOrThrow(input.walletAddress);
+  throw new Error("Agents are set up and hired from the employee dashboard. Delegate an allowance to an employee first.");
 }
 
 /** Deprecated reimbursement budget stub */
@@ -1347,6 +1281,7 @@ export async function removePendingDelegation(input: {
   return getCompanyDashboardState(input.walletAddress);
 }
 
+
 // ---------------------------------------------------------------------------
 // Company policy editor
 // ---------------------------------------------------------------------------
@@ -1467,33 +1402,7 @@ export async function getCompanyDashboardState(
     (d) => d.delegateeType === "agent",
   ).length;
 
-  let delegatedNativeNearAllowanceYocto = 0n;
-
-  if (activeDelegations.length > 0) {
-    const activeDelegationIds = activeDelegations.map(
-      (delegation) => delegation.id,
-    );
-    const nativeAllowanceCaveats = await withRetry(
-      () =>
-        db
-          .select({
-            caveatValue: delegationCaveats.caveatValue,
-          })
-          .from(delegationCaveats)
-          .where(
-            and(
-              inArray(delegationCaveats.delegationId, activeDelegationIds),
-              eq(delegationCaveats.caveatType, "nativeTokenTransferAmount"),
-            ),
-          ),
-      "getCompanyDashboardState:allowanceCaveats"
-    );
-
-    delegatedNativeNearAllowanceYocto = nativeAllowanceCaveats.reduce(
-      (total, caveat) => total + extractNativeAllowanceYocto(caveat.caveatValue),
-      0n,
-    );
-  }
+  const delegatedNativeNearAllowanceYocto = companyDelegatedAmount(company.id, companyDelegations, companyCaveats);
 
   const delegationsWithCaveats = companyDelegations.map((delegation) =>
     toCompanyDelegation(
@@ -1558,6 +1467,7 @@ export type EmployeeDashboardState = {
     spentNear: string;
     remainingNear: string;
     capacityError?: string;
+    reservationsSupported?: boolean;
   };
   /** List of agent IDs that the company has activated (delegated to). */
   activeCompanyAgentIds: string[];
@@ -1696,6 +1606,8 @@ export async function getEmployeeDashboardState(
     setCachedAgents(platformAgents);
   }
 
+  let allocatedNear = formatNearAllowance(redelegatedYocto);
+  let reservationsSupported: boolean | undefined;
   let remainingNear = "0";
   let liveApprovedNear = "0";
   let liveSpentNear = "0";
@@ -1704,6 +1616,8 @@ export async function getEmployeeDashboardState(
     try {
       const capacity = await readLiveNativeCapacity(treasuryReader(company.smartAccountAddress, { cacheMs: 2000 }), user.walletAddress, inboundRow.delegationHash);
       remainingNear = capacity.remainingNear;
+      reservationsSupported = capacity.reservationsSupported;
+      if (reservationsSupported) allocatedNear = capacity.allocatedNear;
       liveApprovedNear = capacity.approvedNear;
       liveSpentNear = capacity.spentNear;
     } catch (caught) {
@@ -1728,7 +1642,8 @@ export async function getEmployeeDashboardState(
     reimbursement: { status: "unavailable" },
     summary: {
       approvedLimitNear: liveApprovedNear,
-      redelegatedNear: formatNearAllowance(redelegatedYocto),
+      redelegatedNear: allocatedNear,
+      reservationsSupported,
       spentNear: liveSpentNear,
       remainingNear,
       capacityError,
@@ -1961,13 +1876,12 @@ export async function createAgentRedelegation(input: {
   agentId: string;
   canvasPositionX?: number;
   canvasPositionY?: number;
-}): Promise<EmployeeDashboardState> {
-  await getEmployeeProfileOrThrow(input.walletAddress);
+}): Promise<CompanyDelegation> {
   await validateSessionWallet(input.walletAddress);
   const profile = await getEmployeeProfileOrThrow(input.walletAddress);
   const account = adapterAccount();
   const [agent] = await db.select().from(agents).where(eq(agents.id, input.agentId)).limit(1);
-  if (!account || !agent?.isActive || agent.name !== ADAPTER_NAME || agent.smartAccountAddress !== account || agent.signerAddress !== account) throw new Error("Only the configured purchasing research adapter is available.");
+  if (!account || !agent?.isActive || agent.name !== ADAPTER_NAME || agent.smartAccountAddress !== account || agent.signerAddress !== account) throw new Error("Only the configured research agent is available.");
   const parent = await getEmployeeInboundDelegationOrThrow(profile.user.id, profile.company.id);
   if (!parent.delegationHash) throw new Error("Activate the employee allowance before creating a child permission.");
   await db.batch([
@@ -1976,7 +1890,14 @@ export async function createAgentRedelegation(input: {
       SELECT 'user', ${profile.user.id}::uuid, 'agent', ${agent.id}::uuid, ${parent.id}::uuid, 'pending_config', ${input.canvasPositionX ?? 420}, ${input.canvasPositionY ?? 220}
       WHERE NOT EXISTS (SELECT 1 FROM delegations WHERE delegator_type='user' AND delegator_id=${profile.user.id}::uuid AND delegatee_type='agent' AND delegatee_id=${agent.id}::uuid AND parent_delegation_id=${parent.id}::uuid AND status IN ('pending_config','active'))`),
   ]);
-  return getEmployeeDashboardState(input.walletAddress);
+  const [saved] = await db.select().from(delegations).where(and(
+    eq(delegations.delegatorType, "user"), eq(delegations.delegatorId, profile.user.id),
+    eq(delegations.delegateeType, "agent"), eq(delegations.delegateeId, agent.id),
+    eq(delegations.parentDelegationId, parent.id), inArray(delegations.status, ["pending_config", "active"]),
+  )).limit(1);
+  if (!saved) throw new Error("Agent setup could not be saved. Please try again.");
+  const savedCaveats = await db.select().from(delegationCaveats).where(eq(delegationCaveats.delegationId, saved.id));
+  return toCompanyDelegation(saved, savedCaveats.map(toCompanyDelegationCaveat));
 }
 
 
@@ -1984,7 +1905,7 @@ export async function saveEmployeeRedelegationCaveats(input: {
   walletAddress: string;
   delegationId: string;
   caveats: DelegationCaveatInput;
-}): Promise<EmployeeDashboardState> {
+}): Promise<void> {
   const profile = await getEmployeeProfileOrThrow(input.walletAddress);
   await validateSessionWallet(input.walletAddress);
   const { user, company } = profile;
@@ -2021,7 +1942,7 @@ export async function saveEmployeeRedelegationCaveats(input: {
 
 
 
-  return getEmployeeDashboardState(input.walletAddress);
+
 }
 
 // ---------------------------------------------------------------------------
@@ -2033,7 +1954,7 @@ export async function activateEmployeeDelegation(input: {
   delegationId: string;
   delegationHash: string;
   signedDelegation: unknown;
-}): Promise<EmployeeDashboardState> {
+}): Promise<CompanyDelegation> {
   const profile = await getEmployeeProfileOrThrow(input.walletAddress);
   await validateSessionWallet(input.walletAddress);
   const { user } = profile;
@@ -2062,14 +1983,16 @@ export async function activateEmployeeDelegation(input: {
   const treasury = profile.company?.smartAccountAddress;
   if (!treasury || !/^[0-9]+$/.test(input.delegationHash)) throw new Error("A confirmed child permission is required");
   const reader = treasuryReader(treasury);
-  const parent = await getEmployeeInboundDelegationOrThrow(user.id, profile.company.id);
-  const [agent] = await db.select().from(agents).where(eq(agents.id, delegation.delegateeId!)).limit(1);
+  const [parent, [agent], permission] = await Promise.all([
+    getEmployeeInboundDelegationOrThrow(user.id, profile.company.id),
+    db.select().from(agents).where(eq(agents.id, delegation.delegateeId!)).limit(1),
+    reader.getPermission(input.delegationHash),
+  ]);
   if (!agent || !agent.isActive || agent.name !== ADAPTER_NAME || agent.smartAccountAddress !== adapterAccount() || delegation.parentDelegationId !== parent.id) throw new Error("Unsupported adapter or parent permission");
-  const permission = await reader.getPermission(input.delegationHash);
   if (permission?.delegate !== agent.smartAccountAddress || permission?.parent_id !== parent.delegationHash) throw new Error("On-chain child belongs to another adapter or parent");
   if (!permission || permission.issuer !== input.walletAddress || permission.revoked || permission.parent_id == null) throw new Error("On-chain child permission does not match the signing employee");
 
-  await db
+  const [activated] = await db
     .update(delegations)
     .set({
       delegationHash: input.delegationHash,
@@ -2079,9 +2002,11 @@ export async function activateEmployeeDelegation(input: {
       activatedAt: new Date(),
       revokedAt: null,
     })
-    .where(eq(delegations.id, delegation.id));
+    .where(eq(delegations.id, delegation.id))
+    .returning();
 
-  return getEmployeeDashboardState(input.walletAddress);
+  if (!activated) throw new Error("Agent access could not be saved. Retry to recover the confirmed permission.");
+  return toCompanyDelegation(activated, savedCaveats.map(toCompanyDelegationCaveat));
 }
 
 // ---------------------------------------------------------------------------

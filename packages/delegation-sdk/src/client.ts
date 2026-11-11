@@ -122,6 +122,10 @@ export class AllocardTreasuryClient {
     });
   }
 
+  async getReservedBudget(permissionId: string, asset: AssetId, excludeChild: string | null = null): Promise<string> {
+    return this.caller.viewFunction({ contractId: this.contractId, methodName: "get_reserved_budget", args: { permission_id: permissionId, asset, exclude_child: excludeChild } });
+  }
+
   async getAssetLedger(asset: AssetId): Promise<AssetLedger | null> {
     return this.caller.viewFunction({
       contractId: this.contractId,

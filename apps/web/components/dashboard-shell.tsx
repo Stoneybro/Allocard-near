@@ -10,10 +10,12 @@ import {
 import { SiteHeader } from "@/components/site-header";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { CompanyActivationGate } from "@/components/company-activation-gate";
+import { DemoGuideProvider, type DemoGuideProgress } from "@/components/demo-guide";
 
 export function DashboardShell({
   loading = false,
   activationRequired = false,
+  demoGuide,
   children,
   companyName,
   companyId,
@@ -37,6 +39,7 @@ export function DashboardShell({
 }: {
   loading?: boolean;
   activationRequired?: boolean;
+  demoGuide?: DemoGuideProgress;
   children: ReactNode;
   companyName: string;
   companyId?: string;
@@ -59,6 +62,7 @@ export function DashboardShell({
   roleLabel: string;
 }) {
   return (
+    <DemoGuideProvider key={demoGuide?.scope ?? role} guide={demoGuide}>
     <CompanyActivationGate required={activationRequired}>
     <SidebarProvider
       style={
@@ -98,5 +102,6 @@ export function DashboardShell({
       </SidebarInset>
     </SidebarProvider>
     </CompanyActivationGate>
+    </DemoGuideProvider>
   );
 }
