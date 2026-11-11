@@ -9,18 +9,19 @@ export function invalidateNearReadCache() {
   snapshots.clear();
   inFlight.clear();
 }
-export async function coordinatedNearRead(url: string, params: Record<string, unknown>, run: () => Promise<any>, cacheMs = 0, dedupe = false) {
+export async function coordinatedNearRead(url: string, params: Record<string, unknown>, run: () => Promise<any>, cacheMs = 0, dedupe = false, scope?: number) {
   // In particular, do not reuse an access-key nonce after a transaction.
   if (params.request_type !== "call_function" || (cacheMs <= 0 && !dedupe)) return run();
   const key = JSON.stringify([url, params]);
+  const flightKey = scope === undefined ? key : `${key}:${scope}`;
   const cached = snapshots.get(key);
   if (cacheMs > 0 && cached && cached.until > Date.now()) return cached.value;
   if (cached && cached.until <= Date.now()) snapshots.delete(key);
   const version = generation;
-  let pending = inFlight.get(key);
+  let pending = inFlight.get(flightKey);
   if (!pending) {
     pending = run();
-    inFlight.set(key, pending);
+    inFlight.set(flightKey, pending);
   }
   try {
     const result = await pending;
@@ -30,7 +31,7 @@ export async function coordinatedNearRead(url: string, params: Record<string, un
     }
     return result;
   } finally {
-    if (inFlight.get(key) === pending) inFlight.delete(key);
+    if (inFlight.get(flightKey) === pending) inFlight.delete(flightKey);
   }
 }
 export async function waitForRpcCooldown(url: string): Promise<boolean> {
@@ -42,6 +43,7 @@ export async function waitForRpcCooldown(url: string): Promise<boolean> {
     await sleep(remaining);
   }
 }
+export function rpcCooldownMs(url: string): number { return Math.max(0, (cooldowns.get(url) ?? 0) - Date.now()); }
 export function noteRpcRateLimit(url: string, response: Response) {
   const retryAfter = response.headers.get("retry-after");
   const seconds = retryAfter && /^\d+(\.\d+)?$/.test(retryAfter) ? Number(retryAfter) * 1000 : retryAfter ? Date.parse(retryAfter) - Date.now() : 1000;

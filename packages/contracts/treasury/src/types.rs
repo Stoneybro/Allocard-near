@@ -6,6 +6,32 @@ use near_sdk::{AccountId, Gas};
 pub type PermissionId = u64;
 pub type ExecutionId = u64;
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(crate = "near_sdk::serde")]
+pub struct TreasuryBudget {
+    pub available: U128,
+    pub allocated: U128,
+    pub unallocated: U128,
+    pub pending_outgoing: U128,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(crate = "near_sdk::serde")]
+pub struct SpendingSnapshot {
+    pub approved: U128,
+    pub allocated: U128,
+    pub spent: U128,
+    pub remaining: U128,
+    pub timestamp_ms: U64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(crate = "near_sdk::serde")]
+pub struct SpendingQuery {
+    pub permission_id: U64,
+    pub actor: AccountId,
+}
+
 /// Supported asset identifiers in Allocard.
 #[derive(
     BorshSerialize,

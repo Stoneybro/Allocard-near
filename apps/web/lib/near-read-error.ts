@@ -1,5 +1,5 @@
 export class NearReadError extends Error {
-  constructor(public readonly operation: string, public readonly code: string, message: string) { super(`${operation}: ${message}`); this.name = "NearReadError"; }
+  constructor(public readonly operation: string, public readonly code: string, message: string, public readonly retryAfterMs = 0) { super(`${operation}: ${message}`); this.name = "NearReadError"; }
 }
 export function rpcReadFailure(operation: string, error: unknown): NearReadError {
   // Report recognized public protocol codes, never raw provider errors/URLs/credentials.

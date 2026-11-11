@@ -64,6 +64,7 @@ pub struct TreasuryContract {
     pub replay_map: LookupMap<(AccountId, [u8; 32]), ExecutionId>,
     pub approvals: LookupMap<ApprovalKey, ApprovalRecord>,
     pub permission_children: LookupMap<PermissionId, Vec<PermissionId>>,
+    pub root_permissions: Vec<PermissionId>,
 }
 
 impl TreasuryContract {
@@ -104,7 +105,7 @@ impl TreasuryContract {
         registered_assets.push(AssetId::NativeNear);
 
         let treasury_config = TreasuryConfig {
-            schema_version: if company_id.is_some() { 4 } else { 3 },
+            schema_version: if company_id.is_some() { 5 } else { 4 },
             network_domain: config.network_domain.clone(),
             owner: config.owner.clone(),
             pending_owner: None,
@@ -148,6 +149,7 @@ impl TreasuryContract {
             replay_map: LookupMap::new(prefix(StorageKey::ReplayMap)),
             approvals: LookupMap::new(prefix(StorageKey::Approvals)),
             permission_children: LookupMap::new(prefix(StorageKey::PermissionChildren)),
+            root_permissions: Vec::new(),
         };
         contract.flush_collections();
         contract.assert_physical_solvency(0);
@@ -182,6 +184,7 @@ impl TreasuryContract {
         }
 
         validate_permission_spec(&spec).unwrap_or_else(|e| env::panic_str(e));
+        let roots = self.validate_root_allocation(&spec, env::block_timestamp_ms());
 
         let metadata_hash = match spec.metadata_hash {
             Some(ref h) => Some(parse_request_id(h).unwrap_or_else(|e| env::panic_str(e))),
@@ -208,6 +211,8 @@ impl TreasuryContract {
         };
 
         self.permissions.insert(permission_id, permission);
+        self.root_permissions = roots;
+        self.root_permissions.push(permission_id);
 
         emit_event(EventLogData::PermissionCreated {
             permission_id: U64(permission_id),
@@ -991,6 +996,15 @@ impl TreasuryContract {
             env::panic_str(ERR_INSUFFICIENT_AVAILABLE_FUNDS);
         }
 
+        if amount
+            > ledger
+                .available
+                .0
+                .saturating_sub(self.treasury_reserved(&asset, None, now_ms))
+        {
+            env::panic_str("ALLOCARD_INSUFFICIENT_UNALLOCATED_FUNDS");
+        }
+
         ledger.available = U128(ledger.available.0 - amount);
         ledger.pending_outgoing = U128(ledger.pending_outgoing.0 + amount);
         self.asset_ledgers.insert(asset.clone(), ledger);
@@ -1101,14 +1115,61 @@ impl TreasuryContract {
         self.asset_ledgers.get(&asset).cloned()
     }
 
+    pub fn get_treasury_budget(&self, asset: AssetId) -> TreasuryBudget {
+        let ledger = self.get_asset_ledger(asset.clone()).unwrap_or(AssetLedger {
+            available: U128(0),
+            pending_outgoing: U128(0),
+            enabled: false,
+        });
+        let allocated = self.treasury_reserved(&asset, None, env::block_timestamp_ms());
+        TreasuryBudget {
+            available: ledger.available,
+            allocated: U128(allocated),
+            unallocated: U128(ledger.available.0.saturating_sub(allocated)),
+            pending_outgoing: ledger.pending_outgoing,
+        }
+    }
+
+    pub fn get_spending_snapshot(
+        &self,
+        permission_id: U64,
+        actor: AccountId,
+        asset: AssetId,
+    ) -> SpendingSnapshot {
+        self.spending_snapshot(permission_id, actor, asset)
+    }
+    pub fn get_spending_snapshots(
+        &self,
+        queries: Vec<SpendingQuery>,
+        asset: AssetId,
+    ) -> Vec<SpendingSnapshot> {
+        if queries.len() > 8 {
+            env::panic_str(ERR_INVALID_INPUT);
+        }
+        queries
+            .into_iter()
+            .map(|query| self.spending_snapshot(query.permission_id, query.actor, asset.clone()))
+            .collect()
+    }
+
     pub fn get_registered_assets(&self) -> Vec<AssetId> {
         self.registered_assets.iter().cloned().collect()
     }
 
     /// Unspent lifetime budget allocated to immediate children; optional path child
     /// excludes that branch when evaluating a descendant's payment.
-    pub fn get_reserved_budget(&self, permission_id: U64, asset: AssetId, exclude_child: Option<U64>) -> U128 {
-        U128(self.reserved_budget(permission_id.0, &asset, exclude_child.map(|id| id.0), env::block_timestamp_ms()))
+    pub fn get_reserved_budget(
+        &self,
+        permission_id: U64,
+        asset: AssetId,
+        exclude_child: Option<U64>,
+    ) -> U128 {
+        U128(self.reserved_budget(
+            permission_id.0,
+            &asset,
+            exclude_child.map(|id| id.0),
+            env::block_timestamp_ms(),
+        ))
     }
 
     pub fn get_usage(&self, permission_id: U64, asset: AssetId, scope: BudgetScope) -> Usage {
@@ -1231,7 +1292,9 @@ impl TreasuryContract {
             Err(e) => return default_fail(e, "Policy limit exceeded"),
         };
 
-        if let Err(error) = self.check_allocated_budget(&path, &asset, request.action.amount(), now_ms) {
+        if let Err(error) =
+            self.check_allocated_budget(&path, &asset, request.action.amount(), now_ms)
+        {
             return default_fail(error, "Funds are allocated to child permissions");
         }
 
@@ -1662,6 +1725,12 @@ mod tests {
             transfer_gas: None,
         });
 
+        contract
+            .asset_ledgers
+            .get_mut(&AssetId::NativeNear)
+            .unwrap()
+            .available = U128(2000);
+
         let spec = PermissionSpec {
             delegate: accounts(2),
             valid_from_ms: U64(500_000),
@@ -1696,6 +1765,12 @@ mod tests {
             callback_gas: None,
             transfer_gas: None,
         });
+
+        contract
+            .asset_ledgers
+            .get_mut(&AssetId::NativeNear)
+            .unwrap()
+            .available = U128(2000);
 
         let root_spec = PermissionSpec {
             delegate: accounts(2),
@@ -1751,6 +1826,12 @@ mod tests {
             callback_gas: None,
             transfer_gas: None,
         });
+
+        contract
+            .asset_ledgers
+            .get_mut(&AssetId::NativeNear)
+            .unwrap()
+            .available = U128(2000);
 
         let root_id = contract.create_root_permission(PermissionSpec {
             delegate: accounts(2),
@@ -1939,6 +2020,12 @@ mod tests {
         });
 
         // Create root with approval rule: approver is accounts(3), above 200
+        contract
+            .asset_ledgers
+            .get_mut(&AssetId::NativeNear)
+            .unwrap()
+            .available = U128(5000);
+
         let root_spec = PermissionSpec {
             delegate: accounts(2),
             valid_from_ms: U64(500_000),

@@ -1,3 +1,7 @@
+# Reservation release
+
+Shared schema 5 adds funded employee allocations and bounded spending snapshots. Read [RESERVATION-RELEASE.md](./RESERVATION-RELEASE.md) for current accounting, validation and migration. The notes below describe the shared-contract foundation; old deployed schema-3/4 contracts remain immutable and do not gain reservations automatically.
+
 # Shared company treasury (schema 3)
 
 The active onboarding path is one ordinary contract for all companies. Company registration writes state; it does not create accounts, deploy code, or publish a global contract. The earlier global factory is an alternative experiment and is not used by the current onboarding component.

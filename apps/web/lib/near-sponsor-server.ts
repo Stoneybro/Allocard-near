@@ -171,7 +171,10 @@ async function submitOuter(id: string, actor: string, intentHash: string, receiv
     // Never broadcast before the exact signed transaction and hash are durable.
     await saveSponsorTransaction(id, transactionHash, serialized);
     invalidateNearReadCache();
-    const result = await relayRpc("send_tx", { signed_tx_base64: serialized, wait_until: "FINAL" }, transactionHash);
+    const metadataOnly = innerActions.every(action => action.functionCall && ["create_company", "create_child_permission", "register_asset", "set_asset_enabled"].includes(action.functionCall.methodName));
+    const started = Date.now();
+    const result = await relayRpc("send_tx", { signed_tx_base64: serialized, wait_until: metadataOnly ? "EXECUTED" : "FINAL" }, transactionHash);
+    console.info("[sponsor timing]", { transactionHash, stage: "execution", durationMs: Date.now() - started });
     const status = result.status;
     if (status && typeof status === "object" && ("Failure" in status || "SuccessValue" in status)) {
       await finishSponsorJob(id, "Failure" in status ? "failed" : "confirmed");
@@ -442,16 +445,17 @@ export async function fundMockUsdcTreasury(input: {
 }) {
   const token = MOCK_USDC_ACCOUNT_ID;
   if (!token || !sponsorshipEnabled()) throw new Error("Mock USDC funding is unavailable");
-  await assertTestnet();
   const scope = parseTreasuryReference(input.treasury);
   if (!scope.companyId || scope.companyId !== computeCompanyId(input.owner, input.companyId)) {
     throw new Error("Mock USDC funding requires this company's shared treasury");
   }
   const config = sponsorConfig();
-  if (!token.endsWith(".testnet") || await readToken(token, "get_minter", {}) !== config.accountId) {
+  const [, minter, ledger] = await Promise.all([
+    assertTestnet(), readToken(token, "get_minter", {}), treasuryReader(input.treasury, { cacheMs: 0 }).getAssetLedger(SPENDING_ASSET),
+  ]);
+  if (!token.endsWith(".testnet") || minter !== config.accountId) {
     throw new Error("The configured test token must authorize the relayer as its minter");
   }
-  const ledger = await treasuryReader(input.treasury, { cacheMs: 0 }).getAssetLedger(SPENDING_ASSET);
   if (!ledger?.enabled) throw new Error("Mock USDC is not enabled for this company treasury");
   const activation = input.claimId === "activation";
   const claim = activation ? "activation" : z.uuid().parse(input.claimId);
@@ -464,6 +468,10 @@ export async function fundMockUsdcTreasury(input: {
     return creditedMockUsdc(id, outcome, amount);
   }
 
+  const accounts = [...new Set([config.accountId, scope.contractId])];
+  const [registrationDeposit, registrations] = await Promise.all([
+    tokenStorageMinimum(token), Promise.all(accounts.map(account_id => readToken(token, "storage_balance_of", { account_id }))),
+  ]);
   const companyArgs = Buffer.from(canonicalSponsorJson({ company_id: scope.companyId }));
   if (activation) {
     // Contract storage and the FT transfer deposit still use native NEAR.
@@ -474,9 +482,8 @@ export async function fundMockUsdcTreasury(input: {
     ]);
   }
   const actions: Action[] = [];
-  const registrationDeposit = await tokenStorageMinimum(token);
-  for (const accountId of new Set([config.accountId, scope.contractId])) {
-    if (await readToken(token, "storage_balance_of", { account_id: accountId }) === null) {
+  for (const [index, accountId] of accounts.entries()) {
+    if (registrations[index] === null) {
       actions.push(functionCall("storage_deposit", Buffer.from(canonicalSponsorJson({ account_id: accountId, registration_only: true })), 15_000_000_000_000n, registrationDeposit));
     }
   }

@@ -80,7 +80,7 @@ async fn test_full_delegation_and_shared_budget() -> Result<(), Box<dyn std::err
     let root_id: U64 = root_res.json()?;
     assert_eq!(root_id.0, 1);
 
-    // 4. Manager creates child permission for agent_1 with 1.5 NEAR limit
+    // 4. Manager creates child permission for agent_1 with a reserved 1.2 NEAR limit
     let child1_res = manager
         .call(treasury.id(), "create_child_permission")
         .args_json(json!({
@@ -93,7 +93,7 @@ async fn test_full_delegation_and_shared_budget() -> Result<(), Box<dyn std::err
                 "rules": [{
                     "asset": { "type": "NativeNear" },
                     "recipients": { "type": "Any" },
-                    "lifetime_limit": NearToken::from_millinear(1500).as_yoctonear().to_string(),
+                    "lifetime_limit": NearToken::from_millinear(1200).as_yoctonear().to_string(),
                     "acknowledge_unbounded_budget": false
                 }],
                 "redelegation_depth": 1
@@ -105,7 +105,7 @@ async fn test_full_delegation_and_shared_budget() -> Result<(), Box<dyn std::err
     let child1_id: U64 = child1_res.json()?;
     assert_eq!(child1_id.0, 2);
 
-    // Manager creates sibling child permission for agent_2 with 1.5 NEAR limit
+    // Manager creates sibling child permission for agent_2 with the reserved 0.8 NEAR remainder
     let child2_res = manager
         .call(treasury.id(), "create_child_permission")
         .args_json(json!({
@@ -118,7 +118,7 @@ async fn test_full_delegation_and_shared_budget() -> Result<(), Box<dyn std::err
                 "rules": [{
                     "asset": { "type": "NativeNear" },
                     "recipients": { "type": "Any" },
-                    "lifetime_limit": NearToken::from_millinear(1500).as_yoctonear().to_string(),
+                    "lifetime_limit": NearToken::from_millinear(800).as_yoctonear().to_string(),
                     "acknowledge_unbounded_budget": false
                 }],
                 "redelegation_depth": 1
@@ -195,7 +195,7 @@ async fn test_full_delegation_and_shared_budget() -> Result<(), Box<dyn std::err
     assert_eq!(replay_id.0, 1);
 
     // 6. Test Shared Budget: Parent had 2.0 NEAR. Agent 1 used 1.2 NEAR, leaving 0.8 NEAR parent capacity.
-    // Agent 2 has child cap 1.5 NEAR, but parent only has 0.8 NEAR left.
+    // Agent 2 has a reserved 0.8 NEAR cap; it cannot consume its sibling allocation.
     // If Agent 2 tries to spend 1.0 NEAR, it MUST fail closed with LIFETIME_LIMIT!
     let req2_fail_id = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f21";
     let overspend_res = agent_2
@@ -407,6 +407,17 @@ async fn test_gas_measurement_and_revocation_cascade() -> Result<(), Box<dyn std
         .await?;
     let root_id: U64 = root_res.json()?;
 
+    // Exercise the maximum root-allocation scan using the SDK's standalone
+    // mutation gas budget. Existing root 1 holds 10 NEAR; 63 roots hold 0.1 each.
+    for _ in 0..63 {
+        owner.call(treasury.id(), "create_root_permission").args_json(json!({"spec":{
+            "delegate":l1_delegate.id(),"valid_from_ms":"0","rules":[{
+                "asset":{"type":"NativeNear"},"recipients":{"type":"Any"},
+                "lifetime_limit":NearToken::from_millinear(100).as_yoctonear().to_string(),"acknowledge_unbounded_budget":false
+            }],"redelegation_depth":0
+        }})).gas(near_workspaces::types::Gas::from_tgas(40)).transact().await?.into_result()?;
+    }
+
     let l2_res = l1_delegate
         .call(treasury.id(), "create_child_permission")
         .args_json(json!({
@@ -447,7 +458,20 @@ async fn test_gas_measurement_and_revocation_cascade() -> Result<(), Box<dyn std
         .await?;
     let l3_id: U64 = l3_res.json()?;
 
-    // Measure gas for L3 execution
+    let queries: Vec<_> = (1..=8)
+        .map(|id| json!({"permission_id":id.to_string(),"actor":l1_delegate.id()}))
+        .collect();
+    let snapshots: Vec<serde_json::Value> = treasury
+        .view("get_spending_snapshots")
+        .args_json(json!({"asset":{"type":"NativeNear"},"queries":queries}))
+        .await?
+        .json()?;
+    assert_eq!(snapshots.len(), 8);
+    assert_eq!(
+        snapshots[0]["remaining"],
+        NearToken::from_near(5).as_yoctonear().to_string()
+    );
+    // Measure L3 execution at the maximum number of root allocations.
     let exec_res = l3_delegate
         .call(treasury.id(), "execute")
         .args_json(json!({
@@ -471,7 +495,7 @@ async fn test_gas_measurement_and_revocation_cascade() -> Result<(), Box<dyn std
     assert!(exec_res.is_success());
     let gas_burnt = exec_res.total_gas_burnt;
     println!(
-        "MEASURED GAS BURNT FOR 3-DEPTH EXECUTION: {} Gas ({:.2} TGas)",
+        "MEASURED GAS BURNT FOR 64-ROOT / 3-DEPTH EXECUTION: {} Gas ({:.2} TGas)",
         gas_burnt.as_gas(),
         (gas_burnt.as_gas() as f64) / 1e12
     );

@@ -35,7 +35,7 @@ import { withRetry } from "@/lib/db/withRetry";
 import { requireSession } from "@/lib/auth-guard";
 import { getSessionIdentity } from "@/lib/session";
 import { verifyTreasuryOwner, treasuryReader, assertEmployeePermission } from "@/lib/near-server";
-import { MOCK_USDC_ACCOUNT_ID, SPENDING_DECIMALS, TOKEN_SYMBOL } from "@/lib/chain";
+import { SPENDING_ASSET, MOCK_USDC_ACCOUNT_ID, SPENDING_DECIMALS, TOKEN_SYMBOL } from "@/lib/chain";
 
 export type ReimbursementProgram = {
   status: "unavailable";
@@ -135,15 +135,32 @@ type CompanyDelegation = {
 };
 
 async function fillLiveDelegationCapacity(rows: CompanyDelegation[], treasury: string | null) {
-  await Promise.all(rows.map(async row => {
-    if (!treasury || !/^[0-9]+$/.test(row.delegationHash ?? "")) { row.capacityError = "No verified NEAR permission"; return; }
-    try {
-      const reader = treasuryReader(treasury, { cacheMs: 2000 });
+  const active = rows.filter(row => row.status === "active" && /^[0-9]+$/.test(row.delegationHash ?? ""));
+  if (!treasury || active.length === 0) return;
+  const reader = treasuryReader(treasury, { cacheMs: 2000 });
+  try {
+    const config = await reader.getConfig();
+    if (config.schema_version >= (reader.companyId ? 5 : 4)) {
+      // At most four concurrent views, each bounded to eight permissions.
+      const batches = Array.from({ length: Math.ceil(active.length / 8) }, (_, index) => active.slice(index * 8, index * 8 + 8));
+      for (let offset = 0; offset < batches.length; offset += 4) {
+        await Promise.all(batches.slice(offset, offset + 4).map(async batch => {
+          const permissions = batch.map(row => row.signedDelegation as { delegate?: string } | null);
+          if (permissions.some(permission => !permission?.delegate)) throw new Error("Missing verified permission delegate");
+          const snapshots = await reader.getSpendingSnapshots(batch.map((row, index) => ({ permission_id: row.delegationHash!, actor: permissions[index]!.delegate! })), SPENDING_ASSET);
+          if (!Array.isArray(snapshots) || snapshots.length !== batch.length || snapshots.some(item => typeof item?.remaining !== "string" || !/^[0-9]+$/.test(item.remaining))) throw new Error("Invalid spending snapshots");
+          batch.forEach((row, index) => { row.remainingNear = formatNearAllowance(BigInt(snapshots[index].remaining)); });
+        }));
+      }
+      return;
+    }
+    // Existing immutable releases retain their original read path during migration.
+    for (const row of active) {
       const permission = await reader.getPermission(row.delegationHash!);
       if (!permission) throw new Error("Permission not found");
       row.remainingNear = (await readLiveNativeCapacity(reader, permission.delegate, row.delegationHash!)).remainingNear;
-    } catch (caught) { row.capacityError = capacityReadError(caught); }
-  }));
+    }
+  } catch (caught) { active.forEach(row => { row.capacityError = capacityReadError(caught); }); }
 }
 
 export type CompanyDelegationCaveat = {
@@ -1083,7 +1100,7 @@ export async function saveDelegationCaveats(input: {
     .set(updatePayload)
     .where(eq(delegations.id, input.delegationId));
 
-  return getCompanyDashboardState(input.walletAddress);
+  return;
 }
 
 export async function activateDelegation(input: {
@@ -1187,7 +1204,7 @@ export async function activateDelegation(input: {
     assertEmployeePermission(permission, targetAccount, input.walletAddress, config.authority_epoch);
   }
 
-  await db
+  const [activated] = await db
     .update(delegations)
     .set({
       delegationHash: input.delegationHash,
@@ -1197,9 +1214,10 @@ export async function activateDelegation(input: {
       activatedAt: new Date(),
       revokedAt: null,
     })
-    .where(eq(delegations.id, delegation.id));
+    .where(eq(delegations.id, delegation.id)).returning();
 
-  return getCompanyDashboardState(input.walletAddress);
+  if (!activated) throw new Error("Confirmed permission could not be saved. Retry this permission to synchronize it.");
+  return toCompanyDelegation(activated, savedCaveats.map(toCompanyDelegationCaveat));
 }
 
 async function getDescendantDelegationIds(parentIds: string[]) {
@@ -1623,6 +1641,7 @@ export async function getEmployeeDashboardState(
     } catch (caught) {
       capacityError = capacityReadError(caught);
       console.error("Employee capacity read failed", { companyId: company.id, permissionId: inboundRow.delegationHash, reason: capacityError });
+      throw caught; // Preserve the client's last confirmed snapshot; never replace it with zero balances.
     }
   }
 

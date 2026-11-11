@@ -332,7 +332,7 @@ export function EmployeeClient({
   const [caveatForm, setCaveatForm] = useState<CaveatForm>(buildEmptyCaveatForm(""));
   const [formErrors, setFormErrors] = useState<FormErrors>({});
 
-  const error = actionError ?? queryError?.message;
+  const error = actionError ?? queryError?.message ?? dashboardState?.summary.capacityError;
 
   // ── Derived values ─────────────────────────────────────────────────────────
 
@@ -844,11 +844,11 @@ export function EmployeeClient({
           </div>
         )}
 
-        {dashboardState.summary.capacityError && <p role="alert" className="text-sm text-destructive">{dashboardState.summary.capacityError}</p>}
         {/* Global error banner */}
         {error && (
-          <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3">
-            <p className="text-sm font-medium text-destructive">{error}</p>
+          <div role="alert" className="flex items-center justify-between gap-3 rounded-lg border border-border px-4 py-3">
+            <p className="text-sm font-medium text-muted-foreground">{error}</p>
+            <Button variant="outline" size="sm" onClick={() => { setError(null); void refreshDashboard(); }}>Retry</Button>
           </div>
         )}
 
@@ -869,6 +869,7 @@ export function EmployeeClient({
             onSelectAgent={handleSelectAgent} onConfigure={handleConfigureDelegation} onRevoke={handleRevokeDelegation} />}
           directPayment={
           <DirectSpendForm
+            loading={!!queryError || !!dashboardState.summary.capacityError}
             companyId={dashboardState.company.id}
             key={`${dashboardState.company?.smartAccountAddress ?? "none"}:${auth.status === "authenticated" ? auth.accountId : "signed-out"}`}
             delegationId={dashboardState.inboundDelegation?.id || ""}

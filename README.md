@@ -100,8 +100,8 @@ To run the Next.js application against NEAR Testnet, Neon Postgres, and Privy, f
 
 | Path | Responsibility |
 | :--- | :--- |
-| [`packages/contracts/shared`](packages/contracts/shared) | Active **schema-3** shared multi-company treasury contract (`create_company`, isolated company ledgers, permissions, and aggregate physical solvency checks). |
-| [`packages/contracts/treasury`](packages/contracts/treasury) | Core reusable delegation policy engine, canonical Borsh envelope hashing, two-phase execution/callback accounting, and **schema-2** standalone single-company treasury. |
+| [`packages/contracts/shared`](packages/contracts/shared) | Active **schema-5** shared multi-company treasury contract (`create_company`, isolated company ledgers, permissions, and aggregate physical solvency checks). |
+| [`packages/contracts/treasury`](packages/contracts/treasury) | Core reusable delegation policy engine, canonical Borsh envelope hashing, two-phase execution/callback accounting, and **schema-4** standalone single-company treasury. |
 | [`packages/contracts/mock-usdc`](packages/contracts/mock-usdc) | NEP-141 testnet Mock USDC fungible token contract with minter/faucet support. |
 | [`packages/contracts/factory`](packages/contracts/factory) | Optional NEP-591 global-code factory experiment (not required by active onboarding). |
 | [`packages/delegation-sdk`](packages/delegation-sdk) | Wallet-independent TypeScript SDK (`AllocardTreasuryClient`, canonical hashes, exact decimal amount helpers, `near-api-js` binding, and deployment scripts). |
@@ -113,11 +113,13 @@ To run the Next.js application against NEAR Testnet, Neon Postgres, and Privy, f
 
 ## Protocol Guarantees & Architecture Notes
 
+The prepared reservation release uses shared schema 5 / standalone schema 4. See [release and migration instructions](docs/delegation/RESERVATION-RELEASE.md). Existing deployments are immutable and must be migrated explicitly; new employee grants require the reservation release.
+
 - **Non-Custodial Isolation:** In [`packages/contracts/shared`](packages/contracts/shared), each company is identified deterministically (`sha256(owner + '\0' + company_key)`), has its own `owner`, `authority_epoch`, `paused` flag, permission IDs, usage buckets, and asset ledgers, and cannot spend another company's reserves. Deployed shared contracts drop all full-access keys atomically during initialization ([`docs/delegation/SHARED.md`](docs/delegation/SHARED.md)).
-- **Two-Phase Settlement & Reservations:** Creating a permission reserves zero funds. Dispatching a payment (`execute`) reserves every ancestor's budget and debits `available` liquidity before emitting an asynchronous NEAR promise. Only a proven failed callback restores principal and releases the reservation; oversized/unreadable callback payloads flag `needs_reconciliation` rather than guessing.
+- **Two-Phase Settlement & Reservations:** Creating a root permission reserves its finite lifetime allocation from unallocated company principal. Child permissions subdivide that allocation. Dispatching a payment (`execute`) reserves every ancestor's budget and debits `available` liquidity before emitting an asynchronous NEAR promise. Only a proven failed callback restores principal and releases the reservation; oversized/unreadable callback payloads flag `needs_reconciliation` rather than guessing.
 - **Replay Protection & Canonical Hashing:** `execute` and `owner_withdraw` enforce replay uniqueness on `(actor, request_id)` and verify a versioned Borsh envelope hash scoped to `network_domain` (including `company_id`), `contract_id`, and `actor`.
 - **Exact Integer Boundaries:** All amounts at JSON/SDK boundaries are decimal strings in base units (24 decimals for NEAR, 6 for USDC) via `parseTokenAmount` / `formatTokenAmount`; `Number` rounding and scientific notation are rejected.
-- **Known Limitations (Testnet / Unaudited):** This codebase is unaudited and built for NEAR Testnet verification. Locked schema-2/schema-3 deployments have no built-in upgrade path; fixed-duration windows are not calendar months; missing callbacks can hold reservations pending reconciliation; and maximum-policy adversarial gas benchmarks remain pre-production work.
+- **Known Limitations (Testnet / Unaudited):** This codebase is unaudited and built for NEAR Testnet verification. Keyless treasury deployments have no built-in upgrade path; fixed-duration windows are not calendar months; missing callbacks can hold reservations pending reconciliation; and maximum-policy adversarial gas benchmarks remain pre-production work.
 
 ---
 

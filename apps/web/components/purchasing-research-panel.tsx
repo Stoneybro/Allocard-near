@@ -22,7 +22,7 @@ const examples=["Find three project-management tools for 12 people under $100/mo
 export function PurchasingResearchPanel({companyId,delegationId,adapterId,onConfigure}:{companyId:string;delegationId?:string;adapterId?:string;onConfigure:()=>void}){
  const [prompt,setPrompt]=useState("");const [query,setQuery]=useState("");const [proposal,setProposal]=useState<ResearchTask|null>(null);
  const client=useQueryClient();const {key}=useAccountScope();const taskKey=[...key,"research",companyId,delegationId];
- const tasks=useQuery({queryKey:taskKey,queryFn:()=>api<ResearchTask[]>(`/api/agent-adapter?companyId=${companyId}${delegationId?`&delegationId=${encodeURIComponent(delegationId)}`:""}`),refetchInterval:10000});
+ const tasks=useQuery({queryKey:taskKey,queryFn:()=>api<ResearchTask[]>(`/api/agent-adapter?companyId=${companyId}${delegationId?`&delegationId=${encodeURIComponent(delegationId)}`:""}`),refetchInterval:q=>q.state.data?.some(task=>!terminal(task.state)&&task.state!=="proposal")?10000:false});
  const discovery=useQuery({queryKey:[...key,"market-discovery",companyId,query],enabled:query.length>1,queryFn:()=>api<{agents:Candidate[]}>(`/api/agent-adapter?companyId=${companyId}&q=${encodeURIComponent(query)}`),staleTime:60000});
  const prepare=useMutation({retry:false,mutationFn:()=>api<ResearchTask>("/api/agent-adapter",{action:"prepare",task:{companyId,delegationId,prompt,requestId:crypto.randomUUID()}}),onSuccess:task=>{setProposal(task);void client.invalidateQueries({queryKey:taskKey});},onError:error=>{toast.error("Could not prepare research proposal",{description:error.message});console.error("[research proposal]",error.message);}});
  const confirm=useMutation({retry:false,mutationFn:(task:ResearchTask)=>api<ResearchTask>("/api/agent-adapter",{action:"confirm",task:{id:task.id,digest:task.digest}}),onSuccess:()=>{setProposal(null);void client.invalidateQueries({queryKey:taskKey});},onError:error=>toast.error("Could not confirm research task",{description:error.message})});
@@ -66,7 +66,7 @@ function ResearchJob({task,onUpdate,onReview}:{task:ResearchTask;onUpdate:()=>vo
 
 export function DelegationResearchActivity({companyId,delegationId}:{companyId:string;delegationId:string}) {
  const {key}=useAccountScope();
- const tasks=useQuery({queryKey:[...key,"delegation-research",companyId,delegationId],queryFn:()=>api<ResearchTask[]>(`/api/agent-adapter?companyId=${encodeURIComponent(companyId)}&view=company&delegationId=${encodeURIComponent(delegationId)}`),refetchInterval:10000});
+ const tasks=useQuery({queryKey:[...key,"delegation-research",companyId,delegationId],queryFn:()=>api<ResearchTask[]>(`/api/agent-adapter?companyId=${encodeURIComponent(companyId)}&view=company&delegationId=${encodeURIComponent(delegationId)}`),refetchInterval:q=>q.state.data?.some(task=>!terminal(task.state)&&task.state!=="proposal")?10000:false});
  return <div className="space-y-3">
  {tasks.isPending&&<Skeleton className="h-20 w-full"/>}
  {tasks.error&&<Alert role="alert"><AlertDescription>{tasks.error.message} <Button variant="outline" size="sm" onClick={()=>void tasks.refetch()}>Retry</Button></AlertDescription></Alert>}

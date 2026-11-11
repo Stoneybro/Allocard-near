@@ -1,4 +1,4 @@
-// Testnet-only v4 rollout to a fresh relayer subaccount. Existing treasuries are never overwritten.
+// Testnet-only v5 rollout to a fresh relayer subaccount. Existing treasuries are never overwritten.
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -7,8 +7,8 @@ import { readSharedDeployment, sharedDeploymentActions, safeDeploymentError } fr
 export async function main(args = process.argv.slice(2)) {
  const parent = process.env.NEAR_RELAYER_ACCOUNT_ID;
  if (!parent?.endsWith('.testnet')) throw new Error('A testnet relayer is required');
- const id = process.env.NEXT_SHARED_TREASURY_ACCOUNT_ID || `treasury-v4.${parent}`;
- if (id !== `treasury-v4.${parent}`) throw new Error('Use the dedicated fresh v4 relayer subaccount');
+ const id = process.env.NEXT_SHARED_TREASURY_ACCOUNT_ID || `treasury-v5.${parent}`;
+ if (id !== `treasury-v5.${parent}`) throw new Error('Use the dedicated fresh v5 relayer subaccount');
  const rpc = process.env.NEAR_RPC_URL || process.env.NEXT_PUBLIC_NEAR_RPC_URL || 'https://rpc.testnet.near.org';
  const code = new Uint8Array(await readFile(new URL('../../contracts/res/allocard_shared.wasm', import.meta.url)));
  const hash = baseEncode(createHash('sha256').update(code).digest());
@@ -16,7 +16,7 @@ export async function main(args = process.argv.slice(2)) {
  const tenth = 100_000_000_000_000_000_000_000n;
  const deposit = ((storage + tenth + tenth - 1n) / tenth) * tenth;
  const provider = new JsonRpcProvider({url:rpc});
- const response = await fetch(rpc,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:'v4-preflight',method:'query',params:{request_type:'view_account',account_id:id,finality:'final'}})});
+ const response = await fetch(rpc,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:'v5-preflight',method:'query',params:{request_type:'view_account',account_id:id,finality:'final'}})});
  const accountState = await response.json();
  if (accountState.result) {
   const existing = await readSharedDeployment(provider,id,hash);

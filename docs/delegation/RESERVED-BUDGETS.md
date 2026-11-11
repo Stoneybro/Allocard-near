@@ -1,6 +1,6 @@
 # Reserved agent budgets (shared treasury v4)
 
-New shared companies use `treasury-v4.allocardfactory.testnet`. The release was deployed keyless in transaction `BpF6q7g5EsHWeKwzpxgj4uos9iXNLnSuEV1hPiXdH7s9`; its code hash is `4uDFzMYH1metwCUgfxYs8kqoQXs99pUHibBA3JRJnuML`.
+This page describes the previous schema-4 release at `treasury-v4.allocardfactory.testnet`. New companies use the schema-5 release described in [Funded employee allowances](./RESERVATION-RELEASE.md), which also reserves employee allowances against company funds. Existing schema-4 companies retain the behavior below until migrated. The schema-4 release was deployed keyless in transaction `BpF6q7g5EsHWeKwzpxgj4uos9iXNLnSuEV1hPiXdH7s9`; its code hash is `4uDFzMYH1metwCUgfxYs8kqoQXs99pUHibBA3JRJnuML`.
 
 Company delegated totals count active company-issued root permissions once. Employee child permissions and descendants do not increase the company allocation.
 

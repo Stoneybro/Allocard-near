@@ -2,6 +2,7 @@
 
 
 import { useSettlementRefresh } from "@/hooks/use-account-queries";
+import { prepareRootPermission } from "@/lib/root-permission-intent";
 import { DashboardLoading } from "@/components/dashboard-loading";
 
 import { useDashboardData, useAccountScope } from "@/hooks/use-account-queries";
@@ -233,7 +234,7 @@ type FormErrors = {
 
 function validateCaveatForm(
   form: CaveatForm,
-  _availableBalanceNear: number | null,
+  unallocatedBalance: string | null,
 ): FormErrors {
   const errors: FormErrors = {};
 
@@ -245,6 +246,10 @@ function validateCaveatForm(
     if (max <= 0) {
       errors.maxAmountNear = "Spending limit must be greater than 0.";
     }
+  }
+
+  if (!errors.maxAmountNear && unallocatedBalance !== null && BigInt(parseTokenAmount(form.maxAmountNear, SPENDING_DECIMALS)) > BigInt(parseTokenAmount(unallocatedBalance, SPENDING_DECIMALS))) {
+    errors.maxAmountNear = `Only ${unallocatedBalance} ${TOKEN_SYMBOL} is available to delegate.`;
   }
 
   // --- Periodic Allowance ---
@@ -349,12 +354,18 @@ export function EmployerClient({
     enabled: !!currentAuthAddress && !!company?.smartAccountAddress,
     queryFn: () => withTimeout((async () => {
       const client = getTreasuryClient(createNearRpcCaller(), company!.smartAccountAddress!);
+      const config = await client.getConfig();
+      if (config.schema_version >= (client.companyId ? 5 : 4)) {
+        const budget = await client.getTreasuryBudget(SPENDING_ASSET);
+        return { balance: formatTokenAmount(budget.available, SPENDING_DECIMALS), allocated: formatTokenAmount(budget.allocated, SPENDING_DECIMALS), unallocated: formatTokenAmount(budget.unallocated, SPENDING_DECIMALS), reservationsSupported: true };
+      }
       const ledger = await client.getAssetLedger(SPENDING_ASSET);
-      return formatTokenAmount(ledger?.available ?? "0", SPENDING_DECIMALS);
+      return { balance: formatTokenAmount(ledger?.available ?? "0", SPENDING_DECIMALS), allocated: null, unallocated: null, reservationsSupported: false };
     })(), "Treasury balance took too long to load."),
-    refetchInterval: 15_000,
+    refetchOnWindowFocus: "always",
   });
-  const ethBalance = treasuryBalance.data;
+  const treasuryBudget = treasuryBalance.data;
+  const ethBalance = treasuryBudget?.balance;
   const fetchBalance = useCallback(async () => { await treasuryBalance.refetch(); }, [treasuryBalance.refetch]);
 
   const handleTopUpTreasury = useCallback(async () => {
@@ -407,12 +418,13 @@ export function EmployerClient({
     }
   }, [company, auth, refreshAfterSettlement]);
 
-  // Unused allowances do not reserve treasury capital.
+  // Root allocations are funded on the reservation release; legacy balances are not guarantees.
   const availableBalanceNear = useMemo(() => {
-    if (ethBalance === undefined) return null;
-    const balance = Number(ethBalance);
+    const value = treasuryBudget?.unallocated ?? ethBalance;
+    if (value === undefined) return null;
+    const balance = Number(value);
     return Number.isFinite(balance) ? balance : null;
-  }, [ethBalance]);
+  }, [ethBalance, treasuryBudget?.unallocated]);
 
   const selectedDelegation = useMemo(
     () =>
@@ -473,8 +485,7 @@ export function EmployerClient({
 
   const updateDashboard = useCallback((state: CompanyDashboardState) => {
     setDashboardState(state);
-    void refreshDashboard();
-  }, [setDashboardState, refreshDashboard]);
+  }, [setDashboardState]);
 
   const runDashboardMutation = useCallback(
     (mutation: () => Promise<CompanyDashboardState>) => {
@@ -732,7 +743,11 @@ export function EmployerClient({
     if (!selectedDelegation) return;
     if (selectedDelegation.status === "active") { toast.error("Revoke the existing permission before replacing it"); return; }
 
-    const errors = validateCaveatForm(caveatForm, availableBalanceNear);
+    // A previously confirmed grant has already reserved its funds. Recovery is
+    // synchronization, not a second allocation, so do not reject it as unfunded.
+    let recovering = false;
+    try { recovering = !!localStorage.getItem(`allocard:root-permission:${currentAuthAddress}:${company?.smartAccountAddress}:${selectedDelegation.id}`); } catch { /* Signing later requires durable recovery storage. */ }
+    const errors = validateCaveatForm(caveatForm, recovering ? null : treasuryBudget?.unallocated ?? null);
     setFormErrors(errors);
     const hasErrors = Object.keys(errors).some(
       (k) => k !== "allowedTargetsWarning" && errors[k as keyof FormErrors],
@@ -741,13 +756,16 @@ export function EmployerClient({
 
     startTransition(async () => {
       try {
-        const savedState = await saveDelegationCaveats({
+        const recoveryKey = `allocard:root-permission:${currentAuthAddress}:${company?.smartAccountAddress}:${selectedDelegation.id}`;
+        const recovery = localStorage.getItem(recoveryKey);
+        const terms = JSON.stringify({ caveats: buildServerCaveats(caveatForm), policy: caveatForm.policyPrompt });
+        if (recovery && JSON.parse(recovery).terms !== terms) throw new Error("Restore the previous allowance rules to recover its pending activation before changing them.");
+        await saveDelegationCaveats({
           walletAddress: currentAuthAddress as string,
           delegationId: selectedDelegation.id,
           caveats: buildServerCaveats(caveatForm),
           policyPrompt: caveatForm.policyPrompt,
         });
-        updateDashboard(savedState);
 
         if (!company?.smartAccountAddress) {
           throw new Error("Activate the company treasury first");
@@ -792,8 +810,19 @@ export function EmployerClient({
         if (!caller.functionCall) throw new Error("A signing wallet is required");
         const client = getTreasuryClient(caller, company.smartAccountAddress);
         const config = await client.getConfig();
+        if (config.schema_version < (client.companyId ? 5 : 4)) throw new Error("Migrate this treasury to the reservation release before creating new employee allowances.");
         if (config.owner !== auth.accountId) throw new Error("This wallet does not own the company treasury");
-        const permissionId = await client.createRootPermission(spec);
+        const intentKey = `allocard:root-permission:${auth.accountId}:${company.smartAccountAddress}:${selectedDelegation.id}`;
+        const intent = prepareRootPermission(localStorage, intentKey, JSON.stringify({ caveats: buildServerCaveats(caveatForm), policy: caveatForm.policyPrompt }), spec);
+        let permissionId = intent.permissionId;
+        if (!permissionId) {
+          try { permissionId = await client.createRootPermission(intent.spec); }
+          catch (caught) {
+            if (caught instanceof Error && caught.message.startsWith("NEAR transaction failed:")) localStorage.removeItem(intentKey);
+            throw caught;
+          }
+          localStorage.setItem(intentKey, JSON.stringify({ ...intent, permissionId }));
+        }
         const confirmed = await client.getPermission(permissionId);
         if (!confirmed || confirmed.delegate !== delegateAddress || confirmed.revoked) throw new Error("Permission was not confirmed on-chain");
 
@@ -804,14 +833,15 @@ export function EmployerClient({
           ? getEmployeeDisplayIdentity(employee).label
           : "Employee";
 
-        updateDashboard(
-          await activateDelegation({
+        const activated = await activateDelegation({
             walletAddress: currentAuthAddress as string,
             delegationId: selectedDelegation.id,
             delegationHash: permissionId,
-            signedDelegation: spec,
-          }),
-        );
+            signedDelegation: intent.spec,
+          });
+        localStorage.removeItem(intentKey);
+        setDashboardState(current => current && ({ ...current, delegations: current.delegations.map(row => row.id === activated.id ? activated : row) }));
+        refreshAfterSettlement();
         setSelectedDelegationId(null);
 
         toast.success("Delegation Activated", {
@@ -988,14 +1018,15 @@ export function EmployerClient({
           </section>
         )}
 
+        {company.smartAccountAddress && treasuryBudget?.reservationsSupported === false && <p role="status" className="text-xs leading-5 text-muted-foreground">This treasury uses the previous release: employee allowances are not reserved. Migrate to the reservation release before assigning new allowances.</p>}
         <SectionCards
           employeeCount={dashboardState.summary.employeeCount}
           balanceLoading={treasuryBalance.isPending && !!company.smartAccountAddress}
           smartAccountBalance={company.smartAccountAddress ? ethBalance ?? "—" : "0"}
           activeDelegationCount={dashboardState.summary.activeDelegationCount}
-          delegatedNativeNearAllowance={
-            dashboardState.summary.delegatedNativeNearAllowance
-          }
+          delegatedNativeNearAllowance={treasuryBudget?.allocated ?? dashboardState.summary.delegatedNativeNearAllowance}
+          unallocatedBalance={treasuryBudget?.unallocated ?? undefined}
+          reservationsSupported={treasuryBudget?.reservationsSupported}
           onTopUp={() => setIsTopUpDialogOpen(true)}
           isToppingUp={isToppingUp}
         />
@@ -1178,7 +1209,7 @@ export function EmployerClient({
                     </p>
                     {availableBalanceNear !== null && selectedDelegation?.status !== "active" && (
                       <p>
-                        Current treasury liquidity (permissions do not reserve it): <span className="font-semibold text-foreground">{Number(availableBalanceNear.toFixed(4))} {TOKEN_SYMBOL}</span>
+                        {treasuryBudget?.reservationsSupported ? "Available to delegate:" : "Legacy treasury balance (not reserved):"} <span className="font-semibold text-foreground">{Number(availableBalanceNear.toFixed(4))} {TOKEN_SYMBOL}</span>
                       </p>
                     )}
                   </div>

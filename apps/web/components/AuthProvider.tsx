@@ -144,25 +144,7 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
   });
   const transport = useMemo(() => {
     if (!address || !principal) return null;
-    const base = createPrivyNearTransport(address, signHash);
-    const invalidate = () => queryClient.invalidateQueries({ queryKey: accountQueryKey(principal, address) });
-    return {
-      createAdapterPermission: async (...args: Parameters<typeof base.createAdapterPermission>) => {
-        const result = await base.createAdapterPermission(...args);
-        void invalidate().catch(() => undefined);
-        return result;
-      },
-      caller: { ...base.caller, functionCall: async (...args: Parameters<NonNullable<NearCaller["functionCall"]>>) => {
-        const result = await base.caller.functionCall!(...args);
-        void invalidate().catch(() => undefined);
-        return result;
-      } },
-      sendActions: (async request => {
-        const result = await base.sendActions(request);
-        void invalidate().catch(() => undefined);
-        return result;
-      }) as NearActionSender,
-    };
+    return createPrivyNearTransport(address, signHash);
   }, [address, principal, queryClient, signHash]);
   const disconnect = useCallback(async () => {
     setSigningOut(true);

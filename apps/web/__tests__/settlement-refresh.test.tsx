@@ -13,16 +13,16 @@ function Probe() { refresh = useSettlementRefresh(); return null; }
 async function render() { await act(async () => root.render(<QueryClientProvider client={client}><Probe /></QueryClientProvider>)); }
 beforeEach(() => { vi.useFakeTimers(); mocks.address = "alice.testnet"; Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); root = createRoot(document.createElement("div")); client = new QueryClient(); });
 afterEach(async () => { await act(async () => root.unmount()); client.clear(); vi.useRealTimers(); });
-it("refreshes immediately and briefly after settlement without retrying a payment", async () => {
+it("refreshes affected queries once after settlement without a polling burst", async () => {
   const invalidate = vi.spyOn(client, "invalidateQueries").mockResolvedValue();
-  await render(); refresh(); expect(invalidate).toHaveBeenCalledTimes(1);
+  await render(); await act(async () => { refresh(); await Promise.resolve(); }); expect(invalidate).toHaveBeenCalledTimes(1);
   await act(async () => vi.advanceTimersByTimeAsync(10_000));
-  expect(invalidate).toHaveBeenCalledTimes(4);
-  expect(invalidate).toHaveBeenLastCalledWith({ queryKey: ["allocard", "testnet", "did:privy:alice", "alice.testnet"] });
+  expect(invalidate).toHaveBeenCalledTimes(1);
+  expect(invalidate).toHaveBeenLastCalledWith({ queryKey: ["allocard", "testnet", "did:privy:alice", "alice.testnet"], predicate: expect.any(Function) }, { cancelRefetch: false });
 });
 it("cancels scheduled reads when the account changes", async () => {
   const invalidate = vi.spyOn(client, "invalidateQueries").mockResolvedValue();
-  await render(); refresh(); mocks.address = "bob.testnet"; await render();
+  await render(); await act(async () => { refresh(); await Promise.resolve(); }); mocks.address = "bob.testnet"; await render();
   await act(async () => vi.advanceTimersByTimeAsync(10_000));
   expect(invalidate).toHaveBeenCalledTimes(1);
 });

@@ -21,6 +21,18 @@ function healthyRpc(failMethod?:string) {
  vi.stubGlobal("fetch",fetcher);return counts;
 }
 describe("live employee capacity from a shared treasury",()=>{
+ it("uses one bounded snapshot after config on the reservation release",async()=>{
+  const methods:string[]=[];
+  vi.stubGlobal("fetch",vi.fn(async(_url,options)=>{
+   const method=JSON.parse(options.body).params.method_name;methods.push(method);
+   const value=method==="get_config"?{schema_version:5}:method==="get_spending_snapshot"?{approved:"1000",allocated:"300",spent:"100",remaining:"600",timestamp_ms:"1000"}:null;
+   return Response.json({result:{result:[...Buffer.from(JSON.stringify(value))]}});
+  }));
+  const value=await readLiveNativeCapacity(treasuryReader(`shared.testnet#${company}`),"employee.testnet","1");
+  expect(methods).toEqual(["get_config","get_spending_snapshot"]);
+  expect(value.reservationsSupported).toBe(true);
+  expect(value.remainingNear).toBe("0.0000000000000000000006");
+ });
  it("verifies scoped policies and reuses lifetime usage for the dashboard totals",async()=>{
   const counts=healthyRpc();
   const result=await readLiveNativeCapacity(treasuryReader(`shared.testnet#${company}`),"employee.testnet","1");

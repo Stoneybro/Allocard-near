@@ -17,7 +17,6 @@ type ActivationResult = Awaited<ReturnType<typeof activateSmartAccount>>;
 
 export function SmartAccountActivationButton({
   walletAddress,
-  existingSmartAccountAddress: _existingSmartAccountAddress,
   onActivated,
   companyKey,
   mode = "company",
@@ -30,6 +29,7 @@ export function SmartAccountActivationButton({
 }) {
   const auth = useAuth();
   const [error, setError] = useState<string | null>(null);
+  const [stage, setStage] = useState<"registration" | "funding">("registration");
   const { key } = useAccountScope();
   const queryClient = useQueryClient();
   const config = useQuery({
@@ -41,7 +41,7 @@ export function SmartAccountActivationButton({
   const configError = config.error?.message;
   const activation = useMutation({
     mutationFn: activateSmartAccount, retry: false,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: key }),
+
   });
 
   const [pending, startTransition] = useTransition();
@@ -56,10 +56,12 @@ export function SmartAccountActivationButton({
 
         let target = "";
         if (mode === "company") {
+          setStage("registration");
           if (!companyKey) throw new Error("Workspace identity is required to create its treasury");
-          const config = await sharedConfig();
+          const config = shared ?? await sharedConfig();
           target = await registerCompany(await getUnifiedNearCaller(auth), config, companyKey);
           parseTreasuryReference(target);
+          setStage("funding");
         } else {
           target = auth.accountId;
           if (!isNativeNearAccount(target)) throw new Error("Enter a NEAR account ID");
@@ -69,7 +71,9 @@ export function SmartAccountActivationButton({
           walletAddress: auth.accountId || walletAddress,
           smartAccountAddress: target,
         });
+        await queryClient.cancelQueries({ queryKey: key, predicate: query => ["profile", "dashboard", "treasury"].includes(String(query.queryKey[key.length])) });
         onActivated?.(result);
+        void queryClient.invalidateQueries({ queryKey: key, predicate: query => ["profile", "dashboard", "treasury"].includes(String(query.queryKey[key.length])) }, { cancelRefetch: false });
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "Treasury setup failed");
       }
@@ -95,7 +99,7 @@ export function SmartAccountActivationButton({
         {!pending && <ArrowRight className="size-4" aria-hidden="true" />}
       </Button>
       <p role="status" className="min-h-5 text-xs leading-5 text-muted-foreground">
-        {pending ? "This may take a few seconds." : ""}
+        {pending ? mode === "employee" ? "Preparing your employee account…" : stage === "registration" ? "Setting up your company…" : "Preparing your treasury and demo funds…" : ""}
       </p>
       {(error || configError) && (
         <p role="alert" className="text-xs text-destructive">

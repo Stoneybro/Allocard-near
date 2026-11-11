@@ -4,6 +4,14 @@ const params={request_type:"call_function",account_id:"shared.testnet",method_na
 beforeEach(()=>invalidateNearReadCache());
 afterEach(()=>vi.useRealTimers());
 describe("RPC read pressure",()=>{
+ it("does not share a cancellable request between separate dashboard scopes",async()=>{
+  let rejectFirst!:(error:Error)=>void, finishSecond!:(value:unknown)=>void;
+  const first=coordinatedNearRead("scoped-rpc",params,()=>new Promise((_,reject)=>{rejectFirst=reject;}),2000,false,1);
+  const second=coordinatedNearRead("scoped-rpc",params,()=>new Promise(resolve=>{finishSecond=resolve;}),2000,false,2);
+  const failed=expect(first).rejects.toThrow("Cancelled");
+  rejectFirst(new Error("Cancelled"));finishSecond({available:"20"});
+  await failed;expect(await second).toEqual({available:"20"});
+ });
  it("coalesces concurrent advisory reads",async()=>{
   let complete!:(value:unknown)=>void;
   const run=vi.fn(()=>new Promise(resolve=>{complete=resolve;}));

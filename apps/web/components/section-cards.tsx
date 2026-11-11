@@ -14,6 +14,8 @@ export function SectionCards({
   smartAccountBalance,
   activeDelegationCount,
   delegatedNativeNearAllowance,
+  unallocatedBalance,
+  reservationsSupported,
   onTopUp,
   isToppingUp,
 }: {
@@ -23,6 +25,8 @@ export function SectionCards({
   smartAccountBalance?: string;
   activeDelegationCount?: number;
   delegatedNativeNearAllowance?: string;
+  unallocatedBalance?: string;
+  reservationsSupported?: boolean;
   onTopUp?: () => void;
   isToppingUp?: boolean;
 }) {
@@ -55,6 +59,7 @@ export function SectionCards({
                   <span className="text-sm font-medium tracking-normal text-background/55">{TOKEN_SYMBOL}</span>
                 </p>
               )}
+              {unallocatedBalance !== undefined && <p className="mt-2 text-xs text-background/70">Available to delegate: {unallocatedBalance} {TOKEN_SYMBOL}</p>}
             </div>
             <Button
               className="h-11 flex-1 basis-28 gap-2 rounded-xl bg-background px-5 font-semibold text-foreground shadow-xs hover:bg-background/90 focus-visible:ring-background/50 sm:flex-none"
@@ -74,7 +79,7 @@ export function SectionCards({
               {[
                 { label: "Employees", value: employeeCount, description: "Total onboarded team members." },
                 { label: "Active Delegations", value: activeDelegationCount, description: "Employees and AI agents with active spending allowances." },
-                { label: `Delegated ${TOKEN_SYMBOL}`, value: delegatedNativeNearAllowance, description: `Total ${TOKEN_SYMBOL} budgeted to employees and agents through delegations.` },
+                { label: `${reservationsSupported ? "Reserved" : "Delegated"} ${TOKEN_SYMBOL}`, value: delegatedNativeNearAllowance, description: reservationsSupported ? "Unspent treasury funds reserved for employee allowances. Agent budgets are included within their employee allowance." : `Total ${TOKEN_SYMBOL} budgeted through delegations; not a funded reservation on this legacy treasury.` },
               ].map(({ label, value, description }) => (
                 <div key={label} className="flex min-w-0 flex-col px-3 sm:px-6">
                   <dt className="min-h-8 text-xs font-medium leading-4 text-muted-foreground sm:min-h-10 sm:text-sm sm:leading-5">
@@ -90,7 +95,7 @@ export function SectionCards({
                     </Tooltip>
                   </dt>
                   <dd className="mt-2 flex flex-wrap items-baseline gap-x-1.5 gap-y-1 break-words text-[1.75rem] font-medium leading-none tracking-[-0.035em] text-foreground tabular-nums sm:mt-3 sm:text-4xl">
-                    {loading ? <Skeleton className="h-9 w-16 max-w-full" /> : <><span className="min-w-0 break-words">{value ?? "—"}</span>{label === `Delegated ${TOKEN_SYMBOL}` && <span className="text-[10px] font-normal leading-normal tracking-normal text-muted-foreground sm:text-xs"> {TOKEN_SYMBOL}</span>}</>}
+                    {loading ? <Skeleton className="h-9 w-16 max-w-full" /> : <><span className="min-w-0 break-words">{value ?? "—"}</span>{label === `${reservationsSupported ? "Reserved" : "Delegated"} ${TOKEN_SYMBOL}` && <span className="text-[10px] font-normal leading-normal tracking-normal text-muted-foreground sm:text-xs"> {TOKEN_SYMBOL}</span>}</>}
                   </dd>
                 </div>
               ))}

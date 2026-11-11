@@ -1,3 +1,4 @@
+import { databaseReadSignal } from "./transport.mjs";
 /**
  * Retry a database operation on transient Neon connection failures.
  * The Neon serverless HTTP driver can intermittently lose connections
@@ -39,8 +40,10 @@ export async function withRetry<T>(fn: () => Promise<T>, label?: string): Promis
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
+      databaseReadSignal()?.throwIfAborted();
       return await fn();
     } catch (err) {
+      databaseReadSignal()?.throwIfAborted();
       lastError = err;
 
       if (attempt === MAX_RETRIES || !isTransientError(err)) {

@@ -1,7 +1,8 @@
 import { SPENDING_ASSET, sameAsset } from "@/lib/chain";
 import { paymentActions, containsPaymentRequest } from "./near-payment-envelope";
 import { parseAccessKeyRpcResponse } from "./near-nonce";
-import { coordinatedNearRead, waitForRpcCooldown, backoffNearRead, noteRpcRateLimit } from "./near-read-coordinator";
+import { coordinatedNearRead, waitForRpcCooldown, backoffNearRead, noteRpcRateLimit, rpcCooldownMs } from "./near-read-coordinator";
+import { nearReadSignal, nearReadScope } from "./near-read-context";
 import { NearReadError, rpcReadFailure } from "./near-read-error";
 import { AllocardTreasuryClient, type Execution, type Permission, parseTreasuryReference } from "@allocard/delegation-sdk";
 import { treasuryCodeHash, sharedTreasuryCodeHash, legacyTreasuryCodeHash } from "./treasury-code";
@@ -11,24 +12,30 @@ import { nearRpcServerUrl } from "./near-rpc-server";
 export async function nearQuery(params: Record<string, unknown>, options: { cacheMs?: number; rpcId?: unknown; dedupe?: boolean } = {}): Promise<any> {
   const normalized = { finality: "final", ...params };
   const url = nearRpcServerUrl();
-  return coordinatedNearRead(url, normalized, () => queryUpstream(url, normalized, options.rpcId), options.cacheMs ?? 0, options.dedupe ?? false);
+  const started = Date.now();
+  try {
+    return await coordinatedNearRead(url, normalized, () => queryUpstream(url, normalized, options.rpcId), options.cacheMs ?? 0, options.dedupe ?? false, nearReadScope());
+  } finally {
+    if (Date.now() - started > 1500) console.info("[near read timing]", { operation: params.method_name ?? params.request_type, durationMs: Date.now() - started });
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- RPC query result shape depends on request_type.
 async function queryUpstream(url: string, params: Record<string, unknown>, rpcId: unknown): Promise<any> {
   const operation = typeof params.method_name === "string" ? params.method_name : String(params.request_type ?? "query");
   for (let attempt = 0; attempt < 2; attempt++) {
-    if (!await waitForRpcCooldown(url)) throw new NearReadError(operation, "RATE_LIMITED", "The RPC provider requested a longer cooldown. Retry later or configure a testnet NEAR_RPC_URL with available quota.");
+    nearReadSignal()?.throwIfAborted();
+    if (!await waitForRpcCooldown(url)) throw new NearReadError(operation, "RATE_LIMITED", "The RPC provider requested a longer cooldown. Retry later or configure a testnet NEAR_RPC_URL with available quota.", rpcCooldownMs(url));
     try {
       const response = await fetch(url, {
         method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
         body: JSON.stringify({ jsonrpc: "2.0", id: rpcId ?? "allocard", method: "query", params: { finality: "final", ...params } }),
-        signal: AbortSignal.timeout(15000),
+        signal: nearReadSignal() ? AbortSignal.any([nearReadSignal()!, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
       });
       if (!response.ok) {
         if (attempt === 0 && (response.status === 429 || response.status >= 500) && await backoffNearRead(url, response)) continue;
         if (response.status === 429) noteRpcRateLimit(url, response);
-        throw new NearReadError(operation, response.status === 429 ? "RATE_LIMITED" : "HTTP_ERROR", `RPC provider returned HTTP ${response.status}. Check the server NEAR_RPC_URL.`);
+        throw new NearReadError(operation, response.status === 429 ? "RATE_LIMITED" : "HTTP_ERROR", `RPC provider returned HTTP ${response.status}. Check the server NEAR_RPC_URL.`, response.status === 429 ? rpcCooldownMs(url) : 0);
       }
       const payload = params.request_type === "view_access_key" ? parseAccessKeyRpcResponse(await response.text()) : await response.json();
       if (payload.error) throw rpcReadFailure(operation, payload.error);
@@ -37,6 +44,7 @@ async function queryUpstream(url: string, params: Record<string, unknown>, rpcId
       if (payload.result == null) throw new NearReadError(operation, "INVALID_RESPONSE", "RPC returned no result.");
       return payload.result;
     } catch (caught) {
+      nearReadSignal()?.throwIfAborted();
       if (caught instanceof NearReadError) throw caught;
       if (attempt === 1) throw new NearReadError(operation, "UNAVAILABLE", "The server could not reach NEAR RPC. Retry or check NEAR_RPC_URL.");
     }
@@ -63,11 +71,11 @@ export async function verifyTreasuryOwner(contractId: string, owner: string) {
     treasuryReader(contractId).getConfig(), nearQuery({ request_type: "view_account", account_id: scope.contractId }), scope.companyId ? sharedTreasuryCodeHash() : treasuryCodeHash(),
   ]);
   const legacyVersion = scope.companyId ? 3 : 2;
-  const releaseHash = config.schema_version === legacyVersion ? await legacyTreasuryCodeHash(!!scope.companyId) : expectedHash;
+  const releaseHash = [legacyVersion, legacyVersion + 1].includes(config.schema_version) ? await legacyTreasuryCodeHash(!!scope.companyId, config.schema_version) : expectedHash;
   assertTreasuryCode(account, releaseHash);
   const keys = await nearQuery({ request_type: "view_access_key_list", account_id: scope.contractId });
   if (!Array.isArray(keys.keys) || keys.keys.length !== 0) throw new Error("Treasury has retained access keys that could bypass spending policies");
-  if (![legacyVersion, legacyVersion + 1].includes(config.schema_version) || config.network_domain !== "near:testnet" || config.owner !== owner) {
+  if (![legacyVersion, legacyVersion + 1, legacyVersion + 2].includes(config.schema_version) || config.network_domain !== "near:testnet" || config.owner !== owner) {
     throw new Error("Treasury must be a compatible Allocard testnet contract owned by your signing account");
   }
   return config;

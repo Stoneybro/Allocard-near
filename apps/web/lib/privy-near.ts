@@ -5,6 +5,8 @@ import { Buffer } from "buffer";
 import { utils } from "near-api-js";
 import { createTransaction, SignedTransaction, Signature, type Action } from "near-api-js/lib/transaction";
 import type { NearCaller } from "@allocard/delegation-sdk";
+import { MOCK_USDC_ACCOUNT_ID, SPENDING_ASSET } from "./chain";
+import { computeCompanyId } from "@allocard/delegation-sdk";
 import { nearBrowserRpc } from "./near-rpc-client";
 import { NearRpcError } from "./near-rpc-error";
 import { paymentSubmission } from "./payment-submission";
@@ -26,6 +28,8 @@ export function createPrivyNearTransport(accountId: string, signHash: (hash: `0x
   };
   const sendDirect = async (request: Parameters<NearActionSender>[0], requestKey = nearRequestKey(request), noteSubmission: (submitted: boolean) => void = () => {}) => {
     const signerId = request.signerId || accountId;
+    const metadataOnly = request.actions.every(action => action.functionCall && ["create_company", "create_root_permission", "create_child_permission", "register_asset", "set_asset_enabled", "revoke_permission"].includes(action.functionCall.methodName));
+    const waitUntil = metadataOnly ? "EXECUTED" : "FINAL";
     if (signerId !== accountId) throw new Error("Transaction signer does not match the connected wallet");
     const checkOutcome = (outcome: unknown) => {
       const status = outcome && typeof outcome === "object" && "status" in outcome ? outcome.status : null;
@@ -69,7 +73,7 @@ export function createPrivyNearTransport(accountId: string, signHash: (hash: `0x
     noteSubmission(true);
     savePendingNearTransaction(accountId, { hash: txHash, requestKey });
     let outcome;
-    try { outcome = await rpc("send_tx", { signed_tx_base64: Buffer.from(signed.encode()).toString("base64"), wait_until: "FINAL" }); }
+    try { outcome = await rpc("send_tx", { signed_tx_base64: Buffer.from(signed.encode()).toString("base64"), wait_until: waitUntil }); }
     catch (cause) {
       if (cause instanceof NearRpcError && cause.rpcCause === "INVALID_TRANSACTION") {
         clearPendingNearTransaction(accountId);
@@ -91,6 +95,13 @@ export function createPrivyNearTransport(accountId: string, signHash: (hash: `0x
       return enqueue(async () => {
         const { functionCall } = await import("near-api-js/lib/transaction");
         const directRequest = { receiverId: contractId, actions: [functionCall(methodName, args ?? {}, BigInt(gas ?? "80000000000000"), BigInt(attachedDeposit ?? "0"))] };
+        if (methodName === "create_company" && MOCK_USDC_ACCOUNT_ID) {
+          const companyId = computeCompanyId(accountId, String((args as { company_key: string }).company_key));
+          directRequest.actions.push(
+            functionCall("register_asset", { company_id: companyId, asset: SPENDING_ASSET }, 25_000_000_000_000n, 0n),
+            functionCall("set_asset_enabled", { company_id: companyId, asset: SPENDING_ASSET, enabled: true }, 25_000_000_000_000n, 0n),
+          );
+        }
         const requestKey = nearRequestKey({ contractId, methodName, args, gas: String(gas ?? "80000000000000"), attachedDeposit: String(attachedDeposit ?? "0") });
         const pending = readPendingNearTransaction(accountId);
         let pendingMethod: string | null = null;

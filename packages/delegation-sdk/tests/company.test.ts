@@ -3,6 +3,16 @@ import { AllocardTreasuryClient, computeCompanyId, parseTreasuryReference, treas
 const a=computeCompanyId('owner.testnet','company-1');
 const b=computeCompanyId('owner.testnet','company-2');
 describe('company-scoped SDK calls',()=>{
+  it('scopes treasury reservations and bounded spending snapshots to the company',async()=>{
+    const viewFunction=vi.fn(async()=>({}));
+    const client=new AllocardTreasuryClient({contractId:treasuryReference('shared.testnet',a),networkDomain:'near:testnet',caller:{viewFunction}});
+    const asset={type:'NativeNear' as const};
+    await client.getTreasuryBudget(asset);
+    expect(viewFunction).toHaveBeenLastCalledWith({contractId:'shared.testnet',methodName:'get_treasury_budget',args:{company_id:a,asset}});
+    await client.getSpendingSnapshots([{permission_id:'1',actor:'employee.testnet'}],asset);
+    expect(viewFunction).toHaveBeenLastCalledWith({contractId:'shared.testnet',methodName:'get_spending_snapshots',args:{company_id:a,asset,queries:[{permission_id:'1',actor:'employee.testnet'}]}});
+    await expect(client.getSpendingSnapshots(Array.from({length:9},()=>({permission_id:'1',actor:'employee.testnet'})),asset)).rejects.toThrow('At most 8');
+  });
   it('isolates calls made to the same contract',async()=>{
     const viewFunction=vi.fn(async()=>({}));
     const functionCall=vi.fn(async()=> '1');

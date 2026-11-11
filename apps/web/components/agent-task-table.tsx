@@ -1,4 +1,5 @@
 "use client";
+import { useResearchVisible } from "@/components/employee-spending-workspace";
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -19,11 +20,12 @@ const statuses: Record<string, string> = {
 };
 
 function AgentTaskRow({ task, onView }: { task: ResearchTask; onView: (task: ResearchTask) => void }) {
+  const visible = useResearchVisible();
   const { key } = useAccountScope();
   const client = useQueryClient();
   const status = useQuery({
     queryKey: [...key, "research-status", task.companyId, task.id],
-    enabled: !terminal(task.state),
+    enabled: visible && !terminal(task.state),
     queryFn: async () => {
       const updated = await researchRequest<ResearchTask>("/api/agent-adapter", { action: "progress", task: { id: task.id, digest: task.digest } });
       if (terminal(updated.state)) void client.invalidateQueries({ queryKey: [...key, "research", task.companyId] });
@@ -59,12 +61,14 @@ function AgentTaskRow({ task, onView }: { task: ResearchTask; onView: (task: Res
 }
 
 export function AgentTaskTable({ companyId, ready }: { companyId: string; ready: boolean }) {
+  const visible = useResearchVisible();
   const { key } = useAccountScope();
   const [result, setResult] = useState<ResearchTask | null>(null);
   const tasks = useQuery({
     queryKey: [...key, "research", companyId],
+    enabled: visible,
     queryFn: () => researchRequest<ResearchTask[]>(`/api/agent-adapter?companyId=${encodeURIComponent(companyId)}`),
-    refetchInterval: 10000,
+    refetchInterval: query => query.state.data?.some(task => !terminal(task.state) && task.state !== "proposal") ? 10000 : false,
     retry: false,
   });
   const rows = tasks.data?.filter(task => task.state !== "proposal") ?? [];

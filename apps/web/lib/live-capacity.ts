@@ -5,9 +5,15 @@ import { nativeSpendingCapacity } from "./spending-capacity";
 import { NearReadError } from "./near-read-error";
 
 export async function readLiveNativeCapacity(reader: AllocardTreasuryClient, actor: string, permissionId: string) {
-  const [path, config, ledger] = await Promise.all([
-    reader.getPermissionPath(permissionId), reader.getConfig(), reader.getAssetLedger(SPENDING_ASSET),
-  ]);
+  const config = await reader.getConfig();
+  if (config.schema_version >= (reader.companyId ? 5 : 4)) {
+    const snapshot = await reader.getSpendingSnapshot(permissionId, actor, SPENDING_ASSET);
+    if (![snapshot?.approved, snapshot?.allocated, snapshot?.spent, snapshot?.remaining, snapshot?.timestamp_ms].every(value => typeof value === "string" && /^[0-9]+$/.test(value))) {
+      throw new NearReadError("get_spending_snapshot", "INVALID_RESPONSE", "Expected a valid spending snapshot.");
+    }
+    return { reservationsSupported: true, allocatedNear: formatTokenAmount(snapshot.allocated, SPENDING_DECIMALS), remainingNear: formatTokenAmount(snapshot.remaining, SPENDING_DECIMALS), approvedNear: formatTokenAmount(snapshot.approved, SPENDING_DECIMALS), spentNear: formatTokenAmount(snapshot.spent, SPENDING_DECIMALS) };
+  }
+  const [path, ledger] = await Promise.all([reader.getPermissionPath(permissionId), reader.getAssetLedger(SPENDING_ASSET)]);
   if (!Array.isArray(path)) throw new NearReadError("get_permission_path", "INVALID_RESPONSE", "Expected an on-chain permission path.");
   if (typeof config?.paused !== "boolean" || !/^[0-9]+$/.test(config?.authority_epoch)) throw new NearReadError("get_config", "INVALID_RESPONSE", "Expected the company treasury configuration.");
   if (ledger && (typeof ledger.enabled !== "boolean" || !/^[0-9]+$/.test(ledger.available))) throw new NearReadError("get_asset_ledger", "INVALID_RESPONSE", "Expected a valid treasury balance.");

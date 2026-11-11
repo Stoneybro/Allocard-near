@@ -1,3 +1,5 @@
+import { withNearReadDeadline } from "@/lib/near-read-context";
+import { withDatabaseDeadline } from "@/lib/db/transport.mjs";
 import { requireSession } from "@/lib/auth-guard";
 import { getEmployeeDashboardState, getWalletProfile } from "@/app/actions/identity";
 import { EmployeeClient } from "./EmployeeClient";
@@ -7,15 +9,15 @@ export default async function Page() {
   let initialDashboardState = null;
 
   try {
-    const sessionAddr = await requireSession();
-    if (sessionAddr) {
-      const [profile, dashState] = await Promise.all([
-        getWalletProfile(sessionAddr),
-        getEmployeeDashboardState(sessionAddr),
-      ]);
-      initialProfile = profile;
-      initialDashboardState = dashState;
-    }
+    const signal = AbortSignal.timeout(20_000);
+    const initial = await withNearReadDeadline(signal, () => withDatabaseDeadline(signal, async () => {
+      const sessionAddr = await requireSession();
+      if (!sessionAddr) return null;
+      const [profile, dashboard] = await Promise.all([getWalletProfile(sessionAddr), getEmployeeDashboardState(sessionAddr)]);
+      return { profile, dashboard };
+    }));
+    initialProfile = initial?.profile ?? null;
+    initialDashboardState = initial?.dashboard ?? null;
   } catch {
     // If session is not present or invalid, EmployeeClient renders fallback
   }

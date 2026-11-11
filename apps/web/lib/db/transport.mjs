@@ -1,4 +1,11 @@
 import https from "node:https";
+import { AsyncLocalStorage } from "node:async_hooks";
+const databaseReads = new AsyncLocalStorage();
+export const databaseReadSignal = () => databaseReads.getStore();
+/** @template T @param {AbortSignal} signal @param {() => Promise<T>} operation @returns {Promise<T>} */
+export function withDatabaseDeadline(signal, operation) {
+  return databaseReads.run(AbortSignal.any([signal, AbortSignal.timeout(20_000)]), operation);
+}
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -8,6 +15,8 @@ const REQUEST_TIMEOUT_MS = 10_000;
  */
 export const neonFetch = async (input, options) => {
   const url = input instanceof Request ? input.url : input;
+  const inherited = databaseReadSignal();
+  const signal = options?.signal && inherited ? AbortSignal.any([options.signal, inherited]) : inherited || options?.signal;
   return new Promise((resolve, reject) => {
     const headers = Object.fromEntries(new Headers(options?.headers).entries());
     const req = https.request(url, {
@@ -15,7 +24,7 @@ export const neonFetch = async (input, options) => {
     });
     const cleanup = () => {
       clearTimeout(timer);
-      options?.signal?.removeEventListener("abort", abort);
+      signal?.removeEventListener("abort", abort);
     };
     /** @param {Error} error */
     const fail = (error) => { cleanup(); reject(error); };
@@ -43,8 +52,8 @@ export const neonFetch = async (input, options) => {
         } catch (error) { reject(error); }
       });
     });
-    options?.signal?.addEventListener("abort", abort, { once: true });
-    if (options?.signal?.aborted) { abort(); return; }
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) { abort(); return; }
     if (options?.body) req.write(options.body);
     req.end();
   });

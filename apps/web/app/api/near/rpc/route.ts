@@ -23,6 +23,9 @@ export async function POST(request: Request) {
       const result = await nearQuery(body.params, { rpcId: body.id, dedupe: true });
       return Response.json({ jsonrpc: "2.0", id: body.id ?? null, result }, { headers });
     } catch (caught) {
+      if (caught instanceof NearReadError && caught.code === "RATE_LIMITED") {
+        return Response.json({ jsonrpc: "2.0", id: body.id ?? null, error: { code: -32000, message: "The live connection is recovering. Please retry shortly." } }, { status: 429, headers: { ...headers, "Retry-After": String(Math.max(1, Math.ceil(caught.retryAfterMs / 1000))) } });
+      }
       return error(caught instanceof NearReadError ? caught.message : "NEAR read unavailable", caught instanceof NearReadError && caught.code === "RATE_LIMITED" ? 503 : 502);
     }
   }

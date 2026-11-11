@@ -154,12 +154,12 @@ describe("Privy-only authentication", () => {
     expect(queryClient.getQueryData(["allocard", "private"])).toBeUndefined();
     expect(mocks.clearSession).toHaveBeenCalledTimes(1);
   });
-  it("invalidates account reads only after a confirmed transaction", async () => {
+  it("leaves cache refresh ownership to the operation after a confirmed transaction", async () => {
     signIn(); await render();
     const key = ["allocard", "testnet", identity.providerUserId, identity.walletAddress, "dashboard"];
     queryClient.setQueryData(key, { balance: "1" });
     await act(async () => { if (state.status === "authenticated") await state.sendActions({ receiverId: "treasury.testnet", actions: [] }); });
-    expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(key)?.isInvalidated).toBe(false);
     queryClient.setQueryData(key, { balance: "1" });
     mocks.baseSend.mockRejectedValueOnce(new Error("Rejected"));
     await act(async () => {

@@ -42,7 +42,7 @@ impl SharedTreasury {
 
     pub fn get_platform_config(&self) -> PlatformConfig {
         PlatformConfig {
-            schema_version: 4,
+            schema_version: 5,
             network_domain: self.network_domain.clone(),
             creation_deposit: U128(CREATE_DEPOSIT),
             company_count: U64(self.company_count),
@@ -112,8 +112,37 @@ impl SharedTreasury {
     pub fn get_config(&self, company_id: String) -> TreasuryConfig {
         self.load(&company_id).get_config()
     }
-    pub fn get_reserved_budget(&self, company_id: String, permission_id: U64, asset: AssetId, exclude_child: Option<U64>) -> U128 {
-        self.load(&company_id).get_reserved_budget(permission_id, asset, exclude_child)
+    pub fn get_treasury_budget(&self, company_id: String, asset: AssetId) -> TreasuryBudget {
+        self.load(&company_id).get_treasury_budget(asset)
+    }
+    pub fn get_spending_snapshot(
+        &self,
+        company_id: String,
+        permission_id: U64,
+        actor: AccountId,
+        asset: AssetId,
+    ) -> SpendingSnapshot {
+        self.load(&company_id)
+            .get_spending_snapshot(permission_id, actor, asset)
+    }
+    pub fn get_spending_snapshots(
+        &self,
+        company_id: String,
+        queries: Vec<SpendingQuery>,
+        asset: AssetId,
+    ) -> Vec<SpendingSnapshot> {
+        self.load(&company_id)
+            .get_spending_snapshots(queries, asset)
+    }
+    pub fn get_reserved_budget(
+        &self,
+        company_id: String,
+        permission_id: U64,
+        asset: AssetId,
+        exclude_child: Option<U64>,
+    ) -> U128 {
+        self.load(&company_id)
+            .get_reserved_budget(permission_id, asset, exclude_child)
     }
 
     pub fn get_permission(&self, company_id: String, permission_id: U64) -> Option<Permission> {
@@ -412,7 +441,7 @@ mod tests {
                 recipients: Recipients::Only(vec![accounts(4)]),
                 min_per_action: None,
                 max_per_action: Some(U128(1000)),
-                lifetime_limit: Some(U128(2000)),
+                lifetime_limit: Some(U128(1000)),
                 fixed_window: None,
                 streaming: None,
                 approval: None,
@@ -587,7 +616,7 @@ mod tests {
             U128(0)
         );
         assert!(s.get_config(a).storage_funding_remaining.0 > 0);
-        assert_eq!(s.get_config(b).schema_version, 4);
+        assert_eq!(s.get_config(b).schema_version, 5);
         assert_eq!(s.company_count, 2);
     }
     #[test]

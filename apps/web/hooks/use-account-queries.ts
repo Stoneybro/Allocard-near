@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, type SetStateAction } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import { accountQueryKey } from "@/lib/query-keys";
 import { withTimeout } from "@/lib/request-timeout";
 import { getWorkspaceOptions, type WalletProfile } from "@/app/actions/identity";
+import { refreshSpendingQueries } from "@/lib/refresh-queries";
 import { dashboardRead } from "@/lib/dashboard-read";
 
 export function useAccountScope() {
@@ -20,7 +21,7 @@ export function useAccountScope() {
 export function useWorkspaceOptions() {
   const { address, key } = useAccountScope();
   return useQuery({
-    queryKey: [...key, "workspaces"], enabled: !!address, refetchInterval: 30_000,
+    queryKey: [...key, "workspaces"], enabled: !!address, refetchOnWindowFocus: "always",
     queryFn: () => withTimeout(getWorkspaceOptions(address!), "Workspaces took too long to load. Please try again."),
   });
 }
@@ -36,7 +37,7 @@ export function useDashboardData<T extends { company: { id: string } }>(
   const profileKey = useMemo(() => [...key, "profile"] as const, [key]);
   const matchingInitial = !!address && initialProfile?.user?.walletAddress === address;
   const profileQuery = useQuery<WalletProfile | null>({
-    queryKey: profileKey, enabled: !!address, refetchInterval: 30_000,
+    queryKey: profileKey, enabled: !!address, refetchOnWindowFocus: "always",
     queryFn: ({ signal }) => dashboardRead<WalletProfile | null>("profile", address!, signal),
     initialData: matchingInitial ? initialProfile : undefined,
   });
@@ -44,7 +45,7 @@ export function useDashboardData<T extends { company: { id: string } }>(
   const companyId = profile?.company?.id ?? null;
   const dashboardKey = useMemo(() => [...key, "dashboard", role, companyId] as const, [key, role, companyId]);
   const dashboardQuery = useQuery<T | null>({
-    refetchInterval: 30_000, queryKey: dashboardKey, enabled: !!address && profile?.status === role && !!companyId,
+    refetchOnWindowFocus: "always", queryKey: dashboardKey, enabled: !!address && profile?.status === role && !!companyId,
     queryFn: ({ signal }) => dashboardRead<T | null>(role, address!, signal),
     initialData: matchingInitial && initialDashboard?.company.id === companyId ? initialDashboard : undefined,
   });
@@ -62,11 +63,11 @@ export function useDashboardData<T extends { company: { id: string } }>(
     if (!client.getQueryState(dashboardKey)) return;
     client.setQueryData<T | null>(dashboardKey, current => typeof update === "function" ? update(current ?? null) : update);
   }, [client, dashboardKey]);
-  const invalidate = useCallback(() => client.invalidateQueries({ queryKey: key }),
+  const invalidate = useCallback(() => refreshSpendingQueries(client, key),
     [client, key]);
   const mutation = useMutation({
     mutationFn: (operation: () => Promise<T>) => operation(), retry: false,
-    onSuccess: result => { setDashboardState(result); void invalidate().catch(() => undefined); },
+    onSuccess: async result => { await client.cancelQueries({ queryKey: dashboardKey }); setDashboardState(result); void refreshSpendingQueries(client, key, false).catch(() => undefined); },
   });
   return {
     profile, setProfile, dashboardState: address ? dashboardQuery.data ?? null : null,
@@ -76,16 +77,9 @@ export function useDashboardData<T extends { company: { id: string } }>(
   };
 }
 
-/** A finalized transaction can precede execution visibility on a read RPC. */
+/** Refresh once after settlement; a confirmed write is not a reason to poll every query. */
 export function useSettlementRefresh() {
   const client = useQueryClient();
   const { key } = useAccountScope();
-  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
-  useEffect(() => () => { timers.current.forEach(clearTimeout); timers.current = []; }, [key]);
-  return useCallback(() => {
-    timers.current.forEach(clearTimeout);
-    const refresh = () => { void client.invalidateQueries({ queryKey: key }).catch(() => undefined); };
-    refresh();
-    timers.current = [2000, 5000, 10_000].map(delay => setTimeout(refresh, delay));
-  }, [client, key]);
+  return useCallback(() => { void refreshSpendingQueries(client, key).catch(() => undefined); }, [client, key]);
 }

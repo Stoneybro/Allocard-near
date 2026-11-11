@@ -157,6 +157,27 @@ async fn company_claims_and_spends_mock_usdc() -> Result<(), Box<dyn std::error:
         .await?
         .into_result()?
         .json()?;
+    let budget: Value = shared
+        .view("get_treasury_budget")
+        .args_json(json!({"company_id":company_id,"asset":asset}))
+        .await?
+        .json()?;
+    assert_eq!(budget["allocated"], "5000000");
+    assert_eq!(budget["unallocated"], "3995000000");
+    let excess = owner.call(shared.id(),"create_root_permission").args_json(json!({"company_id":company_id,"spec":{
+        "delegate":agent.id(),"valid_from_ms":"0","rules":[{"asset":asset,"recipients":{"type":"Any"},"lifetime_limit":"3995000001","acknowledge_unbounded_budget":false}],"redelegation_depth":0
+    }})).max_gas().transact().await?;
+    assert!(
+        excess.is_failure(),
+        "The second employee cannot allocate the first employee's funds"
+    );
+    let withdraw = owner.call(shared.id(),"owner_withdraw").args_json(json!({"company_id":company_id,"request":{
+        "api_version":1,"request_id":"d".repeat(64),"authority_epoch":"1","action":{"type":"Transfer","asset":asset,"receiver":recipient.id(),"amount":"3995000001"},"deadline_ms":"2000000000000"
+    }})).max_gas().transact().await?;
+    assert!(
+        withdraw.is_failure(),
+        "Owner withdrawal must leave employee allocations funded"
+    );
     let child_id: String = employee.call(shared.id(), "create_child_permission")
         .args_json(json!({"company_id": company_id,"parent_id": permission_id,"spec": {
             "delegate": agent.id(), "valid_from_ms": "0", "max_executions": 5,
@@ -164,12 +185,15 @@ async fn company_claims_and_spends_mock_usdc() -> Result<(), Box<dyn std::error:
             "redelegation_depth":0
         }})).max_gas().transact().await?.into_result()?.json()?;
     let reserved: String = shared.view("get_reserved_budget").args_json(json!({"company_id":company_id,"permission_id":permission_id,"asset":asset,"exclude_child":null})).await?.json()?;
-    assert_eq!(reserved,"3000000");
+    assert_eq!(reserved, "3000000");
     let rejected = employee.call(shared.id(),"execute").args_json(json!({"company_id":company_id,"request":{
         "api_version":1,"request_id":"b".repeat(64),"permission_id":permission_id,
         "action":{"type":"Transfer","asset":asset,"receiver":recipient.id(),"amount":"2000001"},"deadline_ms":"2000000000000"
     }})).max_gas().transact().await?;
-    assert!(rejected.is_failure(),"Direct spending must leave the agent's 3 USDC allocation available");
+    assert!(
+        rejected.is_failure(),
+        "Direct spending must leave the agent's 3 USDC allocation available"
+    );
     let execution_id: String = employee.call(shared.id(), "execute").args_json(json!({
         "company_id": company_id,
         "request": {
@@ -195,9 +219,38 @@ async fn company_claims_and_spends_mock_usdc() -> Result<(), Box<dyn std::error:
         "action":{"type":"Transfer","asset":asset,"receiver":recipient.id(),"amount":"1000000"},"deadline_ms":"2000000000000"
     }})).max_gas().transact().await?.into_result()?;
     let reserved: String = shared.view("get_reserved_budget").args_json(json!({"company_id":company_id,"permission_id":permission_id,"asset":asset,"exclude_child":null})).await?.json()?;
-    assert_eq!(reserved,"2000000");
-    employee.call(shared.id(),"revoke_permission").args_json(json!({"company_id":company_id,"permission_id":child_id})).max_gas().transact().await?.into_result()?;
+    assert_eq!(reserved, "2000000");
+    employee
+        .call(shared.id(), "revoke_permission")
+        .args_json(json!({"company_id":company_id,"permission_id":child_id}))
+        .max_gas()
+        .transact()
+        .await?
+        .into_result()?;
     let reserved: String = shared.view("get_reserved_budget").args_json(json!({"company_id":company_id,"permission_id":permission_id,"asset":asset,"exclude_child":null})).await?.json()?;
-    assert_eq!(reserved,"0");
+    assert_eq!(reserved, "0");
+    let budget: Value = shared
+        .view("get_treasury_budget")
+        .args_json(json!({"company_id":company_id,"asset":asset}))
+        .await?
+        .json()?;
+    assert_eq!(budget["allocated"], "2750000");
+    assert_eq!(budget["unallocated"], "3995000000");
+    let snapshots: Vec<Value> = shared.view("get_spending_snapshots").args_json(json!({"company_id":company_id,"asset":asset,"queries":[{"permission_id":permission_id,"actor":employee.id()}]})).await?.json()?;
+    assert_eq!(snapshots[0]["remaining"], "2750000");
+    owner
+        .call(shared.id(), "revoke_permission")
+        .args_json(json!({"company_id":company_id,"permission_id":permission_id}))
+        .max_gas()
+        .transact()
+        .await?
+        .into_result()?;
+    let budget: Value = shared
+        .view("get_treasury_budget")
+        .args_json(json!({"company_id":company_id,"asset":asset}))
+        .await?
+        .json()?;
+    assert_eq!(budget["allocated"], "0");
+    assert_eq!(budget["unallocated"], budget["available"]);
     Ok(())
 }

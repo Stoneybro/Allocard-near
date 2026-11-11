@@ -31,6 +31,16 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); client.clear(); });
 describe.each(["employer", "employee"] as const)("%s dashboard cache", dashboardRole => {
+  it("does not poll an idle dashboard and keeps the last confirmed data when a refresh fails", async () => {
+    role = dashboardRole; await render(); await flush(); await flush();
+    vi.useFakeTimers();
+    try { await act(async () => { await vi.advanceTimersByTimeAsync(90_000); }); expect(mocks.load).toHaveBeenCalledTimes(1); }
+    finally { vi.useRealTimers(); }
+    mocks.load.mockRejectedValueOnce(new Error("Live connection recovering"));
+    await act(async () => { await dashboard.refresh(); }); await flush();
+    expect(dashboard.dashboardState?.remaining).toBe("10");
+    expect(dashboard.error?.message).toBe("Live connection recovering");
+  });
   it("deduplicates reads and refreshes related data after a mutation", async () => {
     role = dashboardRole; await render(); await flush(); await flush();
     expect(host.textContent).toBe("10");
@@ -39,7 +49,7 @@ describe.each(["employer", "employee"] as const)("%s dashboard cache", dashboard
     mocks.load.mockResolvedValue(next);
     await act(async () => { await dashboard.mutate(async () => next); }); await flush();
     expect(host.textContent).toBe("8"); expect(dashboard.dashboardState?.employees).toHaveLength(2);
-    expect(mocks.load).toHaveBeenCalledTimes(2);
+    expect(mocks.load).toHaveBeenCalledTimes(1);
   });
   it("never retries a failed mutation automatically", async () => {
     role = dashboardRole; await render(); await flush(); await flush();

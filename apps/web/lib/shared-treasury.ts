@@ -6,11 +6,12 @@ export async function sharedConfig(): Promise<SharedConfig> {
   const response = await fetch("/api/treasury/shared", { cache: "no-store" });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || "Shared treasury unavailable");
-  if (![3, 4].includes(payload.schema_version) || payload.network_domain !== "near:testnet") throw new Error("Unsupported shared treasury");
+  if (![3, 4, 5].includes(payload.schema_version) || payload.network_domain !== "near:testnet") throw new Error("Unsupported shared treasury");
   return payload;
 }
 export async function registerCompany(caller: NearCaller, config: SharedConfig, companyKey: string): Promise<string> {
   if (!caller.accountId || !caller.functionCall) throw new Error("A signing wallet is required");
+  if (config.schema_version < 5) throw new Error("New company setup requires the treasury reservation release. Ask the operator to configure the new shared contract.");
   const companyId = computeCompanyId(caller.accountId, companyKey);
   const reader = createNearRpcCaller();
   const exists = () => reader.viewFunction({ contractId: config.contractId, methodName: "company_exists", args: { company_id: companyId } });

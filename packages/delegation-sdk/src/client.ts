@@ -12,6 +12,8 @@ import {
   PermissionSpec,
   PreviewResult,
   TreasuryConfig,
+  TreasuryBudget,
+  SpendingSnapshot,
   Usage,
 } from "./types.js";
 
@@ -124,6 +126,18 @@ export class AllocardTreasuryClient {
 
   async getReservedBudget(permissionId: string, asset: AssetId, excludeChild: string | null = null): Promise<string> {
     return this.caller.viewFunction({ contractId: this.contractId, methodName: "get_reserved_budget", args: { permission_id: permissionId, asset, exclude_child: excludeChild } });
+  }
+
+  async getTreasuryBudget(asset: AssetId): Promise<TreasuryBudget> {
+    return this.caller.viewFunction({ contractId: this.contractId, methodName: "get_treasury_budget", args: { asset } });
+  }
+
+  async getSpendingSnapshot(permissionId: string, actor: string, asset: AssetId): Promise<SpendingSnapshot> {
+    return this.caller.viewFunction({ contractId: this.contractId, methodName: "get_spending_snapshot", args: { permission_id: permissionId, actor, asset } });
+  }
+  async getSpendingSnapshots(queries: { permission_id: string; actor: string }[], asset: AssetId): Promise<SpendingSnapshot[]> {
+    if (queries.length > 8) throw new Error("At most 8 spending snapshots per read");
+    return this.caller.viewFunction({ contractId: this.contractId, methodName: "get_spending_snapshots", args: { queries, asset } });
   }
 
   async getAssetLedger(asset: AssetId): Promise<AssetLedger | null> {

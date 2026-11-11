@@ -180,3 +180,6 @@ export interface ApprovalRecord {
   approver: string;
   expires_at_ms: string;
 }
+
+export interface TreasuryBudget { available: string; allocated: string; unallocated: string; pending_outgoing: string }
+export interface SpendingSnapshot { approved: string; allocated: string; spent: string; remaining: string; timestamp_ms: string }

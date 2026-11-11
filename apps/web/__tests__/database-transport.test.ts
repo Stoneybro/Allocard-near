@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ request: vi.fn() }));
 vi.mock("node:https", () => ({ default: { request: mocks.request } }));
-import { neonFetch } from "@/lib/db/transport.mjs";
+import { neonFetch, withDatabaseDeadline } from "@/lib/db/transport.mjs";
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 function request() {
   const req = Object.assign(new EventEmitter(), { write: vi.fn(), end: vi.fn(), destroy: vi.fn() });
@@ -11,6 +11,13 @@ function request() {
   return req;
 }
 describe("Neon transport", () => {
+  it("cancels database work when the dashboard request is cancelled",async()=>{
+    const req=request();const controller=new AbortController();
+    const pending=withDatabaseDeadline(controller.signal,()=>neonFetch("https://database.example/sql"));
+    controller.abort();
+    await expect(pending).rejects.toThrow("Database request aborted");
+    expect(req.destroy).toHaveBeenCalledTimes(1);
+  });
   it("times out a request even if the response body stalls", async () => {
     vi.useFakeTimers(); const req = request();
     const pending = neonFetch("https://database.example/sql", { method: "POST" });

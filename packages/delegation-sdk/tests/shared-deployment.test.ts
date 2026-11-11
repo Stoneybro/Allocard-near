@@ -25,7 +25,7 @@ function fixture() {
   const provider={
     viewAccount:vi.fn(async()=>({code_hash:'1'.repeat(32),amount:'15000000000000000000000000',storage_usage:200})),
     viewAccessKeyList:vi.fn(async()=>({keys:[{public_key:key.getPublicKey().toString(),access_key:{permission:'FullAccess'}}]})),
-    callFunction:vi.fn(async()=>({schema_version:4,network_domain:'near:testnet'})),
+    callFunction:vi.fn(async()=>({schema_version:5,network_domain:'near:testnet'})),
   };
   return {provider,key};
 }

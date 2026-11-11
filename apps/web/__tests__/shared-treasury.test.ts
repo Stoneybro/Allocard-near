@@ -3,7 +3,7 @@ import { computeCompanyId } from "@allocard/delegation-sdk";
 import { registerCompany, type SharedConfig } from "@/lib/shared-treasury";
 import { treasuryReader, verifyPaymentTransaction } from "@/lib/near-server";
 const id=computeCompanyId('owner.testnet','company-1');
-const config={contractId:'shared.testnet',schema_version:3,network_domain:'near:testnet',creation_deposit:'200000000000000000000000'} as SharedConfig;
+const config={contractId:'shared.testnet',schema_version:5,network_domain:'near:testnet',creation_deposit:'200000000000000000000000'} as SharedConfig;
 afterEach(()=>vi.unstubAllGlobals());
 function rpc(values: unknown[]) {
   const fetcher=vi.fn(async (_url:unknown,_options:RequestInit)=>Response.json({result:{result:[...Buffer.from(JSON.stringify(values.shift()))]}}));
