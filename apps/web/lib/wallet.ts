@@ -42,6 +42,32 @@ export function generateEmployeeReferenceId(address: string) {
   return `EMP-${clean.slice(-5).toUpperCase()}`;
 }
 
+export function formatShortenedEmail(email: string, maxLocalLength = 18): string {
+  const trimmed = email.trim();
+  if (!trimmed) return "";
+  const atIndex = trimmed.indexOf("@");
+  const local = atIndex > 0 ? trimmed.slice(0, atIndex) : trimmed;
+  if (local.length <= maxLocalLength) return local;
+  return `${local.slice(0, Math.max(1, maxLocalLength - 1))}…`;
+}
+
+export function getEmployeeDisplayIdentity(employee: {
+  verifiedEmail?: string | null;
+  walletAddress: string;
+}): { label: string; fullEmail: string | null } {
+  const fullEmail = employee.verifiedEmail?.trim() || null;
+  if (fullEmail) {
+    return {
+      label: formatShortenedEmail(fullEmail),
+      fullEmail,
+    };
+  }
+  return {
+    label: generateEmployeeReferenceId(employee.walletAddress),
+    fullEmail: null,
+  };
+}
+
 export function formatCompanyName(name: string) {
   const trimmed = name.trim().replace(/\s+/g, " ");
   return trimmed

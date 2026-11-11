@@ -34,6 +34,7 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EmailTooltipLabel } from "@/components/email-tooltip-label";
 import {
   Tooltip,
   TooltipContent,
@@ -66,6 +67,7 @@ export type DelegationCanvasCompany = {
 export type DelegationCanvasEmployee = {
   id: string;
   label: string;
+  fullEmail?: string | null;
   smartAccountAddress: string | null;
 };
 
@@ -93,6 +95,7 @@ export type DelegationCanvasDelegation = {
 type DelegationNodeData = {
   delegationId?: string;
   title: string;
+  titleFull?: string | null;
   subtitle: string;
   address?: string;
   balance?: string;
@@ -204,7 +207,13 @@ function DelegationNode({ data }: NodeProps<Node<DelegationNodeData>>) {
       <div className="flex items-start gap-2.5">
         <Icon className={cn("mt-0.5 size-4 shrink-0", isMaster ? "text-neutral-300" : "text-neutral-400")} />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold">{data.title}</div>
+          <div className="truncate text-sm font-semibold">
+            <EmailTooltipLabel
+              label={data.title}
+              fullEmail={data.titleFull}
+              className="block truncate"
+            />
+          </div>
           <div
             className={cn(
               "truncate text-xs",
@@ -592,6 +601,7 @@ export function DashboardFlowCanvas({
         data: {
           delegationId: delegation.id,
           title: employee.label,
+          titleFull: employee.fullEmail,
           subtitle: "Treasury",
           address: employee.smartAccountAddress ?? undefined,
           balance:

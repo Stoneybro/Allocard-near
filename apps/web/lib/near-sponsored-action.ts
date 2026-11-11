@@ -1,7 +1,8 @@
+import { MOCK_USDC_ACCOUNT_ID, SPENDING_ASSET } from "./chain";
 import { Buffer } from "buffer";
 import { utils } from "near-api-js";
 import { encodeDelegateAction, functionCall } from "near-api-js/lib/transaction";
-import { parseTreasuryReference, type ExecuteRequest, type PermissionSpec } from "@allocard/delegation-sdk";
+import { computeCompanyId, parseTreasuryReference, type ExecuteRequest, type PermissionSpec } from "@allocard/delegation-sdk";
 
 // NEP-366 with a regular Ed25519 access key. Both sides build this exact action.
 export const SPONSORED_EXECUTE_GAS = "150000000000000";
@@ -33,7 +34,16 @@ export function sponsoredDelegate(accountId: string, receiverId: string, args: o
 }
 export function sponsoredCompanyDelegate(accountId: string, company: SponsoredCompany, nonce: string, maxBlockHeight: string) {
   if (!/^[1-9][0-9]*$/.test(company.deposit) || BigInt(company.deposit) > BigInt(MAX_SPONSORED_COMPANY_DEPOSIT)) throw new Error("Company sponsorship deposit exceeds 0.2 NEAR");
-  return delegateAction(accountId, company.contractId, "create_company", { company_key: company.companyKey }, SPONSORED_COMPANY_GAS, company.deposit, nonce, maxBlockHeight);
+  const action = delegateAction(accountId, company.contractId, "create_company", { company_key: company.companyKey }, SPONSORED_COMPANY_GAS, company.deposit, nonce, maxBlockHeight);
+  if (MOCK_USDC_ACCOUNT_ID) {
+    const companyId = computeCompanyId(accountId, company.companyKey);
+    const args = { company_id: companyId, asset: SPENDING_ASSET };
+    action.actions.push(
+      functionCall("register_asset", Buffer.from(canonicalSponsorJson(args)), 25_000_000_000_000n, 0n),
+      functionCall("set_asset_enabled", Buffer.from(canonicalSponsorJson({ ...args, enabled: true })), 25_000_000_000_000n, 0n),
+    );
+  }
+  return action;
 }
 export function sponsoredAdapterDelegate(accountId: string, permission: SponsoredAdapterPermission, nonce: string, maxBlockHeight: string) {
   const scope = parseTreasuryReference(permission.treasury);

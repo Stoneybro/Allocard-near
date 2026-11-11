@@ -52,6 +52,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EmailTooltipLabel } from "@/components/email-tooltip-label";
 import {
   Sidebar,
   SidebarContent,
@@ -73,6 +74,7 @@ import {
 export type SidebarEmployee = {
   id: string;
   label: string;
+  fullEmail?: string | null;
   detail: string;
 };
 
@@ -250,9 +252,11 @@ function AddEmployeeDialog({
                     key={p.id}
                     className="flex items-center justify-between text-xs px-2.5 py-1.5 rounded-md bg-muted/60 text-muted-foreground"
                   >
-                    <span className="truncate max-w-[240px] font-mono text-[11px] text-foreground">
-                      {p.email}
-                    </span>
+                    <EmailTooltipLabel
+                      label={p.email}
+                      fullEmail={p.email}
+                      className="block truncate max-w-[240px] font-mono text-[11px] text-foreground"
+                    />
                     <Badge variant="outline" className="text-[9px] h-4 text-amber-600 border-amber-300">
                       Pending
                     </Badge>
@@ -353,7 +357,7 @@ function CanvasSection({
                       key={employee.id}
                       id={`recipient-${employee.id}`}
                       draggable
-                      title={`Add a delegation for ${employee.label}`}
+                      aria-label={`Add a delegation for ${employee.fullEmail || employee.label}`}
                       onClick={() => onAddEmployee?.(employee.id)}
                       onDragStart={(event) => {
                         event.dataTransfer.setData(
@@ -372,7 +376,11 @@ function CanvasSection({
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-xs font-semibold text-foreground group-hover:text-primary transition-colors">
-                          {employee.label}
+                          <EmailTooltipLabel
+                            label={employee.label}
+                            fullEmail={employee.fullEmail}
+                            className="block truncate cursor-grab active:cursor-grabbing"
+                          />
                         </p>
                         <p className="truncate font-mono text-[10px] text-muted-foreground">
                           {employee.detail}
@@ -472,6 +480,7 @@ export function AppSidebar({
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   roleLabel: _roleLabel,
   employeeReferenceId,
+  employeeFullEmail,
   ...props
 }: React.ComponentProps<typeof Sidebar> & {
   loading?: boolean;
@@ -492,6 +501,7 @@ export function AppSidebar({
   smartAccountLabel: string;
   smartAccountAddress?: string | null;
   employeeReferenceId?: string;
+  employeeFullEmail?: string | null;
 }) {
   return (
     <Sidebar collapsible="offcanvas" {...props}>
@@ -545,12 +555,16 @@ export function AppSidebar({
             </div>
           )}
           {role === "employee" && employeeReferenceId && (
-            <div className="mt-2.5 flex items-center justify-between rounded-md border border-primary/25 bg-primary/5 px-2.5 py-1.5 shadow-2xs">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                Employee ID
+            <div className="mt-2.5 flex items-center justify-between gap-2 rounded-md border border-primary/25 bg-primary/5 px-2.5 py-1.5 shadow-2xs">
+              <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                {employeeFullEmail ? "Employee" : "Employee ID"}
               </span>
-              <span className="font-mono text-xs font-extrabold text-primary tracking-wide">
-                {employeeReferenceId}
+              <span className="min-w-0 font-mono text-xs font-extrabold text-primary tracking-wide">
+                <EmailTooltipLabel
+                  label={employeeReferenceId}
+                  fullEmail={employeeFullEmail}
+                  className="block truncate"
+                />
               </span>
             </div>
           )}

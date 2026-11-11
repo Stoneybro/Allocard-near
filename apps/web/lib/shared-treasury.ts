@@ -1,3 +1,4 @@
+import { MOCK_USDC_ACCOUNT_ID, SPENDING_ASSET } from "./chain";
 import { computeCompanyId, treasuryReference, type NearCaller } from "@allocard/delegation-sdk";
 import { createNearRpcCaller } from "./near";
 export type SharedConfig = { contractId: string; schema_version: number; network_domain: string; creation_deposit: string };
@@ -13,11 +14,25 @@ export async function registerCompany(caller: NearCaller, config: SharedConfig, 
   const companyId = computeCompanyId(caller.accountId, companyKey);
   const reader = createNearRpcCaller();
   const exists = () => reader.viewFunction({ contractId: config.contractId, methodName: "company_exists", args: { company_id: companyId } });
-  if (await exists()) return treasuryReference(config.contractId, companyId);
+  const reference = treasuryReference(config.contractId, companyId);
+  const activateAsset = async () => {
+    if (MOCK_USDC_ACCOUNT_ID) {
+      const args = { company_id: companyId, asset: SPENDING_ASSET };
+      const ledger = await reader.viewFunction({ contractId: config.contractId, methodName: "get_asset_ledger", args });
+      if (!ledger) {
+        await caller.functionCall!({ contractId: config.contractId, methodName: "register_asset", args, gas: "25000000000000", attachedDeposit: "0" });
+      }
+      if (!ledger?.enabled) {
+        await caller.functionCall!({ contractId: config.contractId, methodName: "set_asset_enabled", args: { ...args, enabled: true }, gas: "25000000000000", attachedDeposit: "0" });
+      }
+    }
+    return reference;
+  };
+  if (await exists()) return activateAsset();
   let error: unknown;
   try { await caller.functionCall({ contractId: config.contractId, methodName: "create_company", args: { company_key: companyKey }, gas: "70000000000000", attachedDeposit: config.creation_deposit }); }
   catch (caught) { error = caught; }
-  if (await exists()) return treasuryReference(config.contractId, companyId);
+  if (await exists()) return activateAsset();
   if (error) throw error;
   throw new Error("Company registration is not finalized. Retry this workspace to check its status before paying again.");
 }

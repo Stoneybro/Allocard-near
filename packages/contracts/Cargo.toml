@@ -3,6 +3,7 @@ members = [
     "treasury",
     "factory",
     "shared",
+    "mock-usdc",
 ]
 resolver = "2"
 

@@ -41,6 +41,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "allocard-mock-usdc"
+version = "0.1.0"
+dependencies = [
+ "near-contract-standards",
+ "near-sdk",
+]
+
+[[package]]
 name = "allocard-shared"
 version = "0.1.0"
 dependencies = [

@@ -14,7 +14,7 @@ import { parseUserOpError } from "@/lib/error-parser";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertTriangle, CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
 import { isNativeNearAccount, formatWalletAddress } from "@/lib/wallet";
-import { getTxExplorerUrl, TOKEN_SYMBOL } from "@/lib/chain";
+import { NEAR_DECIMALS, SPENDING_DECIMALS, getTxExplorerUrl, TOKEN_SYMBOL } from "@/lib/chain";
 import { formatTokenAmount, parseTokenAmount } from "@allocard/delegation-sdk";
 import { toast } from "sonner";
 import {
@@ -96,7 +96,7 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
         // Restore browser-persisted payment intent after hydration.
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setToAddress(saved.request.action.receiver);
-        setAmountNear(formatTokenAmount(saved.request.action.amount, 24));
+        setAmountNear(formatTokenAmount(saved.request.action.amount, saved.request.action.asset.type === "NativeNear" ? NEAR_DECIMALS : SPENDING_DECIMALS));
         setHasPendingRequest(!isUnsubmittedPayment(saved));
       }
     } catch {
@@ -117,10 +117,10 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
     }
 
     try {
-      const amount = BigInt(parseTokenAmount(amountNear.trim(), 24));
-      const remaining = BigInt(parseTokenAmount(remainingBalanceNear, 24));
+      const amount = BigInt(parseTokenAmount(amountNear.trim(), SPENDING_DECIMALS));
+      const remaining = BigInt(parseTokenAmount(remainingBalanceNear, SPENDING_DECIMALS));
       if (amount <= BigInt(0) || (!hasPendingRequest && amount > remaining)) {
-        throw new Error(`Enter an amount within your available ${remainingBalanceNear} NEAR`);
+        throw new Error(`Enter an amount within your available ${remainingBalanceNear} ${TOKEN_SYMBOL}`);
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Invalid amount");

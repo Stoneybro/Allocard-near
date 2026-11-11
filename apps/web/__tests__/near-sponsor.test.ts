@@ -147,7 +147,7 @@ describe("bounded employee gas sponsorship", () => {
     const sendCount = vi.mocked(fetch).mock.calls.filter(call => JSON.parse(call[1]!.body as string).method === "send_tx").length;
     await prepareSponsoredPayment(payment);
     expect(vi.mocked(fetch).mock.calls.filter(call => JSON.parse(call[1]!.body as string).method === "send_tx")).toHaveLength(sendCount);
-    expect(mocks.quota).toHaveBeenCalledTimes(1);
+    expect(mocks.quota).not.toHaveBeenCalled();
     await expect(prepareSponsoredPayment({ ...payment, request: { ...payment.request, action: { ...payment.request.action, amount: "11" } } })).rejects.toThrow("different payment details");
   });
   it("preserves the exact transaction after an uncertain broadcast", async () => {
@@ -160,13 +160,20 @@ describe("bounded employee gas sponsorship", () => {
     expect([...mocks.jobs.values()][0].transactionHash).toBeTruthy();
     vi.stubGlobal("fetch", mockRpc());
     await prepareSponsoredPayment(payment);
-    expect(mocks.quota).toHaveBeenCalledTimes(1);
+    expect(mocks.quota).not.toHaveBeenCalled();
   });
-  it("does not broadcast after a quota rejection and allows an unbroadcast intent to be retried", async () => {
-    mocks.quota.mockRejectedValueOnce(new Error("Daily limit reached"));
-    await expect(submitSponsoredPayment(proof())).rejects.toThrow("Daily limit");
-    expect(mocks.jobs.size).toBe(0);
-    expect(vi.mocked(fetch).mock.calls.filter(call => JSON.parse(call[1]!.body as string).method === "send_tx")).toHaveLength(0);
+  it("sponsors consecutive payments despite obsolete daily limits and exhausted quota records", async () => {
+    vi.stubEnv("NEAR_SPONSOR_DAILY_LIMIT", "1");
+    vi.stubEnv("NEAR_SPONSOR_USER_DAILY_LIMIT", "1");
+    mocks.quota.mockRejectedValue(new Error("Daily gas sponsorship limit reached"));
+    await submitSponsoredPayment(proof());
+    const nextPayment = { ...payment, request: { ...payment.request, request_id: "c".repeat(64) } };
+    const delegate = sponsoredDelegate(employee, "shared.testnet", { request: nextPayment.request, company_id: companyId }, "2", "220");
+    const digest = createHash("sha256").update(sponsoredSigningBytes(delegate)).digest();
+    const signature = `0x${sign(null, digest, employeeKey.privateKey).toString("hex")}`;
+    await submitSponsoredPayment({ ...nextPayment, nonce: "2", maxBlockHeight: "220", signature });
+    expect(mocks.quota).not.toHaveBeenCalled();
+    expect(vi.mocked(fetch).mock.calls.filter(call => JSON.parse(call[1]!.body as string).method === "send_tx")).toHaveLength(2);
   });
   it("refuses sponsorship on a mainnet RPC", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ result: { chain_id: "mainnet" } })));
@@ -215,8 +222,8 @@ describe("company owner activation and registration sponsorship", () => {
     expect(call.methodName).toBe("create_company"); expect(call.gas).toBe(70000000000000n);
     expect(call.deposit).toBe(200000000000000000000000n);
     expect(JSON.parse(Buffer.from(call.args).toString())).toEqual({ company_key: company.companyKey });
-    expect(mocks.grant).toHaveBeenCalledTimes(1);
-    expect(mocks.quota).toHaveBeenCalledWith(employee, 5, 1, "company-registration");
+    expect(mocks.grant).not.toHaveBeenCalled();
+    expect(mocks.quota).not.toHaveBeenCalled();
   });
   it("reuses an existing registration without signing or paying another deposit", async () => {
     ownerFixture(); mocks.registered = true; mocks.active = false;
@@ -252,10 +259,14 @@ describe("company owner activation and registration sponsorship", () => {
     await expect(prepareSponsoredCompany(company)).rejects.toThrow("not enabled");
     expect(mocks.jobs.size).toBe(0);
   });
-  it("does not broadcast when the one-time owner grant has already been consumed", async () => {
-    ownerFixture(); mocks.grant.mockRejectedValue(new Error("Owner already used one sponsored registration"));
-    await expect(submitSponsoredCompany(companyProof())).rejects.toThrow("already used");
-    expect(vi.mocked(fetch).mock.calls.filter(call => JSON.parse(call[1]!.body as string).method === "send_tx")).toHaveLength(0);
+  it("sponsors company registration despite previously consumed owner and daily grants", async () => {
+    ownerFixture();
+    mocks.grant.mockRejectedValue(new Error("Owner already used one sponsored registration"));
+    mocks.quota.mockRejectedValue(new Error("Daily gas sponsorship limit reached"));
+    await submitSponsoredCompany(companyProof());
+    expect(mocks.grant).not.toHaveBeenCalled();
+    expect(mocks.quota).not.toHaveBeenCalled();
+    expect(vi.mocked(fetch).mock.calls.filter(call => JSON.parse(call[1]!.body as string).method === "send_tx")).toHaveLength(1);
   });
   it("only reconciles an uncertain registration rather than paying the deposit twice", async () => {
     ownerFixture(); const rpc = mockRpc();
@@ -266,7 +277,7 @@ describe("company owner activation and registration sponsorship", () => {
     await expect(submitSponsoredCompany(companyProof())).rejects.toThrow("not yet confirmed");
     vi.stubGlobal("fetch", mockRpc());
     await prepareSponsoredCompany(company);
-    expect(mocks.grant).toHaveBeenCalledTimes(1);
+    expect(mocks.grant).not.toHaveBeenCalled();
     expect(vi.mocked(fetch).mock.calls.filter(call => JSON.parse(call[1]!.body as string).method === "send_tx")).toHaveLength(0);
   });
 });
@@ -348,4 +359,66 @@ it("recovers a confirmed adapter's inner receipt instead of issuing a replacemen
  mocks.adapterRows=adapterRows();
  expect((await prepareSponsoredAdapter(adapterPermission)).outcome?.adapterPermissionId).toBe("9");
  expect(rpc.mock.calls.filter(call=>JSON.parse(call[1].body as string).method==="send_tx")).toHaveLength(1);
+});
+
+it("credits activation once and accepts consecutive faucet claims without daily quotas", async () => {
+  vi.stubEnv("NEXT_PUBLIC_MOCK_USDC_ACCOUNT_ID", "mock-usdc.testnet");
+  vi.resetModules();
+  const { computeCompanyId } = await import("@allocard/delegation-sdk");
+  const { fundMockUsdcTreasury } = await import("@/lib/near-sponsor-server");
+  const { sponsoredCompanyDelegate } = await import("@/lib/near-sponsored-action");
+  const companyKey = "6aee788b-c3c6-44e4-bd88-a3029091bec4";
+  const scopedCompany = computeCompanyId(employee, companyKey);
+  const treasury = `shared.testnet#${scopedCompany}`;
+  const create = sponsoredCompanyDelegate(employee, {
+    companyKey, contractId: "shared.testnet", deposit: "200000000000000000000000",
+  }, "2", "220");
+  expect(create.actions.map(action => action.functionCall?.methodName))
+    .toEqual(["create_company", "register_asset", "set_asset_enabled"]);
+  mocks.reader.mockReturnValue({ getAssetLedger: async () => ({ enabled: true }) });
+  const query = mocks.query.getMockImplementation()!;
+  mocks.query.mockImplementation(async params => {
+    const responses: Record<string, unknown> = {
+      get_minter: "sponsor.testnet",
+      storage_balance_bounds: { min: "1250000000000000000000" },
+      storage_balance_of: { total: "1250000000000000000000" },
+    };
+    if (params.method_name in responses) {
+      return { result: [...Buffer.from(JSON.stringify(responses[params.method_name]))] };
+    }
+    return query(params);
+  });
+  const base = mockRpc();
+  const rpc = vi.fn(async (url: unknown, options: RequestInit) => {
+    const body = JSON.parse(options.body as string);
+    const response = await base(url, options);
+    const result = await response.json();
+    if (body.method === "send_tx" || body.method === "tx") {
+      const encoded = body.method === "send_tx" ? body.params.signed_tx_base64
+        : [...mocks.jobs.values()].find(job => job.transactionHash === body.params.tx_hash)?.signedTransaction;
+      const transaction = SignedTransaction.decode(Buffer.from(encoded, "base64")).transaction;
+      const deposit = transaction.actions.find(action => action.functionCall?.methodName === "ft_transfer_call")?.functionCall;
+      if (deposit) {
+        const args = JSON.parse(Buffer.from(deposit.args).toString("utf8"));
+        expect(args.receiver_id).toBe("shared.testnet");
+        expect(JSON.parse(args.msg)).toEqual({ company_id: scopedCompany });
+        result.result.status.SuccessValue = Buffer.from(JSON.stringify(args.amount)).toString("base64");
+      }
+    }
+    return Response.json(result);
+  });
+  vi.stubGlobal("fetch", rpc);
+
+  const claim = (claimId: string) => fundMockUsdcTreasury({ owner: employee, companyId: companyKey, treasury, claimId });
+  const activation = await claim("activation");
+  expect(activation.amount).toBe("2000000000");
+  await expect(claim("activation")).resolves.toEqual(activation);
+  const first = "f0ab27b2-d4c3-43b2-adac-0ea6480d7511";
+  const second = "a1ab27b2-d4c3-43b2-adac-0ea6480d7511";
+  const topUp = await claim(first);
+  expect(topUp.amount).toBe("1000000000");
+  await expect(claim(first)).resolves.toEqual(topUp);
+  expect((await claim(second)).amount).toBe("1000000000");
+  expect(mocks.quota).not.toHaveBeenCalled();
+  expect(rpc.mock.calls.filter(call => JSON.parse(call[1].body as string).method === "send_tx")).toHaveLength(4);
 });

@@ -1,3 +1,4 @@
+import { SPENDING_ASSET, SPENDING_DECIMALS, TOKEN_SYMBOL } from "@/lib/chain";
 import { isNativeNearAccount } from "./wallet";
 import {
   type PermissionSpec,
@@ -274,7 +275,7 @@ Your goal is to parse natural-language spending authorization requests into:
 2. Semantic expense guardrails for off-chain AI verification.
 
 Key NEAR Protocol Context:
-- Currency is NEAR (amounts expressed in human-readable NEAR decimal format, e.g. "50", "2.5").
+- Currency is ${TOKEN_SYMBOL} (amounts expressed in human-readable decimal format, e.g. "50", "2.5").
 - Accounts are named (e.g. "alex.near", "treasury.testnet") or 64-char hex IDs.
 - Fixed rolling budget periods supported: "none", "hourly", "daily", "weekly", "monthly" (fixed 30 days).
 - Single transaction cap: maximum spend per payment ("perTransactionCapNear").
@@ -304,7 +305,7 @@ Return ONLY valid JSON matching this schema:
 
       const userMessage = `Current Context:
 - Target Delegatee: ${delegate}
-${input.availableBalanceNear !== undefined && input.availableBalanceNear !== null ? `- Company Treasury Balance: ${input.availableBalanceNear} NEAR` : ""}
+${input.availableBalanceNear !== undefined && input.availableBalanceNear !== null ? `- Company Treasury Balance: ${input.availableBalanceNear} ${TOKEN_SYMBOL}` : ""}
 ${input.companyPolicy ? `- Company Policy Baseline:\n${input.companyPolicy}` : ""}
 
 Spending Authorization Request:
@@ -388,7 +389,7 @@ function buildPolicyResultFromRaw(params: {
     if (isValidNearAccountId(approverClean) && aboveClean) {
       approvalRule = {
         approver: approverClean,
-        above_amount: parseTokenAmount(aboveClean, 24),
+        above_amount: parseTokenAmount(aboveClean, SPENDING_DECIMALS),
       };
       approvalApprover = approverClean;
       approvalAboveAmountNear = aboveClean;
@@ -421,21 +422,21 @@ function buildPolicyResultFromRaw(params: {
   }
 
   // On-Chain AssetRule construction
-  const parsedLifetime = maxAmountNear ? parseTokenAmount(maxAmountNear, 24) : null;
-  const parsedPerTx = perTransactionCapNear ? parseTokenAmount(perTransactionCapNear, 24) : null;
+  const parsedLifetime = maxAmountNear ? parseTokenAmount(maxAmountNear, SPENDING_DECIMALS) : null;
+  const parsedPerTx = perTransactionCapNear ? parseTokenAmount(perTransactionCapNear, SPENDING_DECIMALS) : null;
 
   let fixedWindow: FixedWindowLimit | null = null;
   if (period !== "none" && (periodAmountNear || maxAmountNear)) {
     const windowLimitNear = periodAmountNear || maxAmountNear;
     fixedWindow = {
-      limit: parseTokenAmount(windowLimitNear, 24),
+      limit: parseTokenAmount(windowLimitNear, SPENDING_DECIMALS),
       duration_ms: PERIOD_DURATIONS_MS[period].toString(),
       anchor_ms: nowMs.toString(),
     };
   }
 
   const assetRule: AssetRule = {
-    asset: { type: "NativeNear" },
+    asset: SPENDING_ASSET,
     recipients: targets.length > 0 ? { type: "Only", accounts: targets } : { type: "Any" },
     min_per_action: null,
     max_per_action: parsedPerTx,
@@ -538,24 +539,24 @@ export function parsePolicyDeterministicFallback(
   let perTransactionCapNear: string = "";
 
   // Check per-transaction cap first
-  const perTxMatch = lower.match(/(?:max|cap|limit|up to)\s*(?:of\s*)?(\d+(?:\.\d+)?)\s*(?:near|\$|tokens)?\s*(?:per (?:tx|transaction|payment|action)|single)/);
+  const perTxMatch = lower.match(/(?:max|cap|limit|up to)\s*(?:of\s*)?(\d+(?:\.\d+)?)\s*(?:near|usdc|\$|tokens)?\s*(?:per (?:tx|transaction|payment|action)|single)/);
   if (perTxMatch && perTxMatch[1]) {
     perTransactionCapNear = perTxMatch[1];
   }
 
   // Check period amount (e.g., "50 NEAR per month", "monthly allowance of 100")
-  const periodMatch = lower.match(/(?:(\d+(?:\.\d+)?)\s*(?:near|\$|tokens)?\s*(?:per|every|each|\/)\s*(?:month|week|day|hour))|(?:(?:monthly|weekly|daily)\s*(?:budget|allowance|limit|cap)?\s*(?:of\s*)?(\d+(?:\.\d+)?))/);
+  const periodMatch = lower.match(/(?:(\d+(?:\.\d+)?)\s*(?:near|usdc|\$|tokens)?\s*(?:per|every|each|\/)\s*(?:month|week|day|hour))|(?:(?:monthly|weekly|daily)\s*(?:budget|allowance|limit|cap)?\s*(?:of\s*)?(\d+(?:\.\d+)?))/);
   if (periodMatch) {
     periodLimitNear = periodMatch[1] || periodMatch[2] || "";
   }
 
   // Check lifetime limit / overall budget
-  const lifetimeMatch = lower.match(/(?:lifetime|total|overall|budget of|max(?:imum)?)\s*(?:of\s*)?(\d+(?:\.\d+)?)\s*(?:near|\$|tokens)?/);
+  const lifetimeMatch = lower.match(/(?:lifetime|total|overall|budget of|max(?:imum)?)\s*(?:of\s*)?(\d+(?:\.\d+)?)\s*(?:near|usdc|\$|tokens)?/);
   if (lifetimeMatch && lifetimeMatch[1]) {
     lifetimeLimitNear = lifetimeMatch[1];
   } else {
     // If no explicit lifetime keyword, look for leading amount "up to 50 NEAR" or "50 NEAR"
-    const generalMatch = lower.match(/(?:up to|allow|spend|give|allocate)\s*(\d+(?:\.\d+)?)\s*(?:near|\$|tokens)?/);
+    const generalMatch = lower.match(/(?:up to|allow|spend|give|allocate)\s*(\d+(?:\.\d+)?)\s*(?:near|usdc|\$|tokens)?/);
     if (generalMatch && generalMatch[1]) {
       if (period !== "none" && !periodLimitNear) {
         periodLimitNear = generalMatch[1];
@@ -664,19 +665,19 @@ function formatDefaultSummary(p: {
 }): string {
   const parts: string[] = [`Spending permission for ${p.delegate}.`];
   if (p.period !== "none" && p.periodAmountNear) {
-    parts.push(`Allowance of ${p.periodAmountNear} NEAR per ${p.period}.`);
+    parts.push(`Allowance of ${p.periodAmountNear} ${TOKEN_SYMBOL} per ${p.period}.`);
   }
   if (p.maxAmountNear) {
-    parts.push(`Lifetime budget capped at ${p.maxAmountNear} NEAR.`);
+    parts.push(`Lifetime budget capped at ${p.maxAmountNear} ${TOKEN_SYMBOL}.`);
   }
   if (p.perTransactionCapNear) {
-    parts.push(`Single transaction limit of ${p.perTransactionCapNear} NEAR.`);
+    parts.push(`Single transaction limit of ${p.perTransactionCapNear} ${TOKEN_SYMBOL}.`);
   }
   if (p.targets.length > 0) {
     parts.push(`Whitelisted recipients: ${p.targets.join(", ")}.`);
   }
   if (p.approvalApprover && p.approvalAboveAmountNear) {
-    parts.push(`Payments above ${p.approvalAboveAmountNear} NEAR require approval from ${p.approvalApprover}.`);
+    parts.push(`Payments above ${p.approvalAboveAmountNear} ${TOKEN_SYMBOL} require approval from ${p.approvalApprover}.`);
   }
   return parts.join(" ");
 }
@@ -700,13 +701,13 @@ export function specToCaveatFormValues(
 
   if (rule) {
     if (rule.lifetime_limit) {
-      maxAmountNear = formatTokenAmount(rule.lifetime_limit, 24);
+      maxAmountNear = formatTokenAmount(rule.lifetime_limit, SPENDING_DECIMALS);
     }
     if (rule.max_per_action) {
-      perTransactionCapNear = formatTokenAmount(rule.max_per_action, 24);
+      perTransactionCapNear = formatTokenAmount(rule.max_per_action, SPENDING_DECIMALS);
     }
     if (rule.fixed_window) {
-      periodAmountNear = formatTokenAmount(rule.fixed_window.limit, 24);
+      periodAmountNear = formatTokenAmount(rule.fixed_window.limit, SPENDING_DECIMALS);
       const dur = parseInt(rule.fixed_window.duration_ms, 10);
       if (dur === PERIOD_DURATIONS_MS.hourly) period = "hourly";
       else if (dur === PERIOD_DURATIONS_MS.daily) period = "daily";
@@ -719,7 +720,7 @@ export function specToCaveatFormValues(
     if (rule.approval) {
       approvalEnabled = true;
       approvalApprover = rule.approval.approver;
-      approvalAboveAmountNear = formatTokenAmount(rule.approval.above_amount, 24);
+      approvalAboveAmountNear = formatTokenAmount(rule.approval.above_amount, SPENDING_DECIMALS);
     }
   }
 

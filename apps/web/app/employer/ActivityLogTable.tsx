@@ -15,7 +15,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Loader2, ExternalLink } from "lucide-react";
 import { getActivityLog, type ActivityCursor } from "@/app/actions/activity";
-import { getTxExplorerUrl, TOKEN_SYMBOL } from "@/lib/chain";
+import { EmailTooltipLabel } from "@/components/email-tooltip-label";
+import { getTxExplorerUrl, MOCK_USDC_ACCOUNT_ID, NATIVE_SYMBOL } from "@/lib/chain";
 
 export function ActivityLogTable({ companyId }: { companyId: string }) {
   const { key, address } = useAccountScope();
@@ -72,11 +73,13 @@ export function ActivityLogTable({ companyId }: { companyId: string }) {
                   {new Date(item.date).toLocaleTimeString()}
                 </span>
               </TableCell>
-              <TableCell>{item.actor}</TableCell>
+              <TableCell>
+                <EmailTooltipLabel label={item.actor} fullEmail={item.actorEmail} />
+              </TableCell>
               <TableCell>
                 <Badge variant="outline">{item.type}</Badge>
               </TableCell>
-              <TableCell>{item.amountNear} {item.assetNetwork === "near:testnet" ? TOKEN_SYMBOL : "(legacy asset)"}</TableCell>
+              <TableCell>{item.amountNear} {item.assetNetwork === "near:testnet" ? NATIVE_SYMBOL : MOCK_USDC_ACCOUNT_ID && item.assetNetwork === `near:testnet:${MOCK_USDC_ACCOUNT_ID}` ? "USDC" : "(other asset)"}</TableCell>
               <TableCell className="max-w-xs truncate" title={item.purpose}>
                 {item.purpose}
               </TableCell>

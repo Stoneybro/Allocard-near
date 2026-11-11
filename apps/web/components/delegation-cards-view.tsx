@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { EmailTooltipLabel } from "@/components/email-tooltip-label";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -64,6 +65,9 @@ export function DelegationCardsView({ loading = false, company, employees, agent
   const nameOf = (delegation: DelegationCanvasDelegation) => delegation.delegateeType === "user"
     ? employeeById.get(delegation.delegateeId ?? "")?.label ?? "Employee"
     : agentById.get(delegation.delegateeId ?? "")?.name ?? "AI agent";
+  const fullEmailOf = (delegation: DelegationCanvasDelegation) => delegation.delegateeType === "user"
+    ? employeeById.get(delegation.delegateeId ?? "")?.fullEmail ?? null
+    : null;
   const issuerOf = (delegation: DelegationCanvasDelegation) => {
     if (delegation.delegatorType === "company") return "Company";
     const parent = delegations.find(item => item.id === delegation.parentDelegationId);
@@ -72,18 +76,70 @@ export function DelegationCardsView({ loading = false, company, employees, agent
       ? employeeById.get(delegation.delegatorId)?.label ?? "Employee"
       : agentById.get(delegation.delegatorId)?.name ?? "AI agent";
   };
+  const issuerFullEmailOf = (delegation: DelegationCanvasDelegation) => {
+    if (delegation.delegatorType === "company") return null;
+    const parent = delegations.find(item => item.id === delegation.parentDelegationId);
+    if (parent) return fullEmailOf(parent);
+    return delegation.delegatorType === "user"
+      ? employeeById.get(delegation.delegatorId)?.fullEmail ?? null
+      : null;
+  };
   function matchesBranch(delegation: DelegationCanvasDelegation, path = new Set<string>()): boolean {
     if (path.has(delegation.id)) return false;
     const next = new Set(path).add(delegation.id);
-    return `${nameOf(delegation)} ${issuerOf(delegation)}`.toLowerCase().includes(query)
+    return `${nameOf(delegation)} ${fullEmailOf(delegation) ?? ""} ${issuerOf(delegation)} ${issuerFullEmailOf(delegation) ?? ""}`.toLowerCase().includes(query)
       || (children.get(delegation.id) ?? []).some(child => matchesBranch(child, next));
   }
   const visibleRoots = roots.filter(root => !query || matchesBranch(root));
+
+  function renderAvailableEmployeeRow(emp: DelegationCanvasEmployee) {
+    return (
+      <div
+        key={emp.id}
+        className="flex items-center justify-between rounded-lg border border-border/80 bg-card p-3 shadow-2xs hover:border-primary/50 transition-colors"
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <Avatar className="size-8">
+            <AvatarFallback className="text-xs font-semibold bg-muted">
+              {emp.label.slice(0, 2).toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-foreground truncate">
+              <EmailTooltipLabel
+                label={emp.label}
+                fullEmail={emp.fullEmail}
+                className="block truncate"
+              />
+            </p>
+            <p className="text-[11px] font-mono text-muted-foreground truncate">
+              {emp.smartAccountAddress
+                ? formatWalletAddress(emp.smartAccountAddress)
+                : "Account pending"}
+            </p>
+          </div>
+        </div>
+
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs"
+          onClick={() => {
+            setIsIssueDialogOpen(false);
+            onAddEmployee?.(emp.id);
+          }}
+        >
+          Select
+        </Button>
+      </div>
+    );
+  }
 
   function renderDelegation(delegation: DelegationCanvasDelegation, path: Set<string>, depth = 0): ReactNode {
     if (path.has(delegation.id)) return null;
     const nextPath = new Set(path).add(delegation.id);
     const title = nameOf(delegation);
+    const titleFullEmail = fullEmailOf(delegation);
     const descendants = children.get(delegation.id) ?? [];
     const isExpanded = !collapsed.has(delegation.id) || Boolean(query);
     const isActive = delegation.status === "active";
@@ -94,6 +150,7 @@ export function DelegationCardsView({ loading = false, company, employees, agent
     const hasActions = (canManage && (onConfigureDelegation || (isPending && onRemoveDelegation))) || (canRevoke && onRevokeDelegation);
     const hasResearchActivity = delegation.delegateeType === "agent" && agentById.get(delegation.delegateeId ?? "")?.name === ADAPTER_NAME;
     const issuer = issuerOf(delegation);
+    const issuerFullEmail = issuerFullEmailOf(delegation);
     return (
       <Fragment key={delegation.id}>
         <TableRow data-delegation-id={delegation.id} className={depth ? "bg-muted/25" : undefined}>
@@ -107,12 +164,14 @@ export function DelegationCardsView({ loading = false, company, employees, agent
               </Button>
               {!descendants.length && <span className="hidden w-8 shrink-0 md:block" />}
               <div className="min-w-0">
-                <p className="break-words font-medium tracking-tight">{depth > 0 && <span aria-hidden="true" className="mr-1 text-muted-foreground">↳</span>}{title}</p>
+                <p className="break-words font-medium tracking-tight">{depth > 0 && <span aria-hidden="true" className="mr-1 text-muted-foreground">↳</span>}<EmailTooltipLabel label={title} fullEmail={titleFullEmail} /></p>
                 <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{delegation.delegateeType === "user" ? "Employee" : "AI agent"}{descendants.length > 0 && ` · ${descendants.length} redelegation${descendants.length === 1 ? "" : "s"}`}</p>
               </div>
             </div>
           </TableCell>
-          <TableCell className="hidden whitespace-normal text-muted-foreground md:table-cell">{issuer}</TableCell>
+          <TableCell className="hidden whitespace-normal text-muted-foreground md:table-cell">
+            <EmailTooltipLabel label={issuer} fullEmail={issuerFullEmail} />
+          </TableCell>
           <TableCell className="hidden text-right tabular-nums md:table-cell">{delegation.allowance ?? "—"}</TableCell>
           <TableCell className="text-right font-medium tabular-nums whitespace-normal break-words">{isActive ? delegation.remainingNear ?? "—" : "—"}</TableCell>
           <TableCell className="text-right">
@@ -125,7 +184,7 @@ export function DelegationCardsView({ loading = false, company, employees, agent
         </TableRow>
         {isExpanded && <TableRow className="bg-muted/25 md:hidden"><TableCell colSpan={5} className="whitespace-normal px-4 py-3">
           <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
-            <div><dt className="text-muted-foreground">Delegated by</dt><dd className="mt-1 font-medium">{issuer}</dd></div>
+            <div><dt className="text-muted-foreground">Delegated by</dt><dd className="mt-1 font-medium"><EmailTooltipLabel label={issuer} fullEmail={issuerFullEmail} /></dd></div>
             <div><dt className="text-muted-foreground">Status</dt><dd className="mt-1 font-medium">{status}</dd></div>
             <div><dt className="text-muted-foreground">Spending limit</dt><dd className="mt-1 font-medium tabular-nums">{delegation.allowance ?? "—"} {TOKEN_SYMBOL}</dd></div>
           </dl>
@@ -177,42 +236,7 @@ export function DelegationCardsView({ loading = false, company, employees, agent
                         No unassigned team members found. Invite new employees using the sidebar.
                       </div>
                     ) : (
-                      availableEmployees.map((emp) => (
-                        <div
-                          key={emp.id}
-                          className="flex items-center justify-between rounded-lg border border-border/80 bg-card p-3 shadow-2xs hover:border-primary/50 transition-colors"
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <Avatar className="size-8">
-                              <AvatarFallback className="text-xs font-semibold bg-muted">
-                                {emp.label.slice(0, 2)}
-                              </AvatarFallback>
-                            </Avatar>
-                            <div className="min-w-0">
-                              <p className="text-xs font-semibold text-foreground truncate">
-                                {emp.label}
-                              </p>
-                              <p className="text-[11px] font-mono text-muted-foreground truncate">
-                                {emp.smartAccountAddress
-                                  ? formatWalletAddress(emp.smartAccountAddress)
-                                  : "Account pending"}
-                              </p>
-                            </div>
-                          </div>
-
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 text-xs"
-                            onClick={() => {
-                              setIsIssueDialogOpen(false);
-                              onAddEmployee?.(emp.id);
-                            }}
-                          >
-                            Select
-                          </Button>
-                        </div>
-                      ))
+                      availableEmployees.map(renderAvailableEmployeeRow)
                     )}
                   </TabsContent>
 
@@ -261,42 +285,7 @@ export function DelegationCardsView({ loading = false, company, employees, agent
                       No unassigned team members found. Invite new employees using the sidebar.
                     </div>
                   ) : (
-                    availableEmployees.map((emp) => (
-                      <div
-                        key={emp.id}
-                        className="flex items-center justify-between rounded-lg border border-border/80 bg-card p-3 shadow-2xs hover:border-primary/50 transition-colors"
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <Avatar className="size-8">
-                            <AvatarFallback className="text-xs font-semibold bg-muted">
-                              {emp.label.slice(0, 2)}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div className="min-w-0">
-                            <p className="text-xs font-semibold text-foreground truncate">
-                              {emp.label}
-                            </p>
-                            <p className="text-[11px] font-mono text-muted-foreground truncate">
-                              {emp.smartAccountAddress
-                                ? formatWalletAddress(emp.smartAccountAddress)
-                                : "Account pending"}
-                            </p>
-                          </div>
-                        </div>
-
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 text-xs"
-                          onClick={() => {
-                            setIsIssueDialogOpen(false);
-                            onAddEmployee?.(emp.id);
-                          }}
-                        >
-                          Select
-                        </Button>
-                      </div>
-                    ))
+                    availableEmployees.map(renderAvailableEmployeeRow)
                   )}
                 </div>
               )}

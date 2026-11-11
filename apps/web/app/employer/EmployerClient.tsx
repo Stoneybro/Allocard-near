@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { TOKEN_SYMBOL, getAddressExplorerUrl, getTxExplorerUrl } from "@/lib/chain";
+import { FAUCET_USDC, MOCK_USDC_ACCOUNT_ID, NEAR_DECIMALS, SPENDING_DECIMALS, SPENDING_ASSET, TOKEN_SYMBOL, getAddressExplorerUrl, getTxExplorerUrl } from "@/lib/chain";
 import { isValidWalletAddress, formatWalletAddress } from "@/lib/wallet";
 import { parseTreasuryReference, type PermissionSpec } from "@allocard/delegation-sdk";
 import {
@@ -89,8 +89,9 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ActivityLogTable } from "./ActivityLogTable";
+import { EmailTooltipLabel } from "@/components/email-tooltip-label";
 import { cn } from "@/lib/utils";
-import { generateEmployeeReferenceId } from "@/lib/wallet";
+import { getEmployeeDisplayIdentity } from "@/lib/wallet";
 
 type DelegationRow = CompanyDashboardState["delegations"][number];
 type CaveatForm = {
@@ -184,21 +185,13 @@ function formFromDelegation(delegation: DelegationRow | null): CaveatForm {
   return nextForm;
 }
 
-function yoctoToNearInput(yocto: string) {
-  const value = BigInt(yocto);
-  const whole = value / 1_000_000_000_000_000_000_000_000n;
-  const fractional = value % 1_000_000_000_000_000_000_000_000n;
-
-  if (fractional === 0n) {
-    return whole.toString();
-  }
-
-  return `${whole}.${fractional.toString().padStart(24, "0").replace(/0+$/, "")}`;
+function yoctoToNearInput(amount: string) {
+  return formatTokenAmount(amount, SPENDING_DECIMALS);
 }
 
 function formatAllowanceNear(raw: string): string {
   try {
-    const formatted = BigInt(raw) > 10n ** 15n ? formatTokenAmount(raw, 24) : raw;
+    const formatted = formatTokenAmount(raw, SPENDING_DECIMALS);
     // Trim trailing zeros: "0.010000000000000000" -> "0.01"
     return formatted.replace(/(\.[0-9]*?)0+$/, "$1").replace(/\.$/, "");
   } catch {
@@ -357,8 +350,8 @@ export function EmployerClient({
     enabled: !!currentAuthAddress && !!company?.smartAccountAddress,
     queryFn: () => withTimeout((async () => {
       const client = getTreasuryClient(createNearRpcCaller(), company!.smartAccountAddress!);
-      const ledger = await client.getAssetLedger({ type: "NativeNear" });
-      return formatTokenAmount(ledger?.available ?? "0", 24);
+      const ledger = await client.getAssetLedger(SPENDING_ASSET);
+      return formatTokenAmount(ledger?.available ?? "0", SPENDING_DECIMALS);
     })(), "Treasury balance took too long to load."),
     refetchInterval: 15_000,
   });
@@ -369,6 +362,24 @@ export function EmployerClient({
     if (!company?.smartAccountAddress) return;
     setIsToppingUp(true);
     try {
+      if (MOCK_USDC_ACCOUNT_ID) {
+        const key = `allocard-faucet:${MOCK_USDC_ACCOUNT_ID}:${company.id}`;
+        const claimId = localStorage.getItem(key) ?? crypto.randomUUID();
+        localStorage.setItem(key, claimId);
+        const response = await fetch("/api/treasury/faucet", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ companyId: company.id, claimId }),
+          signal: AbortSignal.timeout(120_000),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error ?? "The faucet claim could not be confirmed");
+        localStorage.removeItem(key);
+        toast.success(`${Number(FAUCET_USDC).toLocaleString()} test USDC added`);
+        refreshAfterSettlement();
+        return;
+      }
       if (auth.status === "authenticated") {
         const caller = await getUnifiedNearCaller(auth);
         if (caller.functionCall) {
@@ -377,9 +388,9 @@ export function EmployerClient({
             const scope = parseTreasuryReference(company.smartAccountAddress);
             const args = scope.companyId ? { company_id: scope.companyId } : {};
             await auth.sendActions({ receiverId: scope.contractId, actions: [
-              functionCall("top_up_storage", args, BigInt("40000000000000"), BigInt(parseTokenAmount("0.5", 24))),
-              functionCall("top_up_operating", args, BigInt("40000000000000"), BigInt(parseTokenAmount("0.2", 24))),
-              functionCall("deposit_native", args, BigInt("40000000000000"), BigInt(parseTokenAmount("1", 24))),
+              functionCall("top_up_storage", args, BigInt("40000000000000"), BigInt(parseTokenAmount("0.5", NEAR_DECIMALS))),
+              functionCall("top_up_operating", args, BigInt("40000000000000"), BigInt(parseTokenAmount("0.2", NEAR_DECIMALS))),
+              functionCall("deposit_native", args, BigInt("40000000000000"), BigInt(parseTokenAmount("1", NEAR_DECIMALS))),
             ] });
           } else throw new Error("A signing wallet is required");
           toast.success("Treasury Pools Funded", {
@@ -412,13 +423,30 @@ export function EmployerClient({
     [dashboardState?.delegations, selectedDelegationId],
   );
 
+  const selectedDelegateeIdentity = useMemo(() => {
+    if (!selectedDelegation) return null;
+    if (selectedDelegation.delegateeType === "user" && selectedDelegation.delegateeId) {
+      const emp = dashboardState?.employees.find((item) => item.id === selectedDelegation.delegateeId);
+      return emp ? getEmployeeDisplayIdentity(emp) : { label: "Employee", fullEmail: null };
+    }
+    if (selectedDelegation.delegateeType === "agent" && selectedDelegation.delegateeId) {
+      const ag = dashboardState?.agents.find((item) => item.id === selectedDelegation.delegateeId);
+      return { label: ag?.name ?? "AI agent", fullEmail: null };
+    }
+    return null;
+  }, [selectedDelegation, dashboardState?.employees, dashboardState?.agents]);
+
   const canvasEmployees = useMemo(
     () =>
-      dashboardState?.employees.map((employee) => ({
-        id: employee.id,
-        label: generateEmployeeReferenceId(employee.walletAddress),
-        smartAccountAddress: employee.smartAccountAddress,
-      })) ?? [],
+      dashboardState?.employees.map((employee) => {
+        const identity = getEmployeeDisplayIdentity(employee);
+        return {
+          id: employee.id,
+          label: identity.label,
+          fullEmail: identity.fullEmail,
+          smartAccountAddress: employee.smartAccountAddress,
+        };
+      }) ?? [],
     [dashboardState?.employees],
   );
 
@@ -588,7 +616,7 @@ export function EmployerClient({
         ? dashboardState?.agents.find((a) => a.id === targetDelegation.delegateeId)
         : null;
       const targetName = employee
-        ? (employee.walletAddress ? `${employee.walletAddress.slice(0, 6)}...${employee.walletAddress.slice(-4)}` : "Employee")
+        ? getEmployeeDisplayIdentity(employee).label
         : (agent?.name ?? "Delegation");
       const targetAddress = employee?.smartAccountAddress || employee?.walletAddress || agent?.signerAddress || "";
 
@@ -744,8 +772,8 @@ export function EmployerClient({
         }
 
         const delegateAddress = resolveDelegateAddress(selectedDelegation);
-        const parsedLimit = caveatForm.maxAmountNear ? parseTokenAmount(caveatForm.maxAmountNear, 24) : null;
-        const parsedPerTx = caveatForm.perTransactionCapNear ? parseTokenAmount(caveatForm.perTransactionCapNear, 24) : null;
+        const parsedLimit = caveatForm.maxAmountNear ? parseTokenAmount(caveatForm.maxAmountNear, SPENDING_DECIMALS) : null;
+        const parsedPerTx = caveatForm.perTransactionCapNear ? parseTokenAmount(caveatForm.perTransactionCapNear, SPENDING_DECIMALS) : null;
 
         const spec: PermissionSpec = {
           delegate: delegateAddress,
@@ -754,7 +782,7 @@ export function EmployerClient({
           max_executions: caveatForm.limitedCallsEnabled && caveatForm.limitedCalls ? Number(caveatForm.limitedCalls) : null,
           rules: [
             {
-              asset: { type: "NativeNear" },
+              asset: SPENDING_ASSET,
               recipients: caveatForm.allowedTargets && caveatForm.allowedTargets.length > 0
                 ? { type: "Only", accounts: splitAddresses(caveatForm.allowedTargets) }
                 : { type: "Any" },
@@ -763,7 +791,7 @@ export function EmployerClient({
               lifetime_limit: parsedLimit,
               fixed_window: caveatForm.period && caveatForm.period !== "none"
                 ? {
-                    limit: parseTokenAmount(caveatForm.periodAmountNear || caveatForm.maxAmountNear, 24),
+                    limit: parseTokenAmount(caveatForm.periodAmountNear || caveatForm.maxAmountNear, SPENDING_DECIMALS),
                     duration_ms: (periodDurations[caveatForm.period] * 1000).toString(),
                     anchor_ms: Date.now().toString(),
                   }
@@ -790,8 +818,8 @@ export function EmployerClient({
         const employee = selectedDelegation.delegateeType === "user"
           ? dashboardState?.employees.find((e) => e.id === selectedDelegation.delegateeId)
           : null;
-        const targetName = employee?.walletAddress
-          ? formatWalletAddress(employee.walletAddress)
+        const targetName = employee
+          ? getEmployeeDisplayIdentity(employee).label
           : "Employee";
 
         updateDashboard(
@@ -898,13 +926,17 @@ export function EmployerClient({
     <DashboardShell
       activationRequired={!company.smartAccountAddress}
       companyName={companyName}
-      employees={dashboardState.employees.map((employee) => ({
-        id: employee.id,
-        label: generateEmployeeReferenceId(employee.walletAddress),
-        detail: employee.smartAccountAddress
-          ? formatWalletAddress(employee.smartAccountAddress)
-          : "Treasury pending",
-      }))}
+      employees={dashboardState.employees.map((employee) => {
+        const identity = getEmployeeDisplayIdentity(employee);
+        return {
+          id: employee.id,
+          label: identity.label,
+          fullEmail: identity.fullEmail,
+          detail: employee.smartAccountAddress
+            ? formatWalletAddress(employee.smartAccountAddress)
+            : "Treasury pending",
+        };
+      })}
       pendingEmployees={dashboardState.pendingEmployees}
       onInviteEmployeeByEmail={handleAddEmployeeByEmail}
       agents={[]}
@@ -947,16 +979,10 @@ export function EmployerClient({
         {error && <p role="alert" className="text-sm text-muted-foreground">{error}</p>}
         {/* Smart account activation panel */}
         {company && !company.smartAccountAddress && (
-          <section aria-labelledby="company-activation-title" className="flex flex-col items-start gap-5 rounded-xl border border-primary/20 border-l-4 border-l-primary bg-primary/5 p-5 sm:p-6">
-            <div className="flex items-start gap-3">
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-primary/15 bg-background">
-                <ShieldCheckIcon className="size-5" aria-hidden="true" />
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Next step</p>
-                <h2 id="company-activation-title" className="text-base font-semibold">Set up company spending</h2>
-                <p className="text-sm leading-6 text-muted-foreground">Activate your company account to fund your treasury and set spending limits for your team.</p>
-              </div>
+          <section aria-labelledby="company-activation-title" className="flex flex-col items-start gap-5 rounded-xl border border-border bg-muted/40 p-6 sm:p-8">
+            <div className="max-w-xl space-y-2">
+              <h2 id="company-activation-title" className="text-xl font-semibold tracking-tight">Set up company spending</h2>
+              <p className="text-sm leading-6 text-muted-foreground">Activate your company account to fund your treasury and set spending limits for your team.</p>
             </div>
             <SmartAccountActivationButton
               companyKey={company.id}
@@ -1124,13 +1150,20 @@ export function EmployerClient({
           </DrawerHeader>
           <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-4 py-2">
             {selectedDelegation ? (
-              <div>
+              <div className="flex flex-wrap items-center gap-2">
                 <Badge
                   variant={selectedDelegation.status === "active" ? "secondary" : "outline"}
-                  className="mb-2"
                 >
                   {formatDelegationStatus(selectedDelegation.status)}
                 </Badge>
+                {selectedDelegateeIdentity ? (
+                  <span className="text-xs font-medium text-foreground">
+                    <EmailTooltipLabel
+                      label={selectedDelegateeIdentity.label}
+                      fullEmail={selectedDelegateeIdentity.fullEmail}
+                    />
+                  </span>
+                ) : null}
               </div>
             ) : null}
 

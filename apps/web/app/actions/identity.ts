@@ -1,5 +1,6 @@
 "use server";
 
+import { fundMockUsdcTreasury } from "@/lib/near-sponsor-server";
 import { confirmEmployeeAgentRevocation } from "@/lib/employee-revocation";
 import { resolveEmployerRevocation } from "@/lib/employer-revocation";
 import { adapterAccount } from "@/lib/agent-adapter/config";
@@ -33,7 +34,7 @@ import { withRetry } from "@/lib/db/withRetry";
 import { requireSession } from "@/lib/auth-guard";
 import { getSessionIdentity } from "@/lib/session";
 import { verifyTreasuryOwner, treasuryReader, assertEmployeePermission } from "@/lib/near-server";
-import { TOKEN_SYMBOL } from "@/lib/chain";
+import { MOCK_USDC_ACCOUNT_ID, SPENDING_DECIMALS, TOKEN_SYMBOL } from "@/lib/chain";
 
 export type ReimbursementProgram = {
   status: "unavailable";
@@ -77,6 +78,7 @@ type ProfileUser = {
   id: string;
   role: UserRole;
   walletAddress: string;
+  verifiedEmail: string | null;
   smartAccountAddress: string | null;
   companyId: string | null;
 };
@@ -92,6 +94,7 @@ type ProfileCompany = {
 type CompanyEmployee = {
   id: string;
   walletAddress: string;
+  verifiedEmail: string | null;
   smartAccountAddress: string | null;
   createdAt: string;
 };
@@ -256,6 +259,14 @@ export async function activateSmartAccount(input: {
 
     if (treasuryScope.companyId && treasuryScope.companyId !== computeCompanyId(walletAddress, profile.company.id)) throw new Error("Treasury company identity does not match this workspace");
     await verifyTreasuryOwner(smartAccountAddress, walletAddress);
+    if (MOCK_USDC_ACCOUNT_ID && !profile.company.smartAccountAddress) {
+      await fundMockUsdcTreasury({
+        owner: walletAddress,
+        companyId: profile.company.id,
+        treasury: smartAccountAddress,
+        claimId: "activation",
+      });
+    }
     const [company] = await db
       .update(companies)
       .set({ smartAccountAddress })
@@ -301,6 +312,7 @@ function toProfileUser(
     id: user.id,
     role,
     walletAddress: user.nearAccountId ?? user.embeddedWalletAddress,
+    verifiedEmail: user.verifiedEmail ?? null,
     smartAccountAddress,
     companyId,
   };
@@ -382,7 +394,7 @@ function extractNativeAllowanceYocto(value: unknown): bigint {
 }
 
 function formatNearAllowance(yocto: bigint) {
-  const formatted = formatTokenAmount(yocto.toString(), 24);
+  const formatted = formatTokenAmount(yocto.toString(), SPENDING_DECIMALS);
 
   if (!formatted.includes(".")) {
     return formatted;
@@ -401,7 +413,7 @@ const periodDurations = {
 function parsePositiveNearToYocto(value: string, fieldName: string) {
   const trimmed = value.trim();
 
-  const yocto = BigInt(parseTokenAmount(trimmed, 24));
+  const yocto = BigInt(parseTokenAmount(trimmed, SPENDING_DECIMALS));
 
   if (yocto <= 0n) {
     throw new Error(`${fieldName} must be greater than 0`);
@@ -606,10 +618,10 @@ export async function getWalletProfile(address: string): Promise<WalletProfile> 
       )
     ).limit(1), "getWalletProfile:user");
 
-  if (user && !user.privyUserId) {
+  if (user && (!user.privyUserId || (!user.verifiedEmail && identity.email))) {
     [user] = await db.update(users).set({
-      privyUserId: identity.providerUserId,
-      verifiedEmail: identity.email,
+      privyUserId: user.privyUserId ?? identity.providerUserId,
+      verifiedEmail: user.verifiedEmail ?? identity.email,
     }).where(eq(users.id, user.id)).returning();
   }
 
@@ -824,9 +836,11 @@ export async function acceptEmployeeMembership(input: { walletAddress: string; c
   if (pending.status === "accepted" && pending.acceptedByUserId && pending.acceptedByUserId !== user.id) {
     throw new Error("This company membership has already been accepted by another account");
   }
-  if (!user.privyUserId) {
-    [user] = await db.update(users).set({ privyUserId: identity.providerUserId, verifiedEmail: normalizedEmail })
-      .where(eq(users.id, user.id)).returning();
+  if (!user.privyUserId || !user.verifiedEmail) {
+    [user] = await db.update(users).set({
+      privyUserId: user.privyUserId ?? identity.providerUserId,
+      verifiedEmail: user.verifiedEmail ?? normalizedEmail,
+    }).where(eq(users.id, user.id)).returning();
   }
 
   if (pending.status === "pending") {
@@ -902,6 +916,7 @@ export async function getCompanyEmployees(walletAddress: string) {
   const employees = await db.select({
     id: users.id,
     walletAddress: sql<string>`COALESCE(${users.nearAccountId}, ${users.embeddedWalletAddress})`,
+    verifiedEmail: users.verifiedEmail,
     smartAccountAddress: employeeProfiles.smartAccountAddress,
     createdAt: employeeProfiles.createdAt,
   }).from(companyMemberships)
@@ -1376,6 +1391,7 @@ export async function getCompanyDashboardState(
             .select({
               id: users.id,
               walletAddress: sql<string>`COALESCE(${users.nearAccountId}, ${users.embeddedWalletAddress})`,
+              verifiedEmail: users.verifiedEmail,
               smartAccountAddress: employeeProfiles.smartAccountAddress,
               createdAt: employeeProfiles.createdAt,
             })
@@ -1518,6 +1534,7 @@ export type EmployeeDashboardState = {
   employee: {
     id: string;
     walletAddress: string;
+    verifiedEmail: string | null;
     smartAccountAddress: string | null;
   };
   company: ProfileCompany;
@@ -1699,6 +1716,7 @@ export async function getEmployeeDashboardState(
     employee: {
       id: user.id,
       walletAddress: user.walletAddress,
+      verifiedEmail: user.verifiedEmail,
       smartAccountAddress: user.smartAccountAddress,
     },
     company,

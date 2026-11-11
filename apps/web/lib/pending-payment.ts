@@ -1,3 +1,4 @@
+import { SPENDING_ASSET, sameAsset } from "@/lib/chain";
 import { generateRequestId, type ExecuteRequest, type Execution } from "@allocard/delegation-sdk";
 
 export type PendingPayment = {
@@ -21,7 +22,7 @@ export async function preparePendingPayment(input: {
   const { storage, key } = input;
   const now = input.now ?? Date.now();
   let saved: PendingPayment | null = JSON.parse(storage.getItem(key) || "null");
-  const changed = (payment: PendingPayment) => payment.request.action.amount !== input.amount || payment.request.action.receiver !== input.receiver;
+  const changed = (payment: PendingPayment) => !sameAsset(payment.request.action.asset, SPENDING_ASSET) || payment.request.action.amount !== input.amount || payment.request.action.receiver !== input.receiver;
   const draft = saved && isUnsubmittedPayment(saved);
   let existing = saved && !draft ? await input.readExecution(saved.request.request_id) : null;
   if (saved && draft && (changed(saved) || BigInt(saved.request.deadline_ms) <= BigInt(now) || saved.request.permission_id !== input.activePermissionId)) {
@@ -49,7 +50,7 @@ export async function preparePendingPayment(input: {
       throw new Error("The previous payment is still unresolved. Keep this request and retry after checking its on-chain status.");
     }
   }
-  if (saved && (saved.request.action.amount !== input.amount || saved.request.action.receiver !== input.receiver)) {
+  if (saved && changed(saved)) {
     throw new Error("A previous payment is still processing or needs reconciliation. Check its status before sending a different payment.");
   }
   if (!saved) {
@@ -58,7 +59,7 @@ export async function preparePendingPayment(input: {
     saved = {
       delegationId: input.delegationId, attempted: false, submissionAttempted: false,
       request: { api_version: 1, request_id: generateRequestId(), permission_id: permissionId,
-        action: { type: "Transfer", asset: { type: "NativeNear" }, receiver: input.receiver, amount: input.amount },
+        action: { type: "Transfer", asset: SPENDING_ASSET, receiver: input.receiver, amount: input.amount },
         deadline_ms: String(Date.now() + 15 * 60 * 1000),
       },
     };

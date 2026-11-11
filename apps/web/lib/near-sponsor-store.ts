@@ -1,6 +1,6 @@
-import { and, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "./db";
-import { nearSponsorJobs as jobs, nearSponsorKeys as keys, nearSponsorLimits as limits } from "./db/schema";
+import { nearSponsorJobs as jobs, nearSponsorKeys as keys } from "./db/schema";
 import { withRetry } from "./db/withRetry";
 export type SponsorJob = typeof jobs.$inferSelect;
 
@@ -10,16 +10,6 @@ export async function findSponsorJob(id: string) {
 export async function claimSponsorJob(input: Pick<SponsorJob, "id" | "actor" | "intentHash" | "relayerId">) {
   // Do not retry mutations after an ambiguous database response.
   return (await db.insert(jobs).values(input).onConflictDoNothing().returning())[0] ?? null;
-}
-export async function takeSponsorQuota(actor: string, globalLimit: number, userLimit: number, scope = "") {
-  const day = new Date().toISOString().slice(0, 10);
-  const prefix = scope ? `${scope}:` : "";
-  for (const [bucket, max] of [[`${prefix}wallet:${actor}:${day}`, userLimit], [`${prefix}global:${day}`, globalLimit]] as const) {
-    const rows = await db.insert(limits).values({ bucket, used: "1" }).onConflictDoUpdate({
-      target: limits.bucket, set: { used: sql`${limits.used} + 1` }, setWhere: lt(limits.used, String(max)),
-    }).returning({ bucket: limits.bucket });
-    if (!rows.length) throw new Error("Daily gas sponsorship limit reached. Retry tomorrow or use a funded NEAR wallet.");
-  }
 }
 export async function acquireSponsorKey(key: string) {
   // Database time prevents clock skew between serverless instances from stealing a lease.
@@ -53,8 +43,7 @@ export async function releaseRejectedSponsorJob(id: string, transactionHash: str
   await db.delete(jobs).where(and(eq(jobs.id, id), eq(jobs.state, "submitted"), eq(jobs.transactionHash, transactionHash)));
 }
 
-/** One registration deposit grant per verified provider identity, for its lifetime. */
-export async function takeCompanyRegistrationGrant(principalHash: string) {
-  const rows = await db.insert(limits).values({ bucket: `company-registration-grant:${principalHash}`, used: "1" }).onConflictDoNothing().returning({ bucket: limits.bucket });
-  if (!rows.length) throw new Error("This owner has already used their one sponsored company registration. Contact the operator if the previous attempt was not confirmed.");
+/** A final FT resolver result of zero proves this claim credited no tokens. */
+export async function releaseUncreditedFaucetJob(id: string, transactionHash: string) {
+  await db.delete(jobs).where(and(eq(jobs.id, id), eq(jobs.transactionHash, transactionHash)));
 }

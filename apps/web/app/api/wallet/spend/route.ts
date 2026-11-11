@@ -1,3 +1,4 @@
+import { SPENDING_DECIMALS } from "@/lib/chain";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireEmployeeCompany, requireSessionUser } from "@/lib/auth-guard";
@@ -25,9 +26,9 @@ export async function POST(req: NextRequest) {
     // Revocation after dispatch does not erase a successful payment. Verify the
     // execution itself rather than requiring that permission to still be active.
     const record = await treasuryReader(company.smartAccountAddress).getExecution(executionId);
-    assertSettledPayment(record, { actor: user.embeddedWalletAddress, permissionId: delegation.delegationHash, receiver: toAddress, amount: parseTokenAmount(amountNear, 24) });
+    assertSettledPayment(record, { actor: user.embeddedWalletAddress, permissionId: delegation.delegationHash, receiver: toAddress, amount: parseTokenAmount(amountNear, SPENDING_DECIMALS) });
     await verifyPaymentTransaction(txHash, record.actor, company.smartAccountAddress, record.request_id);
-    const values = { assetNetwork: "near:testnet", companyId, employeeId: user.id, delegationId, toAddress, amountNear, purpose: typeof purpose === "string" ? purpose.trim().slice(0, 2000) : "Company payment", isFlagged: false,
+    const values = { assetNetwork: record.action.asset.type === "Nep141" ? `near:testnet:${record.action.asset.contract_id}` : "near:testnet", companyId, employeeId: user.id, delegationId, toAddress, amountNear, purpose: typeof purpose === "string" ? purpose.trim().slice(0, 2000) : "Company payment", isFlagged: false,
       txHash, executionId, treasuryContractId: company.smartAccountAddress };
     const [inserted] = await db.insert(manualTransactions).values(values).onConflictDoNothing({ target: [manualTransactions.treasuryContractId, manualTransactions.executionId] }).returning();
     if (inserted) return NextResponse.json({ success: true, transaction: inserted });

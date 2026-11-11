@@ -1,3 +1,4 @@
+import { SPENDING_ASSET, sameAsset } from "@/lib/chain";
 import { paymentActions, containsPaymentRequest } from "./near-payment-envelope";
 import { parseAccessKeyRpcResponse } from "./near-nonce";
 import { coordinatedNearRead, waitForRpcCooldown, backoffNearRead, noteRpcRateLimit } from "./near-read-coordinator";
@@ -75,7 +76,7 @@ export function assertEmployeePermission(permission: Permission | null, employee
 }
 
 export function assertSettledPayment(record: Execution | null, expected: { actor: string; permissionId: string; receiver: string; amount: string }): asserts record is Execution {
-  if (!record || record.status !== "Succeeded" || record.authority_mode !== "Delegated" || record.actor !== expected.actor || record.permission_id !== expected.permissionId || record.action.asset.type !== "NativeNear" || record.action.receiver !== expected.receiver || record.action.amount !== expected.amount) {
+  if (!record || record.status !== "Succeeded" || record.authority_mode !== "Delegated" || record.actor !== expected.actor || record.permission_id !== expected.permissionId || !sameAsset(record.action.asset, SPENDING_ASSET) || record.action.receiver !== expected.receiver || record.action.amount !== expected.amount) {
     throw new Error("A matching, successfully settled on-chain payment is required");
   }
 }

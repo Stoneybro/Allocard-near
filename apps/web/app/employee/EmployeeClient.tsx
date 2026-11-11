@@ -92,8 +92,8 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { DirectSpendForm } from "./DirectSpendForm";
 import { cn } from "@/lib/utils";
-import { formatWalletAddress, generateEmployeeReferenceId, isValidWalletAddress } from "@/lib/wallet";
-import { TOKEN_SYMBOL, getAddressExplorerUrl, getTxExplorerUrl } from "@/lib/chain";
+import { formatWalletAddress, getEmployeeDisplayIdentity, isValidWalletAddress } from "@/lib/wallet";
+import { SPENDING_DECIMALS, SPENDING_ASSET, sameAsset, TOKEN_SYMBOL, getAddressExplorerUrl, getTxExplorerUrl } from "@/lib/chain";
 import { decodeMutationId, type PermissionSpec } from "@allocard/delegation-sdk";
 import {
   getUnifiedNearCaller,
@@ -206,12 +206,8 @@ function formFromDelegation(
   return nextForm;
 }
 
-function yoctoToNearInput(yocto: string) {
-  const value = BigInt(yocto);
-  const whole = value / 1_000_000_000_000_000_000_000_000n;
-  const fractional = value % 1_000_000_000_000_000_000_000_000n;
-  if (fractional === 0n) return whole.toString();
-  return `${whole}.${fractional.toString().padStart(24, "0").replace(/0+$/, "")}`;
+function yoctoToNearInput(amount: string) {
+  return formatTokenAmount(amount, SPENDING_DECIMALS);
 }
 
 function formatDelegationStatus(status: string) {
@@ -344,43 +340,7 @@ export function EmployeeClient({
 
   // ── Derived values ─────────────────────────────────────────────────────────
 
-  const approvedYocto = useMemo(() => {
-    try {
-      const inbound = dashboardState?.inboundDelegation;
-      if (!inbound) return 0n;
-      const caveat = inbound.caveats.find((c) => c.caveatType === "nativeTokenTransferAmount");
-      if (!caveat) return 0n;
-      const val = caveat.caveatValue as Record<string, unknown>;
-      return BigInt(String(val.maxAmount ?? val.amount ?? "0"));
-    } catch { return 0n; }
-  }, [dashboardState?.inboundDelegation]);
-
-  const redelegatedYocto = useMemo(() => {
-    try {
-      const activeOutbound = dashboardState?.outboundDelegations.filter((d) => d.status === "active") ?? [];
-      return activeOutbound.reduce((sum, d) => {
-        const caveat = d.caveats.find((c) => c.caveatType === "nativeTokenTransferAmount");
-        if (!caveat) return sum;
-        const val = caveat.caveatValue as Record<string, unknown>;
-        return sum + BigInt(String(val.maxAmount ?? val.amount ?? "0"));
-      }, 0n);
-    } catch { return 0n; }
-  }, [dashboardState?.outboundDelegations]);
-
-  const spentYocto = useMemo(() => {
-    try {
-      const val = dashboardState?.summary?.spentNear ?? '0';
-      const num = parseFloat(val);
-      if (isNaN(num) || num <= 0) return 0n;
-      const [whole, fractional = ""] = val.split(".");
-      return (
-        BigInt(whole) * 1_000_000_000_000_000_000_000_000n +
-        BigInt((fractional + "0".repeat(24)).slice(0, 24))
-      );
-    } catch { return 0n; }
-  }, [dashboardState?.summary?.spentNear]);
-
-  const remainingYocto = BigInt(parseTokenAmount(dashboardState?.summary.remainingNear ?? "0", 24));
+  const remainingYocto = BigInt(parseTokenAmount(dashboardState?.summary.remainingNear ?? "0", SPENDING_DECIMALS));
 
   const parentMaxNear = useMemo(() => {
     try {
@@ -672,14 +632,14 @@ export function EmployeeClient({
         const agentSmartAccountAddress = await queryClient.fetchQuery({ queryKey: [...accountKey, "agent-account", dashboardState?.company.id, agentId], queryFn: () => getAgentSmartAccountAddress(agentId) });
 
         const parentPermissionId = savedState.inboundDelegation?.delegationHash || "";
-        const parsedLimit = caveatForm.maxAmountNear ? parseTokenAmount(caveatForm.maxAmountNear, 24) : null;
-        const parsedPerTx = caveatForm.perTransactionCapNear ? parseTokenAmount(caveatForm.perTransactionCapNear, 24) : null;
+        const parsedLimit = caveatForm.maxAmountNear ? parseTokenAmount(caveatForm.maxAmountNear, SPENDING_DECIMALS) : null;
+        const parsedPerTx = caveatForm.perTransactionCapNear ? parseTokenAmount(caveatForm.perTransactionCapNear, SPENDING_DECIMALS) : null;
 
         if (!savedState.company.smartAccountAddress || !parentPermissionId) throw new Error("A treasury and confirmed parent permission are required");
         const childCaller = await getUnifiedNearCaller(auth);
         const childClient = getTreasuryClient(childCaller, savedState.company.smartAccountAddress);
         const liveParent = await childClient.getPermission(parentPermissionId);
-        const parentRule = liveParent?.rules.find(rule => rule.asset.type === "NativeNear");
+        const parentRule = liveParent?.rules.find(rule => sameAsset(rule.asset, SPENDING_ASSET));
         if (!liveParent || !parentRule || liveParent.revoked || liveParent.delegate !== walletAddress) throw new Error("Employee permission is unavailable");
         const childSpec: PermissionSpec = {
           delegate: agentSmartAccountAddress,
@@ -688,7 +648,7 @@ export function EmployeeClient({
           max_executions: caveatForm.limitedCallsEnabled && caveatForm.limitedCalls ? Number(caveatForm.limitedCalls) : liveParent.max_executions,
           rules: [
             {
-              asset: { type: "NativeNear" },
+              asset: SPENDING_ASSET,
               recipients: caveatForm.allowedTargets && caveatForm.allowedTargets.length > 0
                 ? { type: "Only", accounts: splitAddresses(caveatForm.allowedTargets) }
                 : parentRule.recipients,
@@ -780,7 +740,7 @@ export function EmployeeClient({
     if (!caller.functionCall) throw new Error("A signing wallet is required");
     const client = getTreasuryClient(caller, treasury);
     const key = `allocard-payment:${treasury}:${auth.accountId}`;
-    const amount = parseTokenAmount(details.amountNear, 24);
+    const amount = parseTokenAmount(details.amountNear, SPENDING_DECIMALS);
     const { saved, existing } = await preparePendingPayment({
       storage: localStorage, key, companyId: company.id,
       receiver: details.toAddress, amount, activePermissionId,
@@ -866,6 +826,7 @@ export function EmployeeClient({
   const smartAccountLabel = employee.smartAccountAddress
     ? formatWalletAddress(employee.smartAccountAddress)
     : "Treasury pending";
+  const employeeIdentity = getEmployeeDisplayIdentity(employee);
 
   // ── JSX ────────────────────────────────────────────────────────────────────
 
@@ -894,7 +855,8 @@ export function EmployeeClient({
       title="Employee dashboard"
       roleLabel="Employee"
       role="employee"
-      employeeReferenceId={generateEmployeeReferenceId(employee.walletAddress)}
+      employeeReferenceId={employeeIdentity.label}
+      employeeFullEmail={employeeIdentity.fullEmail}
       agents={sidebarAgents}
       onSelectAgent={handleSelectAgent}
       onRefreshEmployees={refreshDashboard}

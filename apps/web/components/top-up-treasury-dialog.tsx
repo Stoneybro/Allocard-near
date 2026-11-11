@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { CheckIcon, ChevronDownIcon, CopyIcon, ExternalLinkIcon, Loader2, PlusIcon } from "lucide-react";
-import { TOKEN_SYMBOL } from "@/lib/chain";
+import { FAUCET_USDC, MOCK_USDC_ACCOUNT_ID, TOKEN_SYMBOL } from "@/lib/chain";
 import { parseTreasuryReference } from "@allocard/delegation-sdk";
 
 const AuroraIntentWidget = dynamic(() => import("./aurora-intent-widget"), {
@@ -51,9 +51,9 @@ export function TopUpTreasuryDialog({ open, onOpenChange, treasuryAddress, admin
           <DialogTitle className="text-xl font-semibold tracking-tight">Add funds</DialogTitle>
           <DialogDescription className="text-xs leading-relaxed">Choose how to fund your treasury.</DialogDescription>
         </DialogHeader>
-        <Tabs defaultValue="crosschain" className="min-w-0 w-full gap-4">
+        <Tabs defaultValue={MOCK_USDC_ACCOUNT_ID ? "direct" : "crosschain"} className="min-w-0 w-full gap-4">
           <TabsList className="grid h-10 w-full grid-cols-2 p-1">
-            <TabsTrigger value="crosschain" className="min-w-0 text-xs">Aurora Intents</TabsTrigger>
+            <TabsTrigger value="crosschain" disabled={!!MOCK_USDC_ACCOUNT_ID} className="min-w-0 text-xs">Aurora Intents</TabsTrigger>
             <TabsTrigger value="direct" className="min-w-0 text-xs">Faucet</TabsTrigger>
           </TabsList>
           <TabsContent value="crosschain" className="min-w-0 mt-0">
@@ -61,18 +61,18 @@ export function TopUpTreasuryDialog({ open, onOpenChange, treasuryAddress, admin
           </TabsContent>
           <TabsContent value="direct" className="mt-0 space-y-5">
             <div className="rounded-xl border border-border/70 p-5">
-              <div className="flex items-baseline justify-between gap-3"><p className="text-sm font-medium">Wallet deposit</p><span className="text-xs text-muted-foreground">Testnet</span></div>
-              <p className="my-4 text-3xl font-medium tracking-tight tabular-nums">1.7 <span className="text-sm text-muted-foreground">{TOKEN_SYMBOL}</span></p>
-              <p className="mb-4 text-xs leading-relaxed text-muted-foreground">From your connected wallet. Includes storage and gas allocation.</p>
+              <div className="flex items-baseline justify-between gap-3"><p className="text-sm font-medium">{MOCK_USDC_ACCOUNT_ID ? "Test USDC faucet" : "Wallet deposit"}</p><span className="text-xs text-muted-foreground">Testnet</span></div>
+              <p className="my-4 text-3xl font-medium tracking-tight tabular-nums">{MOCK_USDC_ACCOUNT_ID ? Number(FAUCET_USDC).toLocaleString() : "1.7"} <span className="text-sm text-muted-foreground">{TOKEN_SYMBOL}</span></p>
+              <p className="mb-4 text-xs leading-relaxed text-muted-foreground">{MOCK_USDC_ACCOUNT_ID ? "Adds test USDC directly to your company treasury." : "From your connected wallet. Includes storage and gas allocation."}</p>
               <Button className="h-11 w-full gap-2 rounded-lg" onClick={onDirectTopUp} disabled={!onDirectTopUp || isToppingUp}>
                 {isToppingUp ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : <PlusIcon className="size-4" aria-hidden="true" />}
-                {isToppingUp ? "Adding funds…" : `Add 1.7 ${TOKEN_SYMBOL}`}
+                {isToppingUp ? "Adding funds…" : MOCK_USDC_ACCOUNT_ID ? `Claim ${Number(FAUCET_USDC).toLocaleString()} USDC` : `Add 1.7 ${TOKEN_SYMBOL}`}
               </Button>
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+            {!MOCK_USDC_ACCOUNT_ID && <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
               <span className="text-muted-foreground">Need test tokens?</span>
               <Button variant="link" size="sm" className="h-auto p-0 text-xs" asChild><a href="https://near-faucet.io" target="_blank" rel="noopener noreferrer">Get test {TOKEN_SYMBOL}<ExternalLinkIcon className="size-3" aria-hidden="true" /></a></Button>
-            </div>
+            </div>}
           </TabsContent>
         </Tabs>
         {destinationAddress && <details className="group min-w-0 border-t border-border/60 pt-3 text-xs">

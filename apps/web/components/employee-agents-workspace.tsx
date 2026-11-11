@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { EmployeeDashboardState } from "@/app/actions/identity";
 import { ADAPTER_NAME } from "@/lib/agent-adapter/shared";
 import { formatTokenAmount } from "@allocard/delegation-sdk";
-import { TOKEN_SYMBOL } from "@/lib/chain";
+import { SPENDING_DECIMALS, TOKEN_SYMBOL } from "@/lib/chain";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -27,7 +27,7 @@ function spendingLimit(row: Props["delegations"][number]) {
   const caveat = row.caveats.find(item => item.caveatType === "nativeTokenTransferAmount");
   const value = caveat?.caveatValue as { maxAmount?: string; amount?: string } | undefined;
   const amount = value?.maxAmount ?? value?.amount;
-  return amount && /^\d+$/.test(amount) ? formatTokenAmount(amount, 24) : "—";
+  return amount && /^\d+$/.test(amount) ? formatTokenAmount(amount, SPENDING_DECIMALS) : "—";
 }
 
 export function EmployeeAgentsWorkspace({ companyId, agents, delegations, canAdd, busy = false, onSelectAgent, onConfigure, onRevoke }: Props) {

@@ -1,5 +1,5 @@
-import type { AssetId, BudgetScope, Permission, TreasuryConfig, Usage } from "@allocard/delegation-sdk";
-const native: AssetId = { type: "NativeNear" };
+import { SPENDING_ASSET, sameAsset } from "@/lib/chain";
+import type { BudgetScope, Permission, TreasuryConfig, Usage } from "@allocard/delegation-sdk";
 /** Advisory snapshot; execute rechecks the same policies atomically on-chain. */
 export async function nativeSpendingCapacity(input: {
   actor: string; path: Permission[]; config: TreasuryConfig; available: string; now: bigint;
@@ -13,7 +13,7 @@ export async function nativeSpendingCapacity(input: {
     if (permission.revoked || permission.epoch !== input.config.authority_epoch || BigInt(permission.valid_from_ms) > input.now || (permission.expires_at_ms != null && BigInt(permission.expires_at_ms) <= input.now)) return "0";
     if (await input.blocked(permission.delegate) || await input.blocked(permission.issuer)) return "0";
     if (permission.max_executions != null && input.executionCount && await input.executionCount(permission.id) >= permission.max_executions) return "0";
-    const rule = permission.rules.find(rule => rule.asset.type === native.type);
+    const rule = permission.rules.find(rule => sameAsset(rule.asset, SPENDING_ASSET));
     if (!rule) return "0";
     const scopes: { scope: BudgetScope; limit: bigint }[] = [];
     if (rule.lifetime_limit != null) scopes.push({ scope: { type: "Lifetime" }, limit: BigInt(rule.lifetime_limit) });
