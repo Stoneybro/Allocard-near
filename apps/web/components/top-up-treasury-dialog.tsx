@@ -51,12 +51,13 @@ export function TopUpTreasuryDialog({ open, onOpenChange, treasuryAddress, admin
           <DialogTitle className="text-xl font-semibold tracking-tight">Add funds</DialogTitle>
           <DialogDescription className="text-xs leading-relaxed">Choose how to fund your treasury.</DialogDescription>
         </DialogHeader>
-        <Tabs defaultValue={MOCK_USDC_ACCOUNT_ID ? "direct" : "crosschain"} className="min-w-0 w-full gap-4">
+        <Tabs defaultValue="crosschain" className="min-w-0 w-full gap-4">
           <TabsList className="grid h-10 w-full grid-cols-2 p-1">
-            <TabsTrigger value="crosschain" disabled={!!MOCK_USDC_ACCOUNT_ID} className="min-w-0 text-xs">Aurora Intents</TabsTrigger>
+            <TabsTrigger value="crosschain" className="min-w-0 text-xs">Aurora Intents</TabsTrigger>
             <TabsTrigger value="direct" className="min-w-0 text-xs">Faucet</TabsTrigger>
           </TabsList>
           <TabsContent value="crosschain" className="min-w-0 mt-0">
+            {MOCK_USDC_ACCOUNT_ID && <p className="mb-3 text-xs leading-relaxed text-muted-foreground">Explore cross-chain funding. Demo preview; swaps won’t credit test USDC.</p>}
             {destinationAddress ? <AuroraIntentWidget destinationNearAddress={destinationAddress} /> : <p role="status" className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">Activate your treasury to add funds.</p>}
           </TabsContent>
           <TabsContent value="direct" className="mt-0 space-y-5">
