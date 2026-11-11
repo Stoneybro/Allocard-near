@@ -983,7 +983,6 @@ export function EmployerClient({
             </div>
             <div className="space-y-2 border-t border-border pt-4 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
               <h3 className="text-sm font-medium">Before you try the demo</h3>
-              <p className="text-xs text-muted-foreground">About 3 minutes.</p>
               <p className="text-sm leading-6 text-muted-foreground">Have a second email you can access and an incognito window ready. It’s an extra step so you can try both the employer and employee roles.</p>
             </div>
           </section>

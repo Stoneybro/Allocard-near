@@ -22,7 +22,7 @@ const directions = [
 
 const employeeDirections = [
   null,
-  { title: "Return to the employer dashboard", text: "Your employee membership should now appear there. Add a delegation for this employee, set an amount and configure a policy, then activate it. Come back here to spend." },
+  { title: "Return to the employer dashboard", text: "Switch to your original browser window. The employee you just added should now be listed under Employees. Click Add delegation, select that employee, then Configure. Set a spending limit, configure a policy, and click Activate delegation. Return to this incognito window to spend." },
   { title: "Your allowance is ready", text: "You can now make a direct payment or use an agent from this dashboard. That’s the end of the demo." },
 ];
 
@@ -118,22 +118,28 @@ export function DemoGuideProvider({ guide, children }: { guide?: DemoGuideProgre
     }, restart: guide ? restart : null }}>
       {children}
       <Dialog open={!!direction} onOpenChange={value => { if (!value) acknowledge(); }}>
-        <DialogContent data-activation-exempt showCloseButton={false} className="gap-5 p-5 sm:max-w-sm">
-          <DialogHeader className="gap-3">
+        <DialogContent data-activation-exempt showCloseButton={false} className="gap-4 p-5 sm:max-w-sm">
+          {prompt === 1 && guide?.role !== "employee" && (
+            <p role="note" className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs leading-5 text-muted-foreground">
+              We’ll guide you through the demo one step at a time. You can stop the directions using the checkbox below. Look at the first step below.
+            </p>
+          )}
+          <DialogHeader className="gap-2">
             <DialogTitle>{direction?.title}</DialogTitle>
             <DialogDescription className="text-left leading-6">
-              {prompt === 1 && <span className="mb-3 block">These cards walk you through the demo. Select “Stop demo directions” below to turn them off anytime.</span>}
               {direction?.text}
             </DialogDescription>
           </DialogHeader>
-          <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
-            <input type="checkbox" checked={hideAgain} onChange={event => {
-              setHideAgain(event.target.checked);
-              if (preference.current) save({ ...preference.current, enabled: !event.target.checked });
-            }} className="size-3.5 accent-foreground" />
-            Stop demo directions
-          </label>
-          <Button className="justify-self-end" onClick={acknowledge}>Okay</Button>
+          <div className="flex items-center justify-between gap-3 pt-1">
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+              <input type="checkbox" checked={hideAgain} onChange={event => {
+                setHideAgain(event.target.checked);
+                if (preference.current) save({ ...preference.current, enabled: !event.target.checked });
+              }} className="size-3.5 accent-foreground" />
+              Stop demo directions
+            </label>
+            <Button onClick={acknowledge}>Okay</Button>
+          </div>
         </DialogContent>
       </Dialog>
     </Context.Provider>

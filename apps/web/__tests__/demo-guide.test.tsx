@@ -69,8 +69,10 @@ it("shows one short prompt per milestone and finishes permanently after the last
     await render(step);
     expect(prompt()?.textContent).toContain(text);
     expect(prompt()?.textContent).toContain("Stop demo directions");
-    if (step === 1) expect(prompt()?.textContent).toContain("These cards walk you through the demo");
-    else expect(prompt()?.textContent).not.toContain("These cards walk you through the demo");
+    if (step === 1) {
+      expect(prompt()?.querySelector('[role="note"]')?.textContent).toContain("Look at the first step below.");
+      expect(prompt()?.querySelector('[data-slot="dialog-description"]')?.textContent).not.toContain("We’ll guide you");
+    } else expect(prompt()?.querySelector('[role="note"]')).toBeNull();
     expect(prompt()?.querySelectorAll("button")).toHaveLength(1);
     expect(prompt()?.querySelector('input[type="checkbox"]')).not.toBeNull();
     expect(drawer()).toBeNull();
@@ -145,6 +147,7 @@ it("guides a newly joined employee through delegation and spending, then stays f
   await render(1, scope, "employee");
   expect(prompt()?.textContent).toContain("Return to the employer dashboard");
   expect(prompt()?.textContent).toContain("configure a policy");
+  expect(prompt()?.querySelector('[role="note"]')).toBeNull();
   await click("Okay");
   await render(2, scope, "employee");
   expect(prompt()?.textContent).toContain("Your allowance is ready");
