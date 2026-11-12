@@ -220,7 +220,6 @@
   .landing #hero h1 { font-size: clamp(42px, 8.8vw, 64px); }
   .landing #hero > p:first-of-type { font-size: 14px; line-height: 1.8; }
   .landing #hero > p:last-of-type { max-width: 290px; line-height: 1.8; }
-  .landing #hero > div:last-child { width: calc(100% + 20px); }
   .landing #hero + section > div { gap: 14px 22px; }
   .landing #hero + section span { white-space: normal; text-align: center; }
   .landing #problem, .landing #how-it-works > div, .landing #spend-rails > div, .landing #canvas > div, .landing #sovereignty > div { padding: 64px 20px; }
