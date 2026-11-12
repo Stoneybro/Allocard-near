@@ -6,6 +6,7 @@ import { confirmEmployeeAgentRevocation } from "@/lib/employee-revocation";
 import { resolveEmployerRevocation } from "@/lib/employer-revocation";
 import { adapterAccount } from "@/lib/agent-adapter/config";
 import { ADAPTER_NAME } from "@/lib/agent-adapter/shared";
+import { emptyCaveatForm, hasFormErrors, validateCaveatForm } from "@/lib/policy-configuration";
 
 import { readLiveNativeCapacity, capacityReadError } from "@/lib/live-capacity";
 
@@ -180,6 +181,7 @@ export type CompanyDelegationCaveat = {
 
 type DelegationCaveatInput = {
   maxAmountNear: string;
+  expiresAt?: string | null;
   period?: "none" | "hourly" | "daily" | "weekly" | "monthly";
   periodAmountNear?: string;
   perTransactionCapNear?: string;
@@ -253,6 +255,7 @@ export async function activateSmartAccount(input: {
   walletAddress: string;
   smartAccountAddress: string;
 }) {
+  const started = Date.now();
   const walletAddress = normalizeWalletAddress(input.walletAddress);
   await validateSessionWallet(walletAddress);
   const smartAccountAddress = input.smartAccountAddress.trim();
@@ -276,14 +279,14 @@ export async function activateSmartAccount(input: {
     }
 
     if (treasuryScope.companyId && treasuryScope.companyId !== computeCompanyId(walletAddress, profile.company.id)) throw new Error("Treasury company identity does not match this workspace");
-    await verifyTreasuryOwner(smartAccountAddress, walletAddress);
+    const verifiedConfig = await verifyTreasuryOwner(smartAccountAddress, walletAddress);
     if (MOCK_USDC_ACCOUNT_ID && !profile.company.smartAccountAddress) {
       await fundMockUsdcTreasury({
         owner: walletAddress,
         companyId: profile.company.id,
         treasury: smartAccountAddress,
         claimId: "activation",
-      });
+      }, verifiedConfig);
     }
     const [company] = await db
       .update(companies)
@@ -291,6 +294,7 @@ export async function activateSmartAccount(input: {
       .where(eq(companies.id, profile.company.id))
       .returning();
 
+    console.info("[activation timing]", { stage: "activate_company", durationMs: Date.now() - started });
     return {
       target: "company" as const,
       smartAccountAddress: company.smartAccountAddress,
@@ -453,6 +457,7 @@ function buildCaveatRows(input: DelegationCaveatInput) {
       caveatValue: {
         maxAmount: maxAmountYocto.toString(),
         amount: maxAmountYocto.toString(),
+        ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
       },
     },
   ];
@@ -1074,31 +1079,25 @@ export async function saveDelegationCaveats(input: {
     throw new Error("Revoked delegations cannot be edited");
   }
 
+  const validation = validateCaveatForm({ ...emptyCaveatForm, ...input.caveats,
+    allowedTargets: (input.caveats.allowedTargets ?? []).join(","),
+    limitedCallsEnabled: input.caveats.limitedCalls != null,
+    limitedCalls: String(input.caveats.limitedCalls ?? 1), expiresAt: input.caveats.expiresAt ?? "",
+    policyPrompt: input.policyPrompt ?? "",
+  }, null, Date.now(), true); // Reconciliation may save an already-expired confirmed permission.
+  if (hasFormErrors(validation)) throw new Error(Object.values(validation).join(" "));
   const caveatRows = buildCaveatRows(input.caveats);
 
-  await db
-    .delete(delegationCaveats)
-    .where(eq(delegationCaveats.delegationId, input.delegationId));
-
-  if (caveatRows.length > 0) {
-    await db.insert(delegationCaveats).values(
+  await db.batch([
+    db.delete(delegationCaveats).where(eq(delegationCaveats.delegationId, input.delegationId)),
+    db.insert(delegationCaveats).values(
       caveatRows.map((row) => ({
         ...row,
         delegationId: input.delegationId,
       })),
-    );
-  }
-
-  const updatePayload: Partial<typeof delegations.$inferInsert> = {
-    policyPrompt: input.policyPrompt ?? null,
-  };
-
-
-
-  await db
-    .update(delegations)
-    .set(updatePayload)
-    .where(eq(delegations.id, input.delegationId));
+    ),
+    db.update(delegations).set({ policyPrompt: input.policyPrompt ?? null }).where(eq(delegations.id, input.delegationId)),
+  ]);
 
   return;
 }

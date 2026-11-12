@@ -40,6 +40,7 @@ export async function aiChat<T>(params: {
   messages: Array<{ role: string; content: unknown }>;
   responseSchema?: Record<string, unknown>;
   disableJsonSchema?: boolean;
+  timeoutMs?: number;
 }): Promise<T> {
   const apiKey = getApiKey();
   if (!apiKey) throw new Error("NEAR_AI_API_KEY or DASHSCOPE_API_KEY is not configured");
@@ -60,6 +61,7 @@ export async function aiChat<T>(params: {
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify(body),
+    signal: params.timeoutMs ? AbortSignal.timeout(params.timeoutMs) : undefined,
   });
 
   if (!res.ok) {

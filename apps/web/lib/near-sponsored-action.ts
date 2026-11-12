@@ -8,8 +8,10 @@ import { computeCompanyId, parseTreasuryReference, type ExecuteRequest, type Per
 export const SPONSORED_EXECUTE_GAS = "150000000000000";
 export const SPONSORED_COMPANY_GAS = "70000000000000";
 export const MAX_SPONSORED_COMPANY_DEPOSIT = "200000000000000000000000"; // 0.2 NEAR
+export const COMPANY_STORAGE_TOP_UP = "200000000000000000000000";
+export const COMPANY_OPERATING_TOP_UP = "20000000000000000000000";
 export const SPONSORED_VALID_BLOCKS = 120;
-export type SponsoredCompany = { companyKey: string; contractId: string; deposit: string };
+export type SponsoredCompany = { companyKey: string; contractId: string; deposit: string; fundReserves?: true };
 export type SponsoredCompanyProof = SponsoredCompany & { nonce: string; maxBlockHeight: string; signature: string };
 export type SponsoredPayment = { treasury: string; request: ExecuteRequest };
 export type SponsoredProof = SponsoredPayment & { nonce: string; maxBlockHeight: string; signature: string };
@@ -41,6 +43,10 @@ export function sponsoredCompanyDelegate(accountId: string, company: SponsoredCo
     action.actions.push(
       functionCall("register_asset", Buffer.from(canonicalSponsorJson(args)), 25_000_000_000_000n, 0n),
       functionCall("set_asset_enabled", Buffer.from(canonicalSponsorJson({ ...args, enabled: true })), 25_000_000_000_000n, 0n),
+    );
+    if (company.fundReserves) action.actions.push(
+      functionCall("top_up_storage", Buffer.from(canonicalSponsorJson({ company_id: companyId })), 30_000_000_000_000n, BigInt(COMPANY_STORAGE_TOP_UP)),
+      functionCall("top_up_operating", Buffer.from(canonicalSponsorJson({ company_id: companyId })), 30_000_000_000_000n, BigInt(COMPANY_OPERATING_TOP_UP)),
     );
   }
   return action;

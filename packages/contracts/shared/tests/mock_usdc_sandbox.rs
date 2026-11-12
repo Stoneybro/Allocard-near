@@ -75,11 +75,6 @@ async fn company_claims_and_spends_mock_usdc() -> Result<(), Box<dyn std::error:
                 .args_json(json!({ "company_id": company_id, "asset": asset, "enabled": true }))
                 .gas(Gas::from_tgas(25)),
         )
-        .transact()
-        .await?
-        .into_result()?;
-    relayer
-        .batch(shared.id())
         .call(
             Function::new("top_up_storage")
                 .args_json(json!({ "company_id": company_id }))
@@ -95,6 +90,25 @@ async fn company_claims_and_spends_mock_usdc() -> Result<(), Box<dyn std::error:
         .transact()
         .await?
         .into_result()?;
+    let config: Value = shared
+        .view("get_config")
+        .args_json(json!({ "company_id": company_id }))
+        .await?
+        .json()?;
+    assert!(
+        config["storage_funding_remaining"]
+            .as_str()
+            .unwrap()
+            .parse::<u128>()?
+            >= 200_000_000_000_000_000_000_000
+    );
+    assert!(
+        config["operating_budget_remaining"]
+            .as_str()
+            .unwrap()
+            .parse::<u128>()?
+            >= 20_000_000_000_000_000_000_000
+    );
     let bounds: Value = token.view("storage_balance_bounds").await?.json()?;
     let deposit = NearToken::from_yoctonear(bounds["min"].as_str().unwrap().parse()?);
     for (index, amount) in ["2000000000", "1000000000", "1000000000"]

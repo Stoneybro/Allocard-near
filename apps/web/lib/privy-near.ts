@@ -9,6 +9,7 @@ import { MOCK_USDC_ACCOUNT_ID, SPENDING_ASSET } from "./chain";
 import { computeCompanyId } from "@allocard/delegation-sdk";
 import { nearBrowserRpc } from "./near-rpc-client";
 import { NearRpcError } from "./near-rpc-error";
+import { RetryableNearTransactionError } from "./near-transaction-error";
 import { paymentSubmission } from "./payment-submission";
 import { clearPendingNearTransaction, nearRequestKey, readPendingNearTransaction, savePendingNearTransaction } from "./near-pending-transaction";
 export type NearActionSender = (request: { receiverId: string; actions: Action[]; signerId?: string }) => Promise<unknown>;
@@ -27,15 +28,18 @@ export function createPrivyNearTransport(accountId: string, signHash: (hash: `0x
     return task;
   };
   const sendDirect = async (request: Parameters<NearActionSender>[0], requestKey = nearRequestKey(request), noteSubmission: (submitted: boolean) => void = () => {}) => {
+    let submitted = true; // Storage read failures must fail closed.
+    try {
+    submitted = Boolean(readPendingNearTransaction(accountId));
     const signerId = request.signerId || accountId;
     const metadataOnly = request.actions.every(action => action.functionCall && ["create_company", "create_root_permission", "create_child_permission", "register_asset", "set_asset_enabled", "revoke_permission"].includes(action.functionCall.methodName));
     const waitUntil = metadataOnly ? "EXECUTED" : "FINAL";
     if (signerId !== accountId) throw new Error("Transaction signer does not match the connected wallet");
-    const checkOutcome = (outcome: unknown) => {
+    const checkOutcome = (outcome: unknown, transactionHash: string) => {
       const status = outcome && typeof outcome === "object" && "status" in outcome ? outcome.status : null;
       if (status && typeof status === "object" && "Failure" in status) {
         clearPendingNearTransaction(accountId);
-        throw new Error(`NEAR transaction failed: ${JSON.stringify(status.Failure)}`);
+        throw new RetryableNearTransactionError(`NEAR transaction failed: ${JSON.stringify(status.Failure)}. Transaction: ${transactionHash}`);
       }
       if (!status || typeof status !== "object" || !("SuccessValue" in status)) throw new Error("NEAR has not returned a final execution outcome yet.");
       clearPendingNearTransaction(accountId);
@@ -46,7 +50,7 @@ export function createPrivyNearTransport(accountId: string, signHash: (hash: `0x
       let recovered;
       try { recovered = await rpc("tx", { tx_hash: previous.hash, sender_account_id: accountId, wait_until: "FINAL" }); }
       catch { throw new Error(`Transaction ${previous.hash} is still unconfirmed. No new transaction was signed. Retry the original action to check it again.`); }
-      const outcome = checkOutcome(recovered);
+      const outcome = checkOutcome(recovered, previous.hash);
       if (previous.requestKey !== requestKey) throw new Error(`Previous transaction ${previous.hash} confirmed. Review its result before submitting a different action. No new transaction was signed.`);
       return outcome;
     }
@@ -72,18 +76,23 @@ export function createPrivyNearTransport(accountId: string, signHash: (hash: `0x
     const txHash = utils.serialize.base_encode(digest);
     noteSubmission(true);
     savePendingNearTransaction(accountId, { hash: txHash, requestKey });
+    submitted = true;
     let outcome;
     try { outcome = await rpc("send_tx", { signed_tx_base64: Buffer.from(signed.encode()).toString("base64"), wait_until: waitUntil }); }
     catch (cause) {
       if (cause instanceof NearRpcError && cause.rpcCause === "INVALID_TRANSACTION") {
         clearPendingNearTransaction(accountId);
         noteSubmission(false);
-        throw new Error(`NEAR rejected transaction ${txHash} before execution. ${cause.message} Correct the reported cause before trying again.`);
+        throw new RetryableNearTransactionError(`NEAR rejected transaction ${txHash} before execution. ${cause.message} Correct the reported cause before trying again.`);
       }
       try { outcome = await rpc("tx", { tx_hash: txHash, sender_account_id: accountId, wait_until: "FINAL" }); }
       catch { throw new Error(`Transaction ${txHash} could not be confirmed. Retry this same action to check its status; no new transaction will be signed. ${cause instanceof Error ? cause.message : ""}`); }
     }
-    return checkOutcome(outcome);
+    return checkOutcome(outcome, txHash);
+    } catch (error) {
+      if (!submitted && !(error instanceof RetryableNearTransactionError)) throw new RetryableNearTransactionError(error instanceof Error ? error.message : "The transaction was not submitted.");
+      throw error;
+    }
   };
   const sendActions: NearActionSender = request => enqueue(() => sendDirect(request));
   const caller: NearCaller = { accountId,
@@ -111,7 +120,7 @@ export function createPrivyNearTransport(accountId: string, signHash: (hash: `0x
         if (methodName === "create_company") {
           const companyKey = (args as { company_key?: unknown } | undefined)?.company_key;
           if (typeof companyKey !== "string") throw new Error("Company workspace identity is required");
-          const outcome = await sponsoredCreateCompany(accountId, { contractId, companyKey, deposit: String(attachedDeposit ?? "0") }, signHash);
+          const outcome = await sponsoredCreateCompany(accountId, { contractId, companyKey, deposit: String(attachedDeposit ?? "0"), ...(MOCK_USDC_ACCOUNT_ID ? { fundReserves: true as const } : {}) }, signHash);
           if (outcome) return outcome;
         }
         if (methodName === "execute" && String(attachedDeposit ?? "0") === "0") {

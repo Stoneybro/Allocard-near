@@ -276,7 +276,7 @@ describe("company owner activation and registration sponsorship", () => {
     }));
     await expect(submitSponsoredCompany(companyProof())).rejects.toThrow("not yet confirmed");
     vi.stubGlobal("fetch", mockRpc());
-    await prepareSponsoredCompany(company);
+    await prepareSponsoredCompany({ ...company, fundReserves: true });
     expect(mocks.grant).not.toHaveBeenCalled();
     expect(vi.mocked(fetch).mock.calls.filter(call => JSON.parse(call[1]!.body as string).method === "send_tx")).toHaveLength(0);
   });
@@ -361,20 +361,33 @@ it("recovers a confirmed adapter's inner receipt instead of issuing a replacemen
  expect(rpc.mock.calls.filter(call=>JSON.parse(call[1].body as string).method==="send_tx")).toHaveLength(1);
 });
 
-it("credits activation once and accepts consecutive faucet claims without daily quotas", async () => {
+it.each([{ batched: false, sufficient: false }, { batched: true, sufficient: true }, { batched: true, sufficient: false }])("credits activation once with batched=$batched sufficient=$sufficient and accepts repeat claims", async ({ batched, sufficient }) => {
   vi.stubEnv("NEXT_PUBLIC_MOCK_USDC_ACCOUNT_ID", "mock-usdc.testnet");
   vi.resetModules();
   const { computeCompanyId } = await import("@allocard/delegation-sdk");
-  const { fundMockUsdcTreasury } = await import("@/lib/near-sponsor-server");
+  const { fundMockUsdcTreasury, submitSponsoredCompany } = await import("@/lib/near-sponsor-server");
   const { sponsoredCompanyDelegate } = await import("@/lib/near-sponsored-action");
   const companyKey = "6aee788b-c3c6-44e4-bd88-a3029091bec4";
   const scopedCompany = computeCompanyId(employee, companyKey);
   const treasury = `shared.testnet#${scopedCompany}`;
-  const create = sponsoredCompanyDelegate(employee, {
-    companyKey, contractId: "shared.testnet", deposit: "200000000000000000000000",
-  }, "2", "220");
+  const company = { companyKey, contractId: "shared.testnet", deposit: "200000000000000000000000", ...(batched ? { fundReserves: true as const } : {}) };
+  const create = sponsoredCompanyDelegate(employee, company, "2", "220");
   expect(create.actions.map(action => action.functionCall?.methodName))
-    .toEqual(["create_company", "register_asset", "set_asset_enabled"]);
+    .toEqual(["create_company", "register_asset", "set_asset_enabled", ...(batched ? ["top_up_storage", "top_up_operating"] : [])]);
+  if (batched) {
+    const tables = await import("@/lib/db/schema");
+    mocks.rows.set(tables.companies, [{ id: companyKey, ownerId: "employee-id", smartAccountAddress: null }]);
+    mocks.rows.set(tables.companyMemberships, [{ id: "membership" }]);
+    const digest = createHash("sha256").update(sponsoredSigningBytes(create)).digest();
+    const proof = { ...company, nonce: "2", maxBlockHeight: "220", signature: `0x${sign(null, digest, employeeKey.privateKey).toString("hex")}` };
+    await expect(submitSponsoredCompany({ ...proof, fundReserves: undefined })).rejects.toThrow("Invalid company owner");
+    expect(mocks.jobs.size).toBe(0);
+    await submitSponsoredCompany(proof);
+    const signed = SignedTransaction.decode(Buffer.from([...mocks.jobs.values()][0].signedTransaction!, "base64"));
+    const calls = signed.transaction.actions[0].signedDelegate!.delegateAction.actions;
+    expect(calls.map(action => action.functionCall?.methodName)).toEqual(create.actions.map(action => action.functionCall?.methodName));
+    expect(calls.reduce((sum, action) => sum + action.functionCall!.deposit, 0n)).toBe(420000000000000000000000n);
+  }
   mocks.reader.mockReturnValue({ getAssetLedger: async () => ({ enabled: true }) });
   const query = mocks.query.getMockImplementation()!;
   mocks.query.mockImplementation(async params => {
@@ -409,7 +422,8 @@ it("credits activation once and accepts consecutive faucet claims without daily 
   });
   vi.stubGlobal("fetch", rpc);
 
-  const claim = (claimId: string) => fundMockUsdcTreasury({ owner: employee, companyId: companyKey, treasury, claimId });
+  const verifiedConfig = batched ? { storage_funding_remaining: "380000000000000000000000", operating_budget_remaining: sufficient ? "30000000000000000000000" : "0" } as import("@allocard/delegation-sdk").TreasuryConfig : undefined;
+  const claim = (claimId: string) => fundMockUsdcTreasury({ owner: employee, companyId: companyKey, treasury, claimId }, verifiedConfig);
   const activation = await claim("activation");
   expect(activation.amount).toBe("2000000000");
   await expect(claim("activation")).resolves.toEqual(activation);
@@ -420,7 +434,12 @@ it("credits activation once and accepts consecutive faucet claims without daily 
   await expect(claim(first)).resolves.toEqual(topUp);
   expect((await claim(second)).amount).toBe("1000000000");
   expect(mocks.quota).not.toHaveBeenCalled();
-  expect(rpc.mock.calls.filter(call => JSON.parse(call[1].body as string).method === "send_tx")).toHaveLength(4);
+  expect(rpc.mock.calls.filter(call => JSON.parse(call[1].body as string).method === "send_tx")).toHaveLength(sufficient ? 3 : 4);
+  const reserveOnly = [...mocks.jobs.values()].filter(job => {
+    const signed = SignedTransaction.decode(Buffer.from(job.signedTransaction!, "base64"));
+    return signed.transaction.actions[0].functionCall?.methodName === "top_up_storage";
+  });
+  expect(reserveOnly).toHaveLength(sufficient ? 0 : 1);
 });
 
 it.each(["employee", "owner", "agent"])("still rejects a blocked %s when checking principals concurrently", async role => {

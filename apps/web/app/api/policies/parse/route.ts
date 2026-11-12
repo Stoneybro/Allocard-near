@@ -1,13 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSessionUser } from "@/lib/auth-guard";
-import { db } from "@/lib/db";
-import { companies } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
-import { parseNaturalLanguagePolicy } from "@/lib/policy-engine";
+import { parsePolicyWithNearAI } from "@/app/actions/policy";
 
 export async function POST(req: NextRequest) {
   try {
-    await requireSessionUser();
+    if (Number(req.headers.get("content-length")) > 30000) return NextResponse.json({ error: "Policy request is too large" }, { status: 413 });
     const body = await req.json();
     const { text, delegateAccount, companyId } = body;
 
@@ -18,31 +14,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let companyPolicy: string | null = null;
-    if (companyId) {
-      const [co] = await db
-        .select({ companyPolicy: companies.companyPolicy })
-        .from(companies)
-        .where(eq(companies.id, companyId))
-        .limit(1);
-      companyPolicy = co?.companyPolicy ?? null;
-    }
-
-    const result = await parseNaturalLanguagePolicy({
+    const result = await parsePolicyWithNearAI({
       text,
       delegateAccount,
       companyId,
-      companyPolicy,
     });
 
     return NextResponse.json(result);
-  } catch (error: any) {
-    if (error?.message?.includes("Unauthorized") || error?.message?.includes("session")) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("Unauthorized") || message.includes("session")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    if (message.startsWith("Forbidden:")) return NextResponse.json({ error: message }, { status: 403 });
+    if (message.startsWith("Enter a policy") || error instanceof SyntaxError) return NextResponse.json({ error: message || "Invalid policy request" }, { status: 400 });
     console.error("[api/policies/parse] Error:", error);
     return NextResponse.json(
-      { error: error?.message || "Internal server error" },
+      { error: "Policy review is unavailable. Try again or configure it manually." },
       { status: 500 },
     );
   }

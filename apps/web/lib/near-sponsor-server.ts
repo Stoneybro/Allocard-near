@@ -5,7 +5,7 @@ import { KeyPair, utils } from "near-api-js";
 import { Action, createTransaction, Signature, SignedTransaction, functionCall, transfer } from "near-api-js/lib/transaction";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { computeCompanyId, decodeMutationId, parseTokenAmount, parseTreasuryReference, treasuryReference } from "@allocard/delegation-sdk";
+import { computeCompanyId, decodeMutationId, parseTokenAmount, parseTreasuryReference, treasuryReference, type TreasuryConfig } from "@allocard/delegation-sdk";
 import { requireEmployeeCompany, requireSessionUser } from "./auth-guard";
 import { db } from "./db";
 import { agents, companies, companyMemberships, delegations, users } from "./db/schema";
@@ -20,7 +20,7 @@ import { verifiedSharedConfig } from "./shared-server";
 import { NearReadError } from "./near-read-error";
 import { nearRpcServerUrl } from "./near-rpc-server";
 import { nextAccessKeyNonce } from "./near-nonce";
-import { MAX_SPONSORED_COMPANY_DEPOSIT, canonicalSponsorJson, sponsoredCompanyDelegate, sponsoredDelegate, sponsoredSigningBytes, SPONSORED_VALID_BLOCKS, type SponsoredCompany, type SponsoredCompanyProof, type SponsoredPayment, type SponsoredProof } from "./near-sponsored-action";
+import { COMPANY_STORAGE_TOP_UP, COMPANY_OPERATING_TOP_UP, MAX_SPONSORED_COMPANY_DEPOSIT, canonicalSponsorJson, sponsoredCompanyDelegate, sponsoredDelegate, sponsoredSigningBytes, SPONSORED_VALID_BLOCKS, type SponsoredCompany, type SponsoredCompanyProof, type SponsoredPayment, type SponsoredProof } from "./near-sponsored-action";
 import { acquireSponsorKey, allocateSponsorNonce, claimSponsorJob, findSponsorJob, finishSponsorJob, releaseSponsorKey, releaseUnbroadcastJob, saveSponsorTransaction, type SponsorJob } from "./near-sponsor-store";
 import { invalidateNearReadCache } from "./near-read-coordinator";
 import { NearRpcError, describeNearRpcError } from "./near-rpc-error";
@@ -37,7 +37,7 @@ const requestSchema = z.object({
 export const sponsoredPaymentSchema = z.object({ treasury: z.string().min(2).max(130), request: requestSchema }).strict();
 export const sponsoredProofSchema = sponsoredPaymentSchema.extend({ nonce: decimal.max(20), maxBlockHeight: decimal.max(20), signature: z.string().regex(/^0x[0-9a-fA-F]{128}$/) });
 
-export const sponsoredCompanySchema = z.object({ companyKey: z.uuid(), contractId: account, deposit: decimal }).strict();
+export const sponsoredCompanySchema = z.object({ companyKey: z.uuid(), contractId: account, deposit: decimal, fundReserves: z.literal(true).optional() }).strict();
 export const sponsoredCompanyProofSchema = sponsoredCompanySchema.extend({ nonce: decimal.max(20), maxBlockHeight: decimal.max(20), signature: z.string().regex(/^0x[0-9a-fA-F]{128}$/) });
 export function companySponsorshipEnabled() { return sponsorshipEnabled() && process.env.NEAR_SPONSOR_COMPANY_ENABLED === "true"; }
 
@@ -142,16 +142,16 @@ async function submitOuter(id: string, actor: string, intentHash: string, receiv
       return recover(job, intentHash);
     }
     ownsJob = true;
-    const gasPrice = await relayRpc("gas_price", [null]);
-    if (typeof gasPrice.gas_price !== "string" || BigInt(gasPrice.gas_price) > 1_000_000_000n) throw new Error("Gas price exceeds the sponsor's configured safety ceiling");
-    const [access, relayerAccount] = await Promise.all([
+    const [access, relayerAccount, gasPrice] = await Promise.all([
       nearQuery({ request_type: "view_access_key", account_id: config.accountId, public_key: config.key.getPublicKey().toString() }),
       nearQuery({ request_type: "view_account", account_id: config.accountId }),
+      relayRpc("gas_price", [null]),
     ]).catch(caught => {
       if (caught instanceof NearReadError && caught.code === "UNKNOWN_ACCESS_KEY") throw new Error(`The configured relayer signing key is not registered on ${config.accountId}. Set NEAR_RELAYER_PRIVATE_KEY to a registered regular FullAccess key for that account.`);
       if (caught instanceof NearReadError && caught.code === "UNKNOWN_ACCOUNT") throw new Error(`The relayer account ${config.accountId} does not exist on NEAR testnet.`);
       throw caught;
     });
+    if (typeof gasPrice.gas_price !== "string" || BigInt(gasPrice.gas_price) > 1_000_000_000n) throw new Error("Gas price exceeds the sponsor's configured safety ceiling");
     const innerActions = actions.flatMap(action => action.signedDelegate?.delegateAction.actions ?? [action]);
     const attachedDeposit = innerActions.reduce((total, action) => total + (action.functionCall?.deposit ?? action.transfer?.deposit ?? 0n), 0n);
     const storageBytes = relayerAccount.storage_usage;
@@ -171,7 +171,7 @@ async function submitOuter(id: string, actor: string, intentHash: string, receiv
     // Never broadcast before the exact signed transaction and hash are durable.
     await saveSponsorTransaction(id, transactionHash, serialized);
     invalidateNearReadCache();
-    const metadataOnly = innerActions.every(action => action.functionCall && ["create_company", "create_child_permission", "register_asset", "set_asset_enabled"].includes(action.functionCall.methodName));
+    const metadataOnly = innerActions.every(action => action.functionCall && ["create_company", "create_child_permission", "register_asset", "set_asset_enabled", "top_up_storage", "top_up_operating"].includes(action.functionCall.methodName));
     const started = Date.now();
     const result = await relayRpc("send_tx", { signed_tx_base64: serialized, wait_until: metadataOnly ? "EXECUTED" : "FINAL" }, transactionHash);
     console.info("[sponsor timing]", { transactionHash, stage: "execution", durationMs: Date.now() - started });
@@ -193,15 +193,23 @@ async function submitOuter(id: string, actor: string, intentHash: string, receiv
 }
 
 async function ensureSigningAccount(actor: string) {
-  try { await nearQuery({ request_type: "view_account", account_id: actor }); }
-  catch (caught) {
+  const publicKey = utils.PublicKey.fromString(`ed25519:${utils.serialize.base_encode(Buffer.from(actor, "hex"))}`);
+  const accessParams = { request_type: "view_access_key", account_id: actor, public_key: publicKey.toString() };
+  const [account, initialAccess] = await Promise.allSettled([
+    nearQuery({ request_type: "view_account", account_id: actor }), nearQuery(accessParams),
+  ]);
+  let access;
+  if (account.status === "rejected") {
+    const caught = account.reason;
     if (!(caught instanceof NearReadError) || caught.code !== "UNKNOWN_ACCOUNT") throw caught;
     // One zero-value transfer creates the implicit account and its regular key.
     // The relayer pays creation gas; it never transfers spendable principal.
     await submitOuter(hash(`activate\0${actor}`), actor, hash(`activate\0${actor}`), actor, [transfer(0n)]);
+    access = await nearQuery(accessParams);
+  } else {
+    if (initialAccess.status === "rejected") throw initialAccess.reason;
+    access = initialAccess.value;
   }
-  const publicKey = utils.PublicKey.fromString(`ed25519:${utils.serialize.base_encode(Buffer.from(actor, "hex"))}`);
-  const access = await nearQuery({ request_type: "view_access_key", account_id: actor, public_key: publicKey.toString() });
   if (access.permission !== "FullAccess") throw new Error("This wallet needs its original regular FullAccess key. Sponsorship cannot replace a removed key.");
   return access;
 }
@@ -266,6 +274,11 @@ async function authorizeCompanyOwner(company: SponsoredCompany) {
 function companyJobId(actor: string, company: SponsoredCompany) {
   return hash(`create_company\0${company.contractId}\0${actor}\0${company.companyKey}`);
 }
+function companyIntentHash(company: SponsoredCompany) {
+  // New clients include bounded reserve top-ups. A retry must still recover an
+  // older registration job rather than pay the registration deposit again.
+  return hash(canonicalSponsorJson({ companyKey: company.companyKey, contractId: company.contractId, deposit: company.deposit }));
+}
 async function companyRegistered(company: SponsoredCompany, companyId: string): Promise<boolean> {
   const result = await nearQuery({ request_type: "call_function", account_id: company.contractId, method_name: "company_exists", args_base64: Buffer.from(JSON.stringify({ company_id: companyId })).toString("base64") });
   const exists = JSON.parse(Buffer.from(result.result).toString("utf8"));
@@ -275,23 +288,25 @@ async function companyRegistered(company: SponsoredCompany, companyId: string): 
 export async function prepareSponsoredCompany(company: SponsoredCompany) {
   sponsorConfig();
   const { identity, companyId } = await authorizeCompanyOwner(company);
-  await assertTestnet();
-  if (await companyRegistered(company, companyId)) return { enabled: true, registered: true };
-  const intentHash = hash(canonicalSponsorJson(company));
-  const existing = await findSponsorJob(companyJobId(identity.walletAddress, company));
+  const [, registered, existing] = await Promise.all([
+    assertTestnet(), companyRegistered(company, companyId), findSponsorJob(companyJobId(identity.walletAddress, company)),
+  ]);
+  if (registered) return { enabled: true, registered: true };
+  const intentHash = companyIntentHash(company);
   if (existing) return { enabled: true, outcome: await recover(existing, intentHash) };
   const access = await ensureSigningAccount(identity.walletAddress);
   if (!Number.isSafeInteger(access.block_height)) throw new Error("NEAR returned an invalid block height");
   return { enabled: true, nonce: nextAccessKeyNonce(access.nonce).toString(), maxBlockHeight: String(access.block_height + SPONSORED_VALID_BLOCKS) };
 }
 export async function submitSponsoredCompany(proof: SponsoredCompanyProof) {
-  const company = sponsoredCompanySchema.parse({ companyKey: proof.companyKey, contractId: proof.contractId, deposit: proof.deposit });
+  const company = sponsoredCompanySchema.parse({ companyKey: proof.companyKey, contractId: proof.contractId, deposit: proof.deposit, ...(proof.fundReserves ? { fundReserves: proof.fundReserves } : {}) });
   const { identity, companyId } = await authorizeCompanyOwner(company);
-  await assertTestnet();
-  if (await companyRegistered(company, companyId)) return { enabled: true, registered: true };
-  const intentHash = hash(canonicalSponsorJson(company));
   const id = companyJobId(identity.walletAddress, company);
-  const existing = await findSponsorJob(id);
+  const [, registered, existing] = await Promise.all([
+    assertTestnet(), companyRegistered(company, companyId), findSponsorJob(id),
+  ]);
+  if (registered) return { enabled: true, registered: true };
+  const intentHash = companyIntentHash(company);
   if (existing) return { enabled: true, outcome: await recover(existing, intentHash) };
   const delegate = sponsoredCompanyDelegate(identity.walletAddress, company, proof.nonce, proof.maxBlockHeight);
   const digest = createHash("sha256").update(sponsoredSigningBytes(delegate)).digest();
@@ -442,7 +457,8 @@ export async function fundMockUsdcTreasury(input: {
   companyId: string;
   treasury: string;
   claimId: string;
-}) {
+}, verifiedConfig?: TreasuryConfig) {
+  const started = Date.now();
   const token = MOCK_USDC_ACCOUNT_ID;
   if (!token || !sponsorshipEnabled()) throw new Error("Mock USDC funding is unavailable");
   const scope = parseTreasuryReference(input.treasury);
@@ -450,13 +466,6 @@ export async function fundMockUsdcTreasury(input: {
     throw new Error("Mock USDC funding requires this company's shared treasury");
   }
   const config = sponsorConfig();
-  const [, minter, ledger] = await Promise.all([
-    assertTestnet(), readToken(token, "get_minter", {}), treasuryReader(input.treasury, { cacheMs: 0 }).getAssetLedger(SPENDING_ASSET),
-  ]);
-  if (!token.endsWith(".testnet") || minter !== config.accountId) {
-    throw new Error("The configured test token must authorize the relayer as its minter");
-  }
-  if (!ledger?.enabled) throw new Error("Mock USDC is not enabled for this company treasury");
   const activation = input.claimId === "activation";
   const claim = activation ? "activation" : z.uuid().parse(input.claimId);
   const amount = parseTokenAmount(activation ? ACTIVATION_USDC : FAUCET_USDC, SPENDING_DECIMALS);
@@ -469,16 +478,30 @@ export async function fundMockUsdcTreasury(input: {
   }
 
   const accounts = [...new Set([config.accountId, scope.contractId])];
-  const [registrationDeposit, registrations] = await Promise.all([
+  const [, minter, ledger, registrationDeposit, registrations] = await Promise.all([
+    assertTestnet(), readToken(token, "get_minter", {}), treasuryReader(input.treasury, { cacheMs: 0 }).getAssetLedger(SPENDING_ASSET),
     tokenStorageMinimum(token), Promise.all(accounts.map(account_id => readToken(token, "storage_balance_of", { account_id }))),
   ]);
+  if (!token.endsWith(".testnet") || minter !== config.accountId) {
+    throw new Error("The configured test token must authorize the relayer as its minter");
+  }
+  if (!ledger?.enabled) throw new Error("Mock USDC is not enabled for this company treasury");
   const companyArgs = Buffer.from(canonicalSponsorJson({ company_id: scope.companyId }));
-  if (activation) {
+  // This fresh, owner-verified config is supplied by the activation action,
+  // never by the browser. Old or partially completed registrations retain the
+  // journaled reserve top-up path. New batches already funded these pools.
+  const reservesReady = verifiedConfig
+    && /^\d+$/.test(verifiedConfig.storage_funding_remaining)
+    && /^\d+$/.test(verifiedConfig.operating_budget_remaining)
+    && BigInt(verifiedConfig.storage_funding_remaining) >= BigInt(COMPANY_STORAGE_TOP_UP)
+    && BigInt(verifiedConfig.operating_budget_remaining) >= BigInt(COMPANY_OPERATING_TOP_UP);
+  console.info("[activation timing]", { stage: "funding_preflight", durationMs: Date.now() - started, reservesAlreadyFunded: Boolean(reservesReady) });
+  if (activation && !reservesReady) {
     // Contract storage and the FT transfer deposit still use native NEAR.
     const reserveId = hash(`mock-usdc-reserves\0${input.treasury}`);
     await submitOuter(reserveId, input.owner, reserveId, scope.contractId, [
-      functionCall("top_up_storage", companyArgs, 30_000_000_000_000n, 200_000_000_000_000_000_000_000n),
-      functionCall("top_up_operating", companyArgs, 30_000_000_000_000n, 20_000_000_000_000_000_000_000n),
+      functionCall("top_up_storage", companyArgs, 30_000_000_000_000n, BigInt(COMPANY_STORAGE_TOP_UP)),
+      functionCall("top_up_operating", companyArgs, 30_000_000_000_000n, BigInt(COMPANY_OPERATING_TOP_UP)),
     ]);
   }
   const actions: Action[] = [];
@@ -492,7 +515,9 @@ export async function fundMockUsdcTreasury(input: {
     functionCall("ft_transfer_call", Buffer.from(canonicalSponsorJson({ receiver_id: scope.contractId, amount, msg: companyArgs.toString("utf8") })), 110_000_000_000_000n, 1n),
   );
   const outcome = await submitOuter(id, input.owner, intentHash, token, actions);
-  return creditedMockUsdc(id, outcome, amount);
+  const credited = await creditedMockUsdc(id, outcome, amount);
+  console.info("[activation timing]", { stage: "demo_funding", durationMs: Date.now() - started, transactionHash: credited.txHash });
+  return credited;
 }
 
 async function creditedMockUsdc(id: string, outcome: RpcOutcome, amount: string) {

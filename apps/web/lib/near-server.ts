@@ -67,13 +67,13 @@ export function treasuryReader(contractId: string, options: { cacheMs?: number }
 
 export async function verifyTreasuryOwner(contractId: string, owner: string) {
   const scope = parseTreasuryReference(contractId);
-  const [config, account, expectedHash] = await Promise.all([
+  const [config, account, expectedHash, keys] = await Promise.all([
     treasuryReader(contractId).getConfig(), nearQuery({ request_type: "view_account", account_id: scope.contractId }), scope.companyId ? sharedTreasuryCodeHash() : treasuryCodeHash(),
+    nearQuery({ request_type: "view_access_key_list", account_id: scope.contractId }),
   ]);
   const legacyVersion = scope.companyId ? 3 : 2;
   const releaseHash = [legacyVersion, legacyVersion + 1].includes(config.schema_version) ? await legacyTreasuryCodeHash(!!scope.companyId, config.schema_version) : expectedHash;
   assertTreasuryCode(account, releaseHash);
-  const keys = await nearQuery({ request_type: "view_access_key_list", account_id: scope.contractId });
   if (!Array.isArray(keys.keys) || keys.keys.length !== 0) throw new Error("Treasury has retained access keys that could bypass spending policies");
   if (![legacyVersion, legacyVersion + 1, legacyVersion + 2].includes(config.schema_version) || config.network_domain !== "near:testnet" || config.owner !== owner) {
     throw new Error("Treasury must be a compatible Allocard testnet contract owned by your signing account");

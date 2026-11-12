@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const state=vi.hoisted(()=>({account:{} as Record<string,unknown>,keys:[] as unknown[],config:{} as Record<string,unknown>}));
 vi.mock('@/lib/treasury-code',()=>({sharedTreasuryCodeHash:async()=> 'shared-code',legacyTreasuryCodeHash:async()=> 'shared-code'}));
 vi.mock('@/lib/near-server',()=>({nearQuery:async({request_type}:{request_type:string})=>request_type==='view_account'?state.account:request_type==='view_access_key_list'?{keys:state.keys}:{result:[...Buffer.from(JSON.stringify(state.config))]}}));
-import { verifiedSharedConfig } from '@/lib/shared-server';
-beforeEach(()=>{
+let verifiedSharedConfig: typeof import('@/lib/shared-server').verifiedSharedConfig;
+beforeEach(async()=>{
+ vi.resetModules();
  vi.stubEnv('SHARED_TREASURY_ACCOUNT_ID','shared.testnet');
  state.account={code_hash:'shared-code'};state.keys=[];
  state.config={schema_version:3,network_domain:'near:testnet',creation_deposit:'200000000000000000000000'};
+ ({ verifiedSharedConfig } = await import('@/lib/shared-server'));
 });
 afterEach(()=>vi.unstubAllEnvs());
 describe('verified shared treasury configuration',()=>{
