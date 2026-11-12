@@ -23,3 +23,13 @@ No contract redeployment or database migration is required for this follow-up.
 ## Deployment
 
 Live at `https://www.allocard.xyz`, deployment `dpl_6iUfvZb3GiVJE6Vz5fyRjgDj79Md` (`READY`). Compilation, type checking and page generation passed. Live checks returned HTTP 200 for the homepage and schema-5 treasury endpoint, correct employer/employee sign-in redirects, and HTTP 401 for unauthenticated policy parsing. Reload existing dashboard tabs to use the new client code. An authenticated payment timing measurement remains for the next user transaction.
+
+## Follow-up: zero-balance employer delegation
+
+A tester reported `INVALID_TRANSACTION / NotEnoughBalance`, with zero native NEAR in the employer's implicit account. The employer root-permission operation still used wallet-funded signing. Treasury mock USDC cannot pay that wallet's native transaction fee. The reported rejection occurred before execution.
+
+Employer allowance creation now uses an employer-signed NEP-366 action paid by the existing relayer. The server validates company ownership, active employer membership, the accepted employee, the exact signed policy, verified treasury code and unallocated funds. It journals the transaction before broadcast and recovers the same grant after uncertain results. The generic root-permission transport cannot fall back to charging the user's wallet. Employer and employee-agent revocation also use bounded sponsorship and remain possible while paused or expired. No contract redeployment or database migration was needed.
+
+The server agent-permission preview now allows the child recurring window selected in the updated drawer. Parent windows remain independently enforced by the contract; other inherited bounds remain unchanged.
+
+Validation: all 485 web tests passed, including real-signature root/revocation coverage, authorization failures, zero-deposit gas bounds and root recovery without allocating twice. Type checking, targeted lint and production compilation/page generation passed. Deployment `dpl_72FKPykA35A6Zok3HujrMDzewhJ4` is `READY` and aliased to `https://www.allocard.xyz`. A fresh signed-in delegation from the tester remains the live end-to-end confirmation.

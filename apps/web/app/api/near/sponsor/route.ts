@@ -2,6 +2,10 @@ import { sameSiteOrigin } from "@/lib/request-origin";
 import { getSessionIdentity } from "@/lib/session";
 import { prepareSponsoredAdapter, submitSponsoredAdapter } from "@/lib/near-sponsor-server";
 import { sponsoredAdapterSchema, sponsoredAdapterProofSchema } from "@/lib/adapter-permission-schema";
+import { sponsoredRootSchema, sponsoredRootProofSchema } from "@/lib/adapter-permission-schema";
+import { prepareSponsoredRoot, submitSponsoredRoot, RootPermissionFailedError } from "@/lib/near-root-sponsor-server";
+import { sponsoredRevokeSchema, sponsoredRevokeProofSchema } from "@/lib/adapter-permission-schema";
+import { prepareSponsoredRevoke, submitSponsoredRevoke } from "@/lib/near-revoke-sponsor-server";
 import { databaseFailure } from "@/lib/db/error";
 import { NearRpcError } from "@/lib/near-rpc-error";
 import { TransactionNotSubmittedError } from "@/lib/payment-submission";
@@ -17,8 +21,18 @@ export async function POST(request: Request) {
   try {
     const body = JSON.parse(text);
     const { operation, ...input } = body;
-    if (!["prepare", "submit", "prepare-company", "submit-company", "prepare-adapter", "submit-adapter"].includes(operation)) return Response.json({ error: "Unsupported sponsorship operation" }, { status: 400, headers });
+    if (!["prepare", "submit", "prepare-company", "submit-company", "prepare-adapter", "submit-adapter", "prepare-root", "submit-root", "prepare-revoke", "submit-revoke"].includes(operation)) return Response.json({ error: "Unsupported sponsorship operation" }, { status: 400, headers });
     if (!sponsorshipEnabled()) return Response.json({ enabled: false }, { headers });
+    if (operation === "prepare-revoke" || operation === "submit-revoke") {
+      const parsed = (operation === "prepare-revoke" ? sponsoredRevokeSchema : sponsoredRevokeProofSchema).safeParse(input);
+      if (!parsed.success) return Response.json({ error: "Invalid sponsored revocation" }, { status: 400, headers });
+      return Response.json(operation === "prepare-revoke" ? await prepareSponsoredRevoke(sponsoredRevokeSchema.parse(input)) : await submitSponsoredRevoke(sponsoredRevokeProofSchema.parse(input)), { headers });
+    }
+    if (operation === "prepare-root" || operation === "submit-root") {
+      const parsed = (operation === "prepare-root" ? sponsoredRootSchema : sponsoredRootProofSchema).safeParse(input);
+      if (!parsed.success) return Response.json({ error: "Invalid sponsored employee allowance" }, { status: 400, headers });
+      return Response.json(operation === "prepare-root" ? await prepareSponsoredRoot(sponsoredRootSchema.parse(input)) : await submitSponsoredRoot(sponsoredRootProofSchema.parse(input)), { headers });
+    }
     if (operation === "prepare-adapter" || operation === "submit-adapter") {
       const schema = operation === "prepare-adapter" ? sponsoredAdapterSchema : sponsoredAdapterProofSchema;
       if (!schema.safeParse(input).success) return Response.json({ error: "Invalid sponsored adapter permission" }, { status: 400, headers });
@@ -41,6 +55,7 @@ export async function POST(request: Request) {
     return Response.json(result, { headers });
   } catch (caught) {
     if (caught instanceof SyntaxError || caught instanceof TypeError) return Response.json({ error: "Invalid sponsorship request" }, { status: 400, headers });
+    if (caught instanceof RootPermissionFailedError) return Response.json({ error: caught.message, submissionState: "failed" }, { status: 409, headers });
     const dbError = databaseFailure(caught);
     const notSubmitted = caught instanceof TransactionNotSubmittedError || (caught instanceof NearRpcError && caught.rpcCause === "INVALID_TRANSACTION");
     return Response.json({ error: dbError ?? (caught instanceof Error ? caught.message : "Gas sponsorship is unavailable"), ...(notSubmitted ? { submissionState: "not_submitted" } : {}) }, { status: dbError ? 503 : 409, headers });

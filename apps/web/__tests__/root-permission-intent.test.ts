@@ -28,5 +28,6 @@ it("does not sign a duplicate grant if a successful response lost its permission
   const intent = { terms: "rules", spec: {} as PermissionSpec, permissionId: null, attempted: true };
   expect(() => assertRootPermissionRetrySafe(intent, false)).toThrow("may already have reserved funds");
   expect(() => assertRootPermissionRetrySafe(intent, true)).not.toThrow();
+  expect(() => assertRootPermissionRetrySafe({ ...intent, sponsored: true }, false)).not.toThrow();
   expect(() => assertRootPermissionRetrySafe({ ...intent, permissionId: "7" }, false)).not.toThrow();
 });

@@ -47,3 +47,8 @@ export async function releaseRejectedSponsorJob(id: string, transactionHash: str
 export async function releaseUncreditedFaucetJob(id: string, transactionHash: string) {
   await db.delete(jobs).where(and(eq(jobs.id, id), eq(jobs.transactionHash, transactionHash)));
 }
+
+/** Caller must verify a failed receipt for the single atomic root-grant action. */
+export async function releaseFailedRootPermissionJob(id: string, transactionHash: string) {
+  await db.delete(jobs).where(and(eq(jobs.id, id), eq(jobs.transactionHash, transactionHash)));
+}

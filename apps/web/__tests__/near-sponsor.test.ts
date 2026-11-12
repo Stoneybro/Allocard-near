@@ -299,6 +299,14 @@ function adapterProof() {
  return {...adapterPermission,nonce:"2",maxBlockHeight:"220",signature:`0x${sign(null,digest,employeeKey.privateKey).toString("hex")}`};
 }
 describe("adapter child permission gas sponsorship",()=>{
+ it("allows an independent child window while keeping employer windows enforced by the ancestry", async () => {
+  const root = configureAdapter(); mocks.adapterRows = adapterRows();
+  const parentWindow = { limit: "100", duration_ms: "604800000", anchor_ms: "0" };
+  Object.assign(root.rules[0], { fixed_window: parentWindow });
+  const permission = { ...adapterPermission, spec: { ...adapterPermission.spec, rules: [{ ...adapterPermission.spec.rules[0], fixed_window: { limit: "10", duration_ms: "86400000", anchor_ms: "0" } }] } };
+  expect(await prepareSponsoredAdapter(permission)).toMatchObject({ enabled: true });
+  expect(root.rules[0]).toMatchObject({ fixed_window: parentWindow });
+ });
  it("quotes a nonce for a zero-balance employee without transferring them spendable funds",async()=>{
   configureAdapter();mocks.adapterRows=adapterRows();
   expect(await prepareSponsoredAdapter(adapterPermission)).toMatchObject({enabled:true,nonce:"2"});

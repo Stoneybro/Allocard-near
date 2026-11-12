@@ -20,7 +20,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ACTIVATION_USDC, FAUCET_USDC, MOCK_USDC_ACCOUNT_ID, NEAR_DECIMALS, SPENDING_DECIMALS, SPENDING_ASSET, TOKEN_SYMBOL, getAddressExplorerUrl, getTxExplorerUrl } from "@/lib/chain";
 import { formatWalletAddress } from "@/lib/wallet";
-import { parseTreasuryReference, type PermissionSpec } from "@allocard/delegation-sdk";
+import { parseTreasuryReference, decodeMutationId, type PermissionSpec } from "@allocard/delegation-sdk";
 import {
   getUnifiedNearCaller,
   createNearRpcCaller,
@@ -592,9 +592,12 @@ export function EmployerClient({
         let permissionId = intent.permissionId;
         if (!permissionId) {
           assertRootPermissionRetrySafe(intent, Boolean(readPendingNearTransaction(auth.accountId)));
-          localStorage.setItem(intentKey, JSON.stringify({ ...intent, attempted: true }));
+          localStorage.setItem(intentKey, JSON.stringify({ ...intent, attempted: true, sponsored: true }));
           setActivationStage("Waiting for wallet signature and network confirmation…");
-          try { permissionId = await client.createRootPermission(intent.spec); }
+          try {
+            const sponsored = await auth.createEmployeePermission({ treasury: company.smartAccountAddress, delegationId: selectedDelegation.id, spec: intent.spec });
+            permissionId = decodeMutationId(sponsored && typeof sponsored === "object" && "rootPermissionId" in sponsored ? sponsored.rootPermissionId : sponsored);
+          }
           catch (caught) {
             releaseUnsubmittedRootPermission(localStorage, intentKey, caught);
             setRecoveringPermission(Boolean(localStorage.getItem(intentKey)));

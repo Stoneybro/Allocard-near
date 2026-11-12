@@ -11,7 +11,7 @@ describe("authoritative NEAR validation rejection",()=>{
   const account = "ef".repeat(32);
   vi.mocked(nearBrowserRpc).mockReset().mockResolvedValueOnce({ permission: "FullAccess", nonce: "3", block_hash: "1".repeat(32) });
   const transport = createPrivyNearTransport(account, async () => { throw new Error("User cancelled signature"); });
-  await expect(transport.caller.functionCall!({ contractId: "treasury.testnet", methodName: "create_root_permission", args: {} })).rejects.toBeInstanceOf(RetryableNearTransactionError);
+  await expect(transport.caller.functionCall!({ contractId: "treasury.testnet", methodName: "create_child_permission", args: {} })).rejects.toBeInstanceOf(RetryableNearTransactionError);
   expect(readPendingNearTransaction(account)).toBeNull();
   expect(vi.mocked(nearBrowserRpc).mock.calls.map(([method]) => method)).toEqual(["query"]);
  });

@@ -14,7 +14,7 @@ import { withTimeout } from "@/lib/request-timeout";
 export type AuthState =
   | { status: "connecting" }
   | { status: "unauthenticated"; connect: () => void; connecting: boolean; error?: string }
-  | { status: "authenticated"; address: string; accountId: string; providerUserId: string; email: string; authMethod: "privy"; disconnect: () => Promise<void>; establishSession: () => Promise<SessionIdentity>; caller: NearCaller; sendActions: NearActionSender; createAdapterPermission: ReturnType<typeof createPrivyNearTransport>["createAdapterPermission"] };
+  | { status: "authenticated"; address: string; accountId: string; providerUserId: string; email: string; authMethod: "privy"; disconnect: () => Promise<void>; establishSession: () => Promise<SessionIdentity>; caller: NearCaller; sendActions: NearActionSender; createEmployeePermission: ReturnType<typeof createPrivyNearTransport>["createEmployeePermission"]; createAdapterPermission: ReturnType<typeof createPrivyNearTransport>["createAdapterPermission"] };
 const AuthContext = createContext<AuthState>({ status: "connecting" });
 const privyConfig = {
   loginMethods: ["email", "google"] as ("email" | "google")[],

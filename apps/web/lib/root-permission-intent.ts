@@ -2,9 +2,9 @@ import type { PermissionSpec } from "@allocard/delegation-sdk";
 import { RetryableNearTransactionError } from "./near-transaction-error";
 
 type Storage = Pick<globalThis.Storage, "getItem" | "setItem" | "removeItem">;
-export type RootPermissionIntent = { terms: string; spec: PermissionSpec; permissionId: string | null; attempted?: boolean };
+export type RootPermissionIntent = { terms: string; spec: PermissionSpec; permissionId: string | null; attempted?: boolean; sponsored?: boolean };
 export function assertRootPermissionRetrySafe(intent: RootPermissionIntent, hasPendingTransaction: boolean) {
-  if (!intent.permissionId && intent.attempted && !hasPendingTransaction) throw new Error("The earlier signing attempt has no recoverable transaction result. Check its transaction in the explorer before creating another allowance; it may already have reserved funds.");
+  if (!intent.permissionId && intent.attempted && !hasPendingTransaction && !intent.sponsored) throw new Error("The earlier signing attempt has no recoverable transaction result. Check its transaction in the explorer before creating another allowance; it may already have reserved funds.");
 }
 export function releaseUnsubmittedRootPermission(storage: Storage, key: string, error: unknown) {
   if (!(error instanceof RetryableNearTransactionError)) return false;

@@ -16,12 +16,16 @@ export type SponsoredCompanyProof = SponsoredCompany & { nonce: string; maxBlock
 export type SponsoredPayment = { treasury: string; request: ExecuteRequest };
 export type SponsoredProof = SponsoredPayment & { nonce: string; maxBlockHeight: string; signature: string };
 export type SponsoredAdapterPermission = { treasury: string; delegationId: string; parentId: string; spec: PermissionSpec };
+export type SponsoredRevocation = { treasury: string; permissionId: string };
+export type SponsoredRevocationProof = SponsoredRevocation & { nonce: string; maxBlockHeight: string; signature: string };
+export type SponsoredRootPermission = { treasury: string; delegationId: string; spec: PermissionSpec };
+export type SponsoredRootProof = SponsoredRootPermission & { nonce: string; maxBlockHeight: string; signature: string };
 export type SponsoredAdapterProof = SponsoredAdapterPermission & { nonce: string; maxBlockHeight: string; signature: string };
 export function canonicalSponsorJson(value: unknown): string {
   return JSON.stringify(value, (_key, item) => item && typeof item === "object" && !Array.isArray(item)
     ? Object.fromEntries(Object.entries(item).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)) : item);
 }
-function delegateAction(accountId: string, receiverId: string, method: "execute" | "create_company" | "create_child_permission", args: object, gas: string, deposit: string, nonce: string, maxBlockHeight: string) {
+function delegateAction(accountId: string, receiverId: string, method: "execute" | "create_company" | "create_child_permission" | "create_root_permission" | "revoke_permission", args: object, gas: string, deposit: string, nonce: string, maxBlockHeight: string) {
   if (!/^[0-9a-f]{64}$/.test(accountId)) throw new Error("Sponsorship requires a NEAR implicit account");
   if (![nonce, maxBlockHeight].every(value => /^(0|[1-9][0-9]*)$/.test(value) && BigInt(value) < 2n ** 64n)) throw new Error("Invalid sponsored transaction nonce or expiry");
   return {
@@ -54,6 +58,14 @@ export function sponsoredCompanyDelegate(accountId: string, company: SponsoredCo
 export function sponsoredAdapterDelegate(accountId: string, permission: SponsoredAdapterPermission, nonce: string, maxBlockHeight: string) {
   const scope = parseTreasuryReference(permission.treasury);
   return delegateAction(accountId, scope.contractId, "create_child_permission", { parent_id: permission.parentId, spec: permission.spec, ...(scope.companyId ? { company_id: scope.companyId } : {}) }, "80000000000000", "0", nonce, maxBlockHeight);
+}
+export function sponsoredRootDelegate(accountId: string, permission: SponsoredRootPermission, nonce: string, maxBlockHeight: string) {
+  const scope = parseTreasuryReference(permission.treasury);
+  return delegateAction(accountId, scope.contractId, "create_root_permission", { spec: permission.spec, ...(scope.companyId ? { company_id: scope.companyId } : {}) }, "80000000000000", "0", nonce, maxBlockHeight);
+}
+export function sponsoredRevokeDelegate(accountId: string, input: SponsoredRevocation, nonce: string, maxBlockHeight: string) {
+  const scope = parseTreasuryReference(input.treasury);
+  return delegateAction(accountId, scope.contractId, "revoke_permission", { permission_id: input.permissionId, ...(scope.companyId ? { company_id: scope.companyId } : {}) }, "80000000000000", "0", nonce, maxBlockHeight);
 }
 export function sponsoredSigningBytes(delegate: ReturnType<typeof sponsoredDelegate>) {
   // Includes the NEP-461 domain prefix; regular transaction signatures cannot be reused.

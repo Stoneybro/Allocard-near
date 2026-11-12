@@ -1,12 +1,12 @@
-import { sponsoredCreateAdapter, sponsoredCreateCompany, sponsoredExecute } from "./near-sponsor-client";
-import type { SponsoredAdapterPermission } from "./near-sponsored-action";
+import { sponsoredCreateAdapter, sponsoredCreateCompany, sponsoredCreateRoot, sponsoredRevokePermission, sponsoredExecute } from "./near-sponsor-client";
+import type { SponsoredAdapterPermission, SponsoredRootPermission } from "./near-sponsored-action";
 import { nextAccessKeyNonce } from "./near-nonce";
 import { Buffer } from "buffer";
 import { utils } from "near-api-js";
 import { createTransaction, SignedTransaction, Signature, type Action } from "near-api-js/lib/transaction";
 import type { NearCaller } from "@allocard/delegation-sdk";
 import { MOCK_USDC_ACCOUNT_ID, SPENDING_ASSET } from "./chain";
-import { computeCompanyId } from "@allocard/delegation-sdk";
+import { computeCompanyId, treasuryReference } from "@allocard/delegation-sdk";
 import { nearBrowserRpc } from "./near-rpc-client";
 import { NearRpcError } from "./near-rpc-error";
 import { RetryableNearTransactionError } from "./near-transaction-error";
@@ -19,7 +19,7 @@ export function implicitPublicKey(accountId: string) {
 }
 const rpc = nearBrowserRpc;
 /** The employee signs direct transactions or a bounded NEP-366 action; a relayer only sponsors gas. */
-export function createPrivyNearTransport(accountId: string, signHash: (hash: `0x${string}`) => Promise<`0x${string}`>): { caller: NearCaller; sendActions: NearActionSender; createAdapterPermission: (input: SponsoredAdapterPermission) => Promise<unknown> } {
+export function createPrivyNearTransport(accountId: string, signHash: (hash: `0x${string}`) => Promise<`0x${string}`>): { caller: NearCaller; sendActions: NearActionSender; createAdapterPermission: (input: SponsoredAdapterPermission) => Promise<unknown>; createEmployeePermission: (input: SponsoredRootPermission) => Promise<unknown> } {
   const publicKey = implicitPublicKey(accountId);
   let queue: Promise<unknown> = Promise.resolve();
   const enqueue = <T,>(operation: () => Promise<T>): Promise<T> => {
@@ -117,6 +117,11 @@ export function createPrivyNearTransport(accountId: string, signHash: (hash: `0x
         if (pending) { try { pendingMethod = JSON.parse(pending.requestKey).methodName ?? null; } catch { /* Unknown intents remain guarded. */ } }
         const unrelatedAdapter = pending && pendingMethod === "create_child_permission" && methodName === "execute";
         if (pending && !unrelatedAdapter) return sendDirect(directRequest, requestKey);
+        if (methodName === "revoke_permission") {
+          const scoped = args as { company_id?: string; permission_id: string };
+          return sponsoredRevokePermission(accountId, scoped.company_id ? { treasury: treasuryReference(contractId, scoped.company_id), permissionId: scoped.permission_id } : { treasury: contractId, permissionId: scoped.permission_id }, signHash);
+        }
+        if (methodName === "create_root_permission") throw new RetryableNearTransactionError("Use the sponsored employee allowance flow. No wallet-funded allowance transaction was signed.");
         if (methodName === "create_company") {
           const companyKey = (args as { company_key?: unknown } | undefined)?.company_key;
           if (typeof companyKey !== "string") throw new Error("Company workspace identity is required");
@@ -135,7 +140,11 @@ export function createPrivyNearTransport(accountId: string, signHash: (hash: `0x
       });
     },
   };
-  return { caller, sendActions, createAdapterPermission: input => enqueue(() => {
+  return { caller, sendActions, createEmployeePermission: input => enqueue(() => {
+    const previous = readPendingNearTransaction(accountId);
+    if (previous) throw new Error(`Resolve wallet transaction ${previous.hash} before creating another allowance. No sponsored replacement was signed.`);
+    return sponsoredCreateRoot(accountId, input, signHash);
+  }), createAdapterPermission: input => enqueue(() => {
     const previous = readPendingNearTransaction(accountId);
     if (previous) throw new Error(`Resolve wallet-funded transaction ${previous.hash} before creating an adapter permission. Recover it if confirmed, or use Reset rejected transaction only if RPC explicitly returned INVALID_TRANSACTION. No new meta-transaction was signed.`);
     return sponsoredCreateAdapter(accountId, input, signHash);

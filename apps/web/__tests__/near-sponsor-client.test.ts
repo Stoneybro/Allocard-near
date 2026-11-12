@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { sponsoredCreateCompany, sponsoredExecute } from "@/lib/near-sponsor-client";
+import { sponsoredCreateCompany, sponsoredExecute, sponsoredCreateRoot, sponsoredRevokePermission } from "@/lib/near-sponsor-client";
 import { sponsoredDelegate, sponsoredSigningBytes } from "@/lib/near-sponsored-action";
 const employee = "a".repeat(64);
 const args = { company_id: "c".repeat(64), request: { api_version: 1 as const, permission_id: "7", request_id: "b".repeat(64), deadline_ms: "1000", action: { type: "Transfer" as const, asset: { type: "NativeNear" as const }, receiver: "vendor.testnet", amount: "10" } } };
@@ -96,4 +96,19 @@ it("retains the exact adapter intent after an interrupted submit and recovers wi
  await sponsoredCreateAdapter(employee,{...permission,spec:{...permission.spec,valid_from_ms:"200"}},sign);
  expect(sign).toHaveBeenCalledTimes(1);
  expect(JSON.parse(rpc.mock.calls[2][1].body).spec.valid_from_ms).toBe("100");
+});
+
+it("refuses to fall back to the zero-balance wallet when allowance sponsorship is disabled", async () => {
+ vi.stubGlobal("fetch",vi.fn(async()=>Response.json({enabled:false})));
+ const signer=vi.fn();
+ await expect(sponsoredCreateRoot(employee,{treasury:"shared.testnet",delegationId:"12345678-1234-4234-8234-123456789012",spec:{} as import("@allocard/delegation-sdk").PermissionSpec},signer)).rejects.toThrow("temporarily unavailable");
+ expect(signer).not.toHaveBeenCalled();
+ await expect(sponsoredRevokePermission(employee,{treasury:"shared.testnet",permissionId:"9"},signer)).rejects.toThrow("temporarily unavailable");
+ expect(signer).not.toHaveBeenCalled();
+});
+it("recovers an employer allowance without asking for a second signature",async()=>{
+ vi.stubGlobal("fetch",vi.fn(async()=>Response.json({enabled:true,outcome:{rootPermissionId:"9"}})));
+ const signer=vi.fn();
+ expect(await sponsoredCreateRoot(employee,{treasury:"shared.testnet",delegationId:"12345678-1234-4234-8234-123456789012",spec:{} as import("@allocard/delegation-sdk").PermissionSpec},signer)).toEqual({rootPermissionId:"9"});
+ expect(signer).not.toHaveBeenCalled();
 });

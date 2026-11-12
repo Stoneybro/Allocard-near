@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPrivyNearTransport } from "@/lib/privy-near";
 import { nextAccessKeyNonce, parseAccessKeyRpcResponse } from "@/lib/near-nonce";
 import { SignedTransaction } from "near-api-js/lib/transaction";
-vi.mock("@/lib/near-sponsor-client", () => ({ sponsoredCreateCompany: vi.fn(async () => null), sponsoredExecute: vi.fn(async () => null) }));
+vi.mock("@/lib/near-sponsor-client", () => ({ sponsoredCreateCompany: vi.fn(async () => null), sponsoredExecute: vi.fn(async () => null), sponsoredCreateRoot: vi.fn(async () => ({ rootPermissionId: "9" })), sponsoredRevokePermission: vi.fn(async () => ({ revoked: true })) }));
 vi.mock("@/lib/near-rpc-client",()=>({nearBrowserRpc:vi.fn()}));
 import { nearBrowserRpc } from "@/lib/near-rpc-client";
 const account="ab".repeat(32);
@@ -116,4 +116,15 @@ describe("payment and adapter transaction isolation",()=>{
    expect(sign).not.toHaveBeenCalled();expect(nearBrowserRpc).not.toHaveBeenCalled();
   } finally {clearPendingNearTransaction(account);}
  });
+});
+
+it("never submits a wallet-funded root grant and routes employee grants and revocation through sponsorship", async () => {
+ const { sponsoredCreateRoot, sponsoredRevokePermission } = await import("@/lib/near-sponsor-client");
+ const transport=createPrivyNearTransport(account,vi.fn());
+ await expect(transport.caller.functionCall!({contractId:"shared.testnet",methodName:"create_root_permission",args:{}})).rejects.toThrow("sponsored employee allowance");
+ await transport.createEmployeePermission({treasury:"shared.testnet",delegationId:"12345678-1234-4234-8234-123456789012",spec:{} as import("@allocard/delegation-sdk").PermissionSpec});
+ expect(sponsoredCreateRoot).toHaveBeenCalledTimes(1);
+ await transport.caller.functionCall!({contractId:"shared.testnet",methodName:"revoke_permission",args:{permission_id:"9"}});
+ expect(sponsoredRevokePermission).toHaveBeenCalledTimes(1);
+ expect(nearBrowserRpc).not.toHaveBeenCalled();
 });

@@ -41,7 +41,7 @@ export const sponsoredCompanySchema = z.object({ companyKey: z.uuid(), contractI
 export const sponsoredCompanyProofSchema = sponsoredCompanySchema.extend({ nonce: decimal.max(20), maxBlockHeight: decimal.max(20), signature: z.string().regex(/^0x[0-9a-fA-F]{128}$/) });
 export function companySponsorshipEnabled() { return sponsorshipEnabled() && process.env.NEAR_SPONSOR_COMPANY_ENABLED === "true"; }
 
-function sponsorConfig() {
+export function sponsorConfig() {
   const accountId = process.env.NEAR_RELAYER_ACCOUNT_ID;
   const secret = process.env.NEAR_RELAYER_PRIVATE_KEY;
   if (!accountId || !accountId.endsWith(".testnet") || !account.safeParse(accountId).success) throw new Error("NEAR_RELAYER_ACCOUNT_ID must be a valid .testnet account ID on the server.");
@@ -91,8 +91,8 @@ async function previewPayment(actor: string, company: typeof companies.$inferSel
   if (!preview.allowed) throw new Error("This payment is outside the employee's current treasury permission.");
 }
 
-type RpcOutcome = { status: { SuccessValue?: string; Failure?: unknown }; transaction: { hash: string; signer_id: string; receiver_id: string; actions: unknown[] } };
-async function relayRpc(method: string, params: object, txHash?: string): Promise<Record<string, unknown>> {
+export type RpcOutcome = { status: { SuccessValue?: string; Failure?: unknown }; transaction: { hash: string; signer_id: string; receiver_id: string; actions: unknown[] } };
+export async function relayRpc(method: string, params: object, txHash?: string): Promise<Record<string, unknown>> {
   try {
     const response = await fetch(nearRpcServerUrl(), { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
       body: JSON.stringify({ jsonrpc: "2.0", id: "allocard-sponsor", method, params }), signal: AbortSignal.timeout(method === "send_tx" || method === "tx" ? 40000 : 10000) });
@@ -108,7 +108,7 @@ async function relayRpc(method: string, params: object, txHash?: string): Promis
     throw new Error(txHash ? `Sponsored transaction ${txHash} is not yet confirmed. Retry this same action to check its status; it will not be submitted again.` : "The gas sponsor could not reach NEAR testnet. Retry shortly.");
   }
 }
-async function assertTestnet() {
+export async function assertTestnet() {
   const status = await relayRpc("status", {});
   if (status.chain_id !== "testnet") throw new Error("Gas sponsorship is only enabled for NEAR testnet");
 }
@@ -119,14 +119,14 @@ function assertOutcome(result: Record<string, unknown>, transactionHash: string)
   }
   return outcome;
 }
-async function recover(job: SponsorJob, intentHash: string) {
+export async function recover(job: SponsorJob, intentHash: string) {
   if (job.intentHash !== intentHash) throw new Error("This payment request ID was already used for different payment details");
   if (!job.transactionHash) throw new Error("This sponsorship attempt is reserved but has no transaction reference. Contact the operator before starting a new attempt.");
   const result = await relayRpc("tx", { tx_hash: job.transactionHash, sender_account_id: job.relayerId, wait_until: "FINAL" }, job.transactionHash);
   return assertOutcome(result, job.transactionHash);
 }
 
-async function submitOuter(id: string, actor: string, intentHash: string, receiverId: string, actions: Action[]) {
+export async function submitOuter(id: string, actor: string, intentHash: string, receiverId: string, actions: Action[]) {
   const config = sponsorConfig();
   const existing = await findSponsorJob(id);
   if (existing) return recover(existing, intentHash);
@@ -173,7 +173,7 @@ async function submitOuter(id: string, actor: string, intentHash: string, receiv
     // Never broadcast before the exact signed transaction and hash are durable.
     await saveSponsorTransaction(id, transactionHash, serialized);
     invalidateNearReadCache();
-    const metadataOnly = innerActions.every(action => action.functionCall && ["create_company", "create_child_permission", "register_asset", "set_asset_enabled", "top_up_storage", "top_up_operating"].includes(action.functionCall.methodName));
+    const metadataOnly = innerActions.every(action => action.functionCall && ["create_company", "create_root_permission", "revoke_permission", "create_child_permission", "register_asset", "set_asset_enabled", "top_up_storage", "top_up_operating"].includes(action.functionCall.methodName));
     const started = Date.now();
     const result = await relayRpc("send_tx", { signed_tx_base64: serialized, wait_until: metadataOnly ? "EXECUTED" : "FINAL" }, transactionHash);
     console.info("[sponsor timing]", { transactionHash, stage: "execution", durationMs: Date.now() - started });
@@ -194,7 +194,7 @@ async function submitOuter(id: string, actor: string, intentHash: string, receiv
   }
 }
 
-async function ensureSigningAccount(actor: string) {
+export async function ensureSigningAccount(actor: string) {
   const publicKey = utils.PublicKey.fromString(`ed25519:${utils.serialize.base_encode(Buffer.from(actor, "hex"))}`);
   const accessParams = { request_type: "view_access_key", account_id: actor, public_key: publicKey.toString() };
   const [account, initialAccess] = await Promise.allSettled([
@@ -373,8 +373,8 @@ async function previewAdapterPermission(actor: string, company: typeof companies
   if (parentRule.min_per_action != null && (rule.min_per_action == null || BigInt(rule.min_per_action)<BigInt(parentRule.min_per_action))) throw new Error("Child minimum is wider than its parent");
   const parentRecipients = parentRule.recipients;
   if (parentRecipients.type==="Only" && (rule.recipients.type!=="Only" || rule.recipients.accounts.some(account=>!parentRecipients.accounts.includes(account)))) throw new Error("Child recipients exceed parent policy");
-  for (const policy of ["fixed_window","streaming","approval"] as const) {
-    if (canonicalSponsorJson(rule[policy]??null)!==canonicalSponsorJson(parentRule[policy]??null)) throw new Error("Sponsored child must inherit parent window, streaming and approval policy");
+  for (const policy of ["streaming","approval"] as const) {
+    if (canonicalSponsorJson(rule[policy]??null)!==canonicalSponsorJson(parentRule[policy]??null)) throw new Error("Sponsored child must inherit parent streaming and approval policy");
   }
 }
 function adapterJobId(actor: string, permission: import("./near-sponsored-action").SponsoredAdapterPermission) {

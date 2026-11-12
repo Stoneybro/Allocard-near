@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ session: vi.fn(), enabled: vi.fn(), prepare: vi.fn(), submit: vi.fn(), companyEnabled: vi.fn(), companyPrepare: vi.fn(), companySubmit: vi.fn(), adapterPrepare: vi.fn(), adapterSubmit: vi.fn() }));
+const mocks = vi.hoisted(() => ({ session: vi.fn(), enabled: vi.fn(), prepare: vi.fn(), submit: vi.fn(), companyEnabled: vi.fn(), companyPrepare: vi.fn(), companySubmit: vi.fn(), adapterPrepare: vi.fn(), adapterSubmit: vi.fn(), rootPrepare: vi.fn(), rootSubmit: vi.fn() }));
+vi.mock("@/lib/near-root-sponsor-server", () => ({ prepareSponsoredRoot: mocks.rootPrepare, submitSponsoredRoot: mocks.rootSubmit, RootPermissionFailedError: class extends Error {} }));
+vi.mock("@/lib/near-revoke-sponsor-server", () => ({ prepareSponsoredRevoke: vi.fn(), submitSponsoredRevoke: vi.fn() }));
 vi.mock("@/lib/session", () => ({ getSessionIdentity: mocks.session }));
 vi.mock("@/lib/near-sponsor-server", () => ({
   prepareSponsoredAdapter: mocks.adapterPrepare, submitSponsoredAdapter: mocks.adapterSubmit,

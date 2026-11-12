@@ -1,9 +1,10 @@
 import { Buffer } from "buffer";
 import { parseTreasuryReference, type ExecuteRequest } from "@allocard/delegation-sdk";
-import { sponsoredAdapterDelegate, canonicalSponsorJson, sponsoredCompanyDelegate, sponsoredDelegate, sponsoredSigningBytes, type SponsoredAdapterPermission, type SponsoredCompany, type SponsoredPayment } from "./near-sponsored-action";
+import { sponsoredAdapterDelegate, canonicalSponsorJson, sponsoredCompanyDelegate, sponsoredDelegate, sponsoredRootDelegate, sponsoredRevokeDelegate, sponsoredSigningBytes, type SponsoredAdapterPermission, type SponsoredCompany, type SponsoredPayment, type SponsoredRootPermission, type SponsoredRevocation } from "./near-sponsored-action";
+import { RetryableNearTransactionError } from "./near-transaction-error";
 import { paymentSubmission, TransactionNotSubmittedError } from "./payment-submission";
 
-async function sponsorRequest(operation: "prepare" | "submit" | "prepare-company" | "submit-company" | "prepare-adapter" | "submit-adapter", body: object) {
+async function sponsorRequest(operation: "prepare" | "submit" | "prepare-company" | "submit-company" | "prepare-adapter" | "submit-adapter" | "prepare-root" | "submit-root" | "prepare-revoke" | "submit-revoke", body: object) {
   let response: Response;
   try {
     response = await fetch("/api/near/sponsor", {
@@ -17,6 +18,7 @@ async function sponsorRequest(operation: "prepare" | "submit" | "prepare-company
   const result = await response.json().catch(() => null);
   if (!response.ok || !result) {
     const message=result?.error ?? "Gas sponsorship could not be confirmed. Retry the same action to check its status.";
+    if(result?.submissionState==="failed" && (operation==="prepare-root" || operation==="submit-root")) throw new RetryableNearTransactionError(message);
     if(result?.submissionState==="not_submitted")throw new TransactionNotSubmittedError(message);
     throw new Error(message);
   }
@@ -85,4 +87,38 @@ export async function sponsoredCreateAdapter(accountId: string, input: Sponsored
   const result = await sponsorRequest("submit-adapter", {...permission,nonce:prepared.nonce,maxBlockHeight:prepared.maxBlockHeight,signature});
   if (!result.outcome) throw new Error("Adapter sponsorship is not confirmed. Retry the same permission to recover its original transaction.");
   return result.outcome;
+}
+
+export async function sponsoredCreateRoot(accountId: string, permission: SponsoredRootPermission, signHash: (hash: `0x${string}`) => Promise<`0x${string}`>) {
+  try {
+    const prepared = await sponsorRequest("prepare-root", permission);
+    if (!prepared.enabled) throw new TransactionNotSubmittedError("Employee allowance setup is temporarily unavailable. Please retry shortly.");
+    if (prepared.outcome) return prepared.outcome;
+    const delegate = sponsoredRootDelegate(accountId, permission, prepared.nonce, prepared.maxBlockHeight);
+    const digest = await crypto.subtle.digest("SHA-256", sponsoredSigningBytes(delegate));
+    let signature;
+    try { signature = await signHash(`0x${Buffer.from(digest).toString("hex")}`); }
+    catch { throw new TransactionNotSubmittedError("Wallet signing was not completed. No allowance transaction was submitted."); }
+    if (!/^0x[0-9a-fA-F]{128}$/.test(signature)) throw new TransactionNotSubmittedError("The employer wallet did not return a valid signature");
+    const result = await sponsorRequest("submit-root", { ...permission, nonce: prepared.nonce, maxBlockHeight: prepared.maxBlockHeight, signature });
+    if (!result.outcome) throw new Error("Employee allowance is not confirmed. Retry the same policy to recover the original transaction.");
+    return result.outcome;
+  } catch (error) {
+    if (error instanceof TransactionNotSubmittedError) throw new RetryableNearTransactionError(error.message);
+    throw error;
+  }
+}
+
+export async function sponsoredRevokePermission(accountId: string, input: SponsoredRevocation, signHash: (hash: `0x${string}`) => Promise<`0x${string}`>) {
+  const prepared = await sponsorRequest("prepare-revoke", input);
+  if (!prepared.enabled) throw new Error("Revoking access is temporarily unavailable. Please retry shortly.");
+  if (prepared.revoked) return { revoked: true };
+  if (prepared.outcome) return prepared.outcome;
+  const delegate = sponsoredRevokeDelegate(accountId, input, prepared.nonce, prepared.maxBlockHeight);
+  const digest = await crypto.subtle.digest("SHA-256", sponsoredSigningBytes(delegate));
+  const signature = await signHash(`0x${Buffer.from(digest).toString("hex")}`);
+  if (!/^0x[0-9a-fA-F]{128}$/.test(signature)) throw new Error("Invalid permission revocation signature");
+  const result = await sponsorRequest("submit-revoke", { ...input, nonce: prepared.nonce, maxBlockHeight: prepared.maxBlockHeight, signature });
+  if (!result.revoked && !result.outcome) throw new Error("Revocation is not yet confirmed. Retry the same permission.");
+  return result.outcome || { revoked: true };
 }
