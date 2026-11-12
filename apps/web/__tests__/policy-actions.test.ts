@@ -1,15 +1,30 @@
 import { beforeEach, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ user: vi.fn(), rows: [] as unknown[], where: vi.fn(), ai: vi.fn() }));
-vi.mock("@/lib/auth-guard", () => ({ requireSessionUser: mocks.user }));
-vi.mock("@/lib/db", () => ({ db: { select: () => ({ from: () => ({ where: (condition: unknown) => { mocks.where(condition); return { limit: async () => mocks.rows }; } }) }) } }));
+const mocks = vi.hoisted(() => ({ user: vi.fn(), membership: vi.fn(), rows: [] as unknown[], queue: null as unknown[][] | null, where: vi.fn(), ai: vi.fn() }));
+vi.mock("@/lib/auth-guard", () => ({ requireSessionUser: mocks.user, requireEmployeeCompany: mocks.membership }));
+vi.mock("@/lib/db", () => ({ db: { select: () => ({ from: () => ({ where: (condition: unknown) => { mocks.where(condition); return { limit: async () => mocks.queue ? mocks.queue.shift() ?? [] : mocks.rows }; } }) }) } }));
 vi.mock("@/lib/ai", () => ({ aiChat: mocks.ai, getTextModel: () => "model", getApiKey: () => "configured" }));
 import { parsePolicyWithNearAI } from "@/app/actions/policy";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { TOKEN_SYMBOL } from "@/lib/chain";
 const input = { text: `A total budget of 50 ${TOKEN_SYMBOL}.`, delegateAccount: "employee.testnet", companyId: "12345678-1234-4234-8234-123456789012" };
 beforeEach(() => {
-  vi.clearAllMocks(); mocks.user.mockResolvedValue({ id: "owner-id" }); mocks.rows = [{ companyPolicy: null }];
+  vi.clearAllMocks(); mocks.queue = null; mocks.membership.mockResolvedValue(undefined); mocks.user.mockResolvedValue({ id: "owner-id" }); mocks.rows = [{ companyPolicy: null }];
   mocks.ai.mockResolvedValue({ confidence: 0.95, lifetimeLimitNear: "50", period: "none", warnings: [], semanticGuardrails: "", clarificationQuestions: [] });
+});
+it("allows an employee to parse only their own agent policy under an active company allowance", async () => {
+  mocks.queue = [[{ parentDelegationId: "parent", delegateeId: "agent" }], [{ signedDelegation: { rules: [] } }], [{ smartAccountAddress: "agent.testnet" }], [{ companyPolicy: null }]];
+  const result = await parsePolicyWithNearAI({ ...input, delegateAccount: "agent.testnet", delegationId: "22345678-1234-4234-8234-123456789012" });
+  expect(result.success).toBe(true);
+  expect(mocks.membership).toHaveBeenCalledWith("owner-id", input.companyId);
+  expect(mocks.ai).toHaveBeenCalledTimes(1);
+  const childQuery = new PgDialect().sqlToQuery(mocks.where.mock.calls[0][0]);
+  expect(childQuery.params).toContain("owner-id");
+  expect(childQuery.params).toContain("pending_config");
+});
+it("rejects a spoofed agent target before sending company policy to AI", async () => {
+  mocks.queue = [[{ parentDelegationId: "parent", delegateeId: "agent" }], [{ signedDelegation: {} }], [{ smartAccountAddress: "other.testnet" }], [{ companyPolicy: "private" }]];
+  await expect(parsePolicyWithNearAI({ ...input, delegationId: "22345678-1234-4234-8234-123456789012" })).rejects.toThrow("Forbidden");
+  expect(mocks.ai).not.toHaveBeenCalled();
 });
 it("authorizes the company owner before reading company policy or calling AI", async () => {
   mocks.rows = [];

@@ -11,3 +11,9 @@ The follow-up web release adds these changes without changing contract code:
 - Recovery looks for the original funding job before performing fresh token preflights. Company intent hashes remain compatible with earlier registration jobs; the signed action includes the new reserve choice. Old owner proofs remain valid for their original bounded action list.
 
 Durable signed-transaction storage, signature validation, key leases, nonce allocation, relayer balance checks and exact USDC credit verification remain required. USDC funding still waits for final settlement. Logs now include `[activation timing]` for funding preflight, funding completion and the full company activation action. Compare those measurements after a fresh signed-in activation; removing work does not establish a guaranteed wall-clock duration.
+
+## Release verification
+
+Deployed to `https://www.allocard.xyz` on November 12, 2026 as Vercel deployment `dpl_5UMYJ6AJrr3xsmmWTr11TzPFDu8b` (`READY`). The release was assembled from the reviewed `b9c7ed4` baseline plus the activation changes so concurrent policy-editor work was preserved in the workspace.
+
+All 432 web tests, type checking and targeted lint passed. The updated Mock USDC NEAR sandbox test passed with creation, token setup and both reserve top-ups in one batch, followed by funding and spending. Vercel compilation, type checking and page generation passed. Read-only production checks confirmed the homepage, sign-in redirects and schema-5 treasury endpoint. A repeated immutable-configuration request took 622 ms after an initial 4,128 ms read in this smoke check; this is not an end-to-end activation measurement. A signed-in activation still needs fresh timing logs. Reload an existing browser tab before testing so it uses the new owner-signed batch.

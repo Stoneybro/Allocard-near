@@ -801,6 +801,7 @@ export function EmployerClient({
 
         {company.smartAccountAddress && treasuryBudget?.reservationsSupported === false && <p role="status" className="text-xs leading-5 text-muted-foreground">This treasury uses the previous release: employee allowances are not reserved. Migrate to the reservation release before assigning new allowances.</p>}
         <SectionCards
+          onRefresh={refreshDashboard}
           employeeCount={dashboardState.summary.employeeCount}
           balanceLoading={treasuryBalance.isPending && !!company.smartAccountAddress}
           smartAccountBalance={company.smartAccountAddress ? ethBalance ?? "—" : "0"}
@@ -924,7 +925,7 @@ export function EmployerClient({
       {selectedDelegation && <PolicyConfigurationDrawer
         key={`${currentAuthAddress}:${company?.id}:${selectedDelegation.id}`}
         open mobile={isMobile}
-        identity={selectedDelegateeIdentity?.label ?? "Employee"}
+        identity={selectedDelegateeIdentity?.fullEmail ?? selectedDelegateeIdentity?.label ?? "Employee"}
         account={(() => { try { return resolveDelegateAddress(selectedDelegation); } catch { return ""; } })()}
         companyId={company?.id ?? ""}
         status={selectedDelegation.status}

@@ -31,4 +31,8 @@ describe("payment history accepts only settled executions", () => {
     mocks.inserted = []; mocks.rows.push([{ id: "existing", employeeId: "employee", companyId: "company", delegationId: "delegation" }]);
     const response = await POST(request(details)); expect(response.status).toBe(200); expect((await response.json()).transaction.id).toBe("existing");
   });
+  it("rejects a supplied request identity that differs from the settled execution", async () => {
+    expect((await POST(request({ ...details, requestId: "b".repeat(64) }))).status).toBe(409);
+    expect(mocks.values).not.toHaveBeenCalled();
+  });
 });

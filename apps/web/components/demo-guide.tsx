@@ -22,7 +22,7 @@ const directions = [
 
 const employeeDirections = [
   null,
-  { title: "Return to the employer dashboard", text: "Switch to your original browser window. The employee you just added should now be listed under Employees. Click Add delegation, select that employee, then Configure. Set a spending limit, configure a policy, and click Activate delegation. Return to this incognito window to spend." },
+  { title: "Next step", text: "Go back to the employer dashboard." },
   { title: "Your allowance is ready", text: "You can now make a direct payment or use an agent from this dashboard. That’s the end of the demo." },
 ];
 

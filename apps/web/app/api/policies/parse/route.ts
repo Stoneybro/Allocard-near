@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parsePolicyWithNearAI } from "@/app/actions/policy";
+export const runtime = "nodejs";
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {
     if (Number(req.headers.get("content-length")) > 30000) return NextResponse.json({ error: "Policy request is too large" }, { status: 413 });
     const body = await req.json();
-    const { text, delegateAccount, companyId } = body;
+    const { text, delegateAccount, companyId, delegationId } = body;
 
     if (!text || typeof text !== "string") {
       return NextResponse.json(
@@ -18,8 +20,10 @@ export async function POST(req: NextRequest) {
       text,
       delegateAccount,
       companyId,
+      delegationId,
     });
 
+    if (result.provider === "fallback-rules") return NextResponse.json({ error: "AI policy parsing is unavailable. Please retry shortly or configure the policy manually.", code: "AI_UNAVAILABLE" }, { status: 503 });
     return NextResponse.json(result);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "";

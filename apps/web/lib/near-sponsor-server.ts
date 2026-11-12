@@ -82,10 +82,12 @@ async function authorizeEmployee(payment: SponsoredPayment) {
 async function previewPayment(actor: string, company: typeof companies.$inferSelect, payment: SponsoredPayment) {
   const [owner] = await withRetry(() => db.select().from(users).where(eq(users.id, company.ownerId)).limit(1), "sponsor:owner");
   if (!owner) throw new Error("Company owner not found");
-  const config = await verifyTreasuryOwner(payment.treasury, owner.nearAccountId ?? owner.embeddedWalletAddress);
   const reader = treasuryReader(payment.treasury);
-  assertEmployeePermission(await reader.getPermission(payment.request.permission_id), actor, config.owner, config.authority_epoch);
-  const preview = await reader.previewExecute(actor, payment.request);
+  const [config, permission, preview] = await Promise.all([
+    verifyTreasuryOwner(payment.treasury, owner.nearAccountId ?? owner.embeddedWalletAddress),
+    reader.getPermission(payment.request.permission_id), reader.previewExecute(actor, payment.request),
+  ]);
+  assertEmployeePermission(permission, actor, config.owner, config.authority_epoch);
   if (!preview.allowed) throw new Error("This payment is outside the employee's current treasury permission.");
 }
 
@@ -215,40 +217,46 @@ async function ensureSigningAccount(actor: string) {
 }
 
 export async function prepareSponsoredPayment(payment: SponsoredPayment) {
+  const started = Date.now();
   sponsorConfig();
   const { identity, company } = await authorizeEmployee(payment);
-  await assertTestnet();
   const intentHash = hash(canonicalSponsorJson(payment));
   const existing = await findSponsorJob(paymentJobId(identity.walletAddress, payment));
-  if (existing) return { enabled: true, outcome: await recover(existing, intentHash) };
-  await previewPayment(identity.walletAddress, company, payment);
+  if (existing) { await assertTestnet(); return { enabled: true, outcome: await recover(existing, intentHash) }; }
+  await Promise.all([assertTestnet(), previewPayment(identity.walletAddress, company, payment)]);
   const access = await ensureSigningAccount(identity.walletAddress);
   if (!Number.isSafeInteger(access.block_height)) throw new Error("NEAR returned an invalid block height");
+  console.info("[payment timing]", { stage: "prepare", durationMs: Date.now() - started });
   return { enabled: true, nonce: nextAccessKeyNonce(access.nonce).toString(), maxBlockHeight: String(access.block_height + SPONSORED_VALID_BLOCKS) };
 }
 
 export async function submitSponsoredPayment(proof: SponsoredProof) {
+  const started = Date.now();
   const payment = sponsoredPaymentSchema.parse({ treasury: proof.treasury, request: proof.request });
   const { identity, company } = await authorizeEmployee(payment);
-  await assertTestnet();
   const id = paymentJobId(identity.walletAddress, payment);
   const intentHash = hash(canonicalSponsorJson(payment));
   const existing = await findSponsorJob(id);
-  if (existing) return { enabled: true, outcome: await recover(existing, intentHash) };
+  if (existing) { await assertTestnet(); return { enabled: true, outcome: await recover(existing, intentHash) }; }
   const scope = parseTreasuryReference(payment.treasury);
   const delegate = sponsoredDelegate(identity.walletAddress, scope.contractId, paymentArgs(payment), proof.nonce, proof.maxBlockHeight);
   const digest = createHash("sha256").update(sponsoredSigningBytes(delegate)).digest();
   const publicKey = createPublicKey({ key: Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), Buffer.from(identity.walletAddress, "hex")]), format: "der", type: "spki" });
   if (!verify(null, digest, publicKey, Buffer.from(proof.signature.slice(2), "hex"))) throw new Error("Invalid employee meta-transaction signature");
-  const access = await nearQuery({ request_type: "view_access_key", account_id: identity.walletAddress, public_key: delegate.publicKey.toString() });
+  const [access, , , storage] = await Promise.all([
+    nearQuery({ request_type: "view_access_key", account_id: identity.walletAddress, public_key: delegate.publicKey.toString() }),
+    assertTestnet(), previewPayment(identity.walletAddress, company, payment),
+    payment.request.action.asset.type === "Nep141" ? spendingTokenRegistration(payment.request.action.receiver) : Promise.resolve(null),
+  ]);
   if (access.permission !== "FullAccess" || delegate.nonce !== nextAccessKeyNonce(access.nonce)) throw new Error("The employee signing nonce changed. Retry this payment with a fresh signature.");
   if (!Number.isSafeInteger(access.block_height) || delegate.maxBlockHeight <= BigInt(access.block_height) || delegate.maxBlockHeight > BigInt(access.block_height + SPONSORED_VALID_BLOCKS)) throw new Error("The employee meta-transaction expired or has an excessive validity window");
-  await previewPayment(identity.walletAddress, company, payment);
-  if (payment.request.action.asset.type === "Nep141") {
-    await registerSpendingTokenReceiver(identity.walletAddress, payment.request.action.receiver);
+  if (storage) {
+    await submitOuter(storage.id, identity.walletAddress, storage.intentHash, storage.token, storage.actions);
   }
   const action = new Action({ signedDelegate: { delegateAction: delegate, signature: new Signature({ keyType: delegate.publicKey.keyType, data: Buffer.from(proof.signature.slice(2), "hex") }) } });
-  return { enabled: true, outcome: await submitOuter(id, identity.walletAddress, intentHash, identity.walletAddress, [action]) };
+  const outcome = await submitOuter(id, identity.walletAddress, intentHash, identity.walletAddress, [action]);
+  console.info("[payment timing]", { stage: "submit", durationMs: Date.now() - started, transactionHash: outcome.transaction.hash });
+  return { enabled: true, outcome };
 }
 
 
@@ -442,14 +450,18 @@ async function tokenStorageMinimum(token: string): Promise<bigint> {
   return deposit;
 }
 
-async function registerSpendingTokenReceiver(actor: string, receiver: string) {
+async function spendingTokenRegistration(receiver: string) {
   const token = MOCK_USDC_ACCOUNT_ID;
-  if (!token || await readToken(token, "storage_balance_of", { account_id: receiver }) !== null) return;
+  if (!token) return null;
+  const [balance, minimum] = await Promise.all([
+    readToken(token, "storage_balance_of", { account_id: receiver }), tokenStorageMinimum(token),
+  ]);
+  if (balance !== null) return null;
   const args = { account_id: receiver, registration_only: true };
   const id = hash(`mock-usdc-storage\0${token}\0${receiver}`);
-  await submitOuter(id, actor, hash(canonicalSponsorJson(args)), token, [
-    functionCall("storage_deposit", Buffer.from(canonicalSponsorJson(args)), 20_000_000_000_000n, await tokenStorageMinimum(token)),
-  ]);
+  return { id, intentHash: hash(canonicalSponsorJson(args)), token, actions: [
+    functionCall("storage_deposit", Buffer.from(canonicalSponsorJson(args)), 20_000_000_000_000n, minimum),
+  ] };
 }
 
 export async function fundMockUsdcTreasury(input: {

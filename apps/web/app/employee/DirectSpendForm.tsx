@@ -1,7 +1,7 @@
 "use client";
 import { isUnsubmittedPayment } from "@/lib/pending-payment";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useSettlementRefresh, useAccountScope } from "@/hooks/use-account-queries";
 import type { Execution } from "@allocard/delegation-sdk";
@@ -33,7 +33,7 @@ type Props = {
   delegationId: string;
   pendingStorageKey?: string;
   remainingBalanceNear: string;
-  onExecute: (details: { toAddress: string; amountNear: string; purpose?: string; isFlagged?: boolean }) => Promise<string>;
+  onExecute: (details: { toAddress: string; amountNear: string; purpose?: string; isFlagged?: boolean }, onSettled?: (hash: string) => void) => Promise<string>;
 };
 
 export function DirectSpendForm({ loading = false, companyId, delegationId, pendingStorageKey, remainingBalanceNear, onExecute }: Props) {
@@ -48,7 +48,13 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
   const [error, setError] = useState<string | null>(null);
 
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
-  const execution = useMutation({ mutationFn: onExecute, retry: false });
+  const settled = useRef(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const execution = useMutation({ mutationFn: (details: Parameters<Props["onExecute"]>[0]) => onExecute(details, hash => {
+    settled.current = true;
+    setTxHash(hash); setLastExecutedAmount(details.amountNear); setLastExecutedRecipient(details.toAddress);
+    setStep("done"); setIsConfirmOpen(false); setSyncError(null);
+  }), retry: false });
   const isExecuting = execution.isPending;
   const refreshAfterSettlement = useSettlementRefresh();
   const { key } = useAccountScope();
@@ -137,7 +143,7 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
   };
 
   const handleExecute = async () => {
-    setError(null);
+    setError(null); setSyncError(null); settled.current = false;
     const recipient = toAddress.trim();
     const amount = amountNear.trim();
 
@@ -161,6 +167,12 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
         },
       });
     } catch (err) {
+      if (settled.current) {
+        setSyncError("Payment sent. Its history could not be saved yet. Sync it below; no new payment will be made.");
+        setIsConfirmOpen(false);
+        toast.warning("Payment sent; history needs to sync.");
+        return;
+      }
       if (pendingStorageKey) {
         const saved = JSON.parse(localStorage.getItem(pendingStorageKey) || "null");
         setHasPendingRequest(!!saved && !isUnsubmittedPayment(saved));
@@ -284,6 +296,8 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
               </p>
             </div>
 
+            {isExecuting && <p role="status" className="text-xs text-muted-foreground">Payment sent. Saving history…</p>}
+            {syncError && <div role="status" className="space-y-2 text-xs"><p>{syncError}</p><Button variant="outline" disabled={isExecuting} onClick={handleExecute}>Sync payment history</Button></div>}
             {txHash && (
               <div className="w-full rounded-lg border border-border/80 bg-muted/30 p-3 flex items-center justify-between text-xs">
                 <span className="text-muted-foreground">Transaction</span>
@@ -302,6 +316,7 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
             <Button
               variant="outline"
               className="w-full text-xs"
+              disabled={isExecuting || !!syncError}
               onClick={() => {
                 setToAddress("");
                 setAmountNear("");

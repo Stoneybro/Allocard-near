@@ -295,6 +295,7 @@ Your goal is to parse natural-language spending authorization requests into:
 2. Semantic expense guardrails for off-chain AI verification.
 
 Key NEAR Protocol Context:
+- The current time is ${new Date(nowMs).toISOString()}. For a relative expiry such as "in 30 days", set expiresInDays to 30 and expiresAtIso to null. Only use expiresAtIso for an explicit calendar date. Never invent today's date.
 - Currency is ${TOKEN_SYMBOL} (amounts expressed in human-readable decimal format, e.g. "50", "2.5").
 - Accounts are named (e.g. "alex.near", "treasury.testnet") or 64-char hex IDs.
 - Fixed rolling budget periods supported: "none", "hourly", "daily", "weekly", "monthly" (fixed 30 days).
@@ -307,6 +308,7 @@ Key NEAR Protocol Context:
 - A finite explicit lifetime total is required by this application. Ask for it when absent; do not reuse the recurring or per-payment limit as the total.
 - This employee payment flow supports lifetime total, one fixed recurring window, per-payment cap, exact recipient accounts, maxExecutions, and expiry. Approval workflows, streaming budgets, schedules with future start dates, and other rules require clarification; never ignore them.
 - Qualitative instructions such as business categories or receipts belong in semanticGuardrails and must include a warning that they are not enforced on-chain.
+- Return semanticGuardrails as null when there are no qualitative instructions. Warnings describe actual problems or unenforced requests, not explanations of supported limits or statements that a problem is absent.
 
 Return ONLY valid JSON matching this schema:
 {

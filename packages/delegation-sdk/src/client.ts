@@ -305,6 +305,7 @@ export class AllocardTreasuryClient {
     });
 
     let executionId: string;
+    let confirmedRecord: Execution | null = null;
     if (res?.status?.SuccessValue === "" && res.status.Failure === undefined) {
       // A NEP-366 outer receipt can confirm with an empty return value.
       // Resolve the inner execution through its replay record, never by coercing
@@ -323,11 +324,13 @@ export class AllocardTreasuryClient {
         throw new Error(`Transaction${hash ? ` ${hash}` : ""} confirmed without a return value, but its matching treasury execution could not be verified. Keep this payment request and retry it to reconcile the original transaction.`);
       }
       executionId = decodeMutationId(record.id);
+      if (record.status !== "Pending") confirmedRecord = record;
     } else {
       executionId = decodeMutationId(res);
     }
 
     const waitForOutcome = async (timeoutMs = 30000, intervalMs = 1000): Promise<Execution> => {
+      if (confirmedRecord) return confirmedRecord;
       const startTime = Date.now();
       while (Date.now() - startTime < timeoutMs) {
         const record = await this.getExecution(executionId);

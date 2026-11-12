@@ -1,36 +1,33 @@
 /**
  * lib/ai.ts — NEAR AI Cloud integration module (with DashScope fallback)
  *
- * Primary Endpoint: https://api.near.ai/v1 (NEAR AI Cloud)
+ * Primary Endpoint: https://cloud-api.near.ai/v1 (NEAR AI Cloud)
  * Auth: Authorization: Bearer $NEAR_AI_API_KEY
  *
  * Model:
  *   - Text / reasoning / policy parsing: deepseek-ai/DeepSeek-V4.1-Flash-1017 (or Qwen/Qwen3.8-27B)
  */
 
-const DEFAULT_NEAR_AI_BASE_URL = "https://api.near.ai/v1";
+const DEFAULT_NEAR_AI_BASE_URL = "https://cloud-api.near.ai/v1";
 const DEFAULT_DASHSCOPE_BASE_URL = "https://ws-hjdcclpedbb2egen.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
 
 const DEFAULT_NEAR_AI_TEXT_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-1017";
 const DEFAULT_DASHSCOPE_TEXT_MODEL = "qwen3.8-max";
 
+function nearKey() { return process.env.NEAR_AI_API_KEY?.trim() || process.env.NEARAI_API_KEY?.trim() || null; }
 export function getBaseUrl(): string {
-  if (process.env.NEAR_AI_BASE_URL) return process.env.NEAR_AI_BASE_URL;
-  if (process.env.NEAR_AI_API_KEY) return DEFAULT_NEAR_AI_BASE_URL;
-  if (process.env.DASHSCOPE_BASE_URL) return process.env.DASHSCOPE_BASE_URL;
-  if (process.env.DASHSCOPE_API_KEY) return DEFAULT_DASHSCOPE_BASE_URL;
-  return DEFAULT_NEAR_AI_BASE_URL;
+  const base = nearKey() || !process.env.DASHSCOPE_API_KEY?.trim()
+    ? process.env.NEAR_AI_BASE_URL || process.env.NEARAI_BASE_URL || DEFAULT_NEAR_AI_BASE_URL
+    : process.env.DASHSCOPE_BASE_URL || DEFAULT_DASHSCOPE_BASE_URL;
+  return base.replace(/\/+$/, "");
 }
-
 export function getApiKey(): string | null {
-  return process.env.NEAR_AI_API_KEY ?? process.env.DASHSCOPE_API_KEY ?? null;
+  return nearKey() || process.env.DASHSCOPE_API_KEY?.trim() || null;
 }
-
 export function getTextModel(): string {
-  if (process.env.NEAR_AI_MODEL) return process.env.NEAR_AI_MODEL;
-  if (process.env.NEAR_AI_API_KEY) return DEFAULT_NEAR_AI_TEXT_MODEL;
-  if (process.env.DASHSCOPE_API_KEY) return DEFAULT_DASHSCOPE_TEXT_MODEL;
-  return DEFAULT_NEAR_AI_TEXT_MODEL;
+  return nearKey() || !process.env.DASHSCOPE_API_KEY?.trim()
+    ? process.env.NEAR_AI_MODEL || process.env.NEARAI_MODEL || DEFAULT_NEAR_AI_TEXT_MODEL
+    : process.env.DASHSCOPE_MODEL || DEFAULT_DASHSCOPE_TEXT_MODEL;
 }
 
 export const TEXT_MODEL = getTextModel();
@@ -65,9 +62,9 @@ export async function aiChat<T>(params: {
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    console.error(`[aiChat] API Error ${res.status}:`, text);
-    throw new Error(`AI API error ${res.status}: ${text}`);
+    await res.text();
+    console.error("[aiChat] Provider request failed", { status: res.status, model });
+    throw new Error(`AI service returned HTTP ${res.status}. Please retry or use manual setup.`);
   }
 
   const json = (await res.json()) as { choices: Array<{ message: { content: string } }> };

@@ -1,4 +1,7 @@
 "use client";
+import { PolicyConfigurationDrawer } from "@/components/policy-configuration-drawer";
+import { emptyCaveatForm, splitAddresses, validateCaveatForm, type CaveatForm, hasFormErrors } from "@/lib/policy-configuration";
+import { resolveAgentPolicyForm, buildAgentPolicySpec, agentFormFromPermission } from "@/lib/agent-policy";
 import { employeeDemoScope } from "@/lib/demo-guide-preferences";
 
 import { revokeAndSyncEmployeeAgent } from "@/lib/employee-revocation";
@@ -15,143 +18,31 @@ import { clearAdapterPermissionIntent } from "@/lib/near-sponsor-client";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import {
-  LoaderCircleIcon,
-  ShieldCheckIcon,
-  BotIcon,
-  ExternalLink,
-  BanIcon,
-  ShieldAlertIcon,
-  PlaneIcon,
-  ShoppingCartIcon,
-  CpuIcon,
-  SparklesIcon,
-  PlayIcon,
-  Settings2Icon,
-} from "lucide-react";
+
 import { toast } from "sonner";
-import {
-  createAgentRedelegation,
-  activateEmployeeDelegation,
-  revokeEmployeeDelegation,
-  saveEmployeeRedelegationCaveats,
-  setWorkspaceContext,
-  type EmployeeDashboardState,
-  type WorkspaceOption,
-  type WalletProfile,
-} from "@/app/actions/identity";
+import { createAgentRedelegation, activateEmployeeDelegation, revokeEmployeeDelegation, saveEmployeeRedelegationCaveats, setWorkspaceContext, type EmployeeDashboardState, type WalletProfile } from "@/app/actions/identity";
 import { useAuth } from "@/components/AuthProvider";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { type SidebarAgent } from "@/components/app-sidebar";
 import { EmployeeSectionCards } from "@/components/employee-section-cards";
 import { SmartAccountActivationButton } from "@/components/smart-account-activation-button";
-import { Badge } from "@/components/ui/badge";
+
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Separator } from "@/components/ui/separator";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import {
-  Drawer,
-  DrawerContent,
-  DrawerDescription,
-  DrawerFooter,
-  DrawerHeader,
-  DrawerTitle,
-} from "@/components/ui/drawer";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
+
 import { DirectSpendForm } from "./DirectSpendForm";
-import { cn } from "@/lib/utils";
-import { formatWalletAddress, getEmployeeDisplayIdentity, isValidWalletAddress } from "@/lib/wallet";
-import { SPENDING_DECIMALS, SPENDING_ASSET, sameAsset, TOKEN_SYMBOL, getAddressExplorerUrl, getTxExplorerUrl } from "@/lib/chain";
+
+import { formatWalletAddress, getEmployeeDisplayIdentity } from "@/lib/wallet";
+import { SPENDING_DECIMALS, SPENDING_ASSET, sameAsset, TOKEN_SYMBOL, getAddressExplorerUrl } from "@/lib/chain";
 import { decodeMutationId, type PermissionSpec } from "@allocard/delegation-sdk";
-import {
-  getUnifiedNearCaller,
-  getTreasuryClient,
-  parseTokenAmount,
-  formatTokenAmount,
-} from "@/lib/near";
+import { getUnifiedNearCaller, getTreasuryClient, parseTokenAmount, formatTokenAmount } from "@/lib/near";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
 type DelegationRow = EmployeeDashboardState["outboundDelegations"][number];
 
-type CaveatForm = {
-  maxAmountNear: string;
-  period: "none" | "hourly" | "daily" | "weekly" | "monthly";
-  periodAmountNear: string;
-  perTransactionCapNear: string;
-  allowedTargets: string;
-  limitedCallsEnabled: boolean;
-  limitedCalls: string;
-  policyPrompt: string;
-};
-
-type FormErrors = {
-  maxAmountNear?: string;
-  periodAmountNear?: string;
-  perTransactionCapNear?: string;
-  limitedCalls?: string;
-  allowedTargets?: string;
-  allowedTargetsWarning?: string;
-};
-
-// ── Constants ────────────────────────────────────────────────────────────────
-
-const periodDurations = {
-  hourly: 60 * 60,
-  daily: 60 * 60 * 24,
-  weekly: 60 * 60 * 24 * 7,
-  monthly: 60 * 60 * 24 * 30,
-} as const;
-
-const NEAR_AMOUNT_RE = /^\d+(\.\d+)?$/;
-
 function buildEmptyCaveatForm(parentMaxNear: string): CaveatForm {
-  return {
-    maxAmountNear: parentMaxNear,
-    period: "none",
-    periodAmountNear: "",
-    perTransactionCapNear: "",
-    allowedTargets: "",
-    limitedCallsEnabled: false,
-    limitedCalls: "1",
-    policyPrompt: "",
-  };
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function splitAddresses(value: string) {
-  return value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean);
+  return { ...emptyCaveatForm, maxAmountNear: parentMaxNear };
 }
 
 function caveatRecord(caveat: DelegationRow["caveats"][number]) {
@@ -165,6 +56,8 @@ function formFromDelegation(
   parentMaxNear: string,
 ): CaveatForm {
   if (!delegation) return buildEmptyCaveatForm(parentMaxNear);
+  const permission = delegation.signedDelegation as PermissionSpec | null;
+  if (delegation.status === "active" && permission?.rules) return agentFormFromPermission(permission, delegation.policyPrompt || "");
 
   const nextForm: CaveatForm = buildEmptyCaveatForm(parentMaxNear);
 
@@ -201,6 +94,7 @@ function formFromDelegation(
     }
   }
 
+  nextForm.policyPrompt = delegation.policyPrompt || "";
   return nextForm;
 }
 
@@ -208,17 +102,9 @@ function yoctoToNearInput(amount: string) {
   return formatTokenAmount(amount, SPENDING_DECIMALS);
 }
 
-function formatDelegationStatus(status: string) {
-  switch (status) {
-    case "pending_config": return "Pending Configuration";
-    case "active": return "Active";
-    case "revoked": return "Revoked";
-    default: return status;
-  }
-}
-
 function buildServerCaveats(form: CaveatForm) {
   return {
+    ...(form.expiresAt ? { expiresAt: new Date(form.expiresAt).toISOString() } : {}),
     maxAmountNear: form.maxAmountNear,
     period: form.period,
     periodAmountNear: form.periodAmountNear || form.maxAmountNear,
@@ -228,78 +114,6 @@ function buildServerCaveats(form: CaveatForm) {
     limitedCalls: form.limitedCallsEnabled ? Number(form.limitedCalls) : null,
     customCaveats: [],
   };
-}
-
-function validateCaveatForm(form: CaveatForm, availableMaxNear: string): FormErrors {
-  const errors: FormErrors = {};
-  const availableMax = parseFloat(availableMaxNear);
-
-  if (!NEAR_AMOUNT_RE.test(form.maxAmountNear.trim())) {
-    errors.maxAmountNear = `Enter a valid ${TOKEN_SYMBOL} amount (e.g. 0.005).`;
-  } else {
-    const max = parseFloat(form.maxAmountNear);
-    if (max <= 0) {
-      errors.maxAmountNear = "Spending limit must be greater than 0.";
-    } else if (availableMaxNear && !isNaN(availableMax)) {
-      if (max > availableMax) {
-        errors.maxAmountNear = `Cannot exceed your remaining delegated balance of ${availableMaxNear} ${TOKEN_SYMBOL}.`;
-      }
-    }
-  }
-
-  if (form.period !== "none") {
-    const raw = form.periodAmountNear.trim();
-    if (!raw) {
-      errors.periodAmountNear = "Enter a period allowance when a recurring period is selected.";
-    } else if (!NEAR_AMOUNT_RE.test(raw)) {
-      errors.periodAmountNear = `Enter a valid ${TOKEN_SYMBOL} amount (e.g. 0.01).`;
-    } else {
-      const period = parseFloat(raw);
-      const max = parseFloat(form.maxAmountNear);
-      if (period <= 0) {
-        errors.periodAmountNear = "Period allowance must be greater than 0.";
-      } else if (!errors.maxAmountNear && period > max) {
-        errors.periodAmountNear = `Period allowance cannot exceed the lifetime limit (${form.maxAmountNear} ${TOKEN_SYMBOL}).`;
-      }
-    }
-  }
-
-  const perTxRaw = form.perTransactionCapNear.trim();
-  if (perTxRaw) {
-    if (!NEAR_AMOUNT_RE.test(perTxRaw)) {
-      errors.perTransactionCapNear = `Enter a valid ${TOKEN_SYMBOL} amount (e.g. 0.005).`;
-    } else {
-      const perTx = parseFloat(perTxRaw);
-      if (perTx <= 0) {
-        errors.perTransactionCapNear = "Per-transaction cap must be greater than 0.";
-      } else {
-        const ceiling =
-          form.period !== "none" && form.periodAmountNear.trim()
-            ? parseFloat(form.periodAmountNear)
-            : parseFloat(form.maxAmountNear);
-        if (!isNaN(ceiling) && perTx > ceiling) {
-          errors.perTransactionCapNear = `Per-transaction cap cannot exceed ${form.period !== "none" ? `the period allowance (${form.periodAmountNear} ${TOKEN_SYMBOL})` : `the lifetime limit (${form.maxAmountNear} ${TOKEN_SYMBOL})`}.`;
-        }
-      }
-    }
-  }
-
-  if (form.limitedCallsEnabled) {
-    const n = Number(form.limitedCalls);
-    if (!Number.isInteger(n) || n < 1) {
-      errors.limitedCalls = "Transaction limit must be a whole number ≥ 1.";
-    }
-  }
-
-  const addresses = splitAddresses(form.allowedTargets);
-  const invalidAddresses = addresses.filter((a) => !isValidWalletAddress(a));
-  if (invalidAddresses.length > 0) {
-    errors.allowedTargets = `Invalid account${invalidAddresses.length > 1 ? "s" : ""}: ${invalidAddresses.join(", ")}`;
-  } else if (addresses.length === 0) {
-    errors.allowedTargetsWarning = "No accounts specified — the agent can send to any NEAR account.";
-  }
-
-  return errors;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -330,7 +144,6 @@ export function EmployeeClient({
   const [actionError, setError] = useState<string | null>(null);
   const [selectedDelegationId, setSelectedDelegationId] = useState<string | null>(null);
   const [caveatForm, setCaveatForm] = useState<CaveatForm>(buildEmptyCaveatForm(""));
-  const [formErrors, setFormErrors] = useState<FormErrors>({});
 
   const error = actionError ?? queryError?.message ?? dashboardState?.summary.capacityError;
 
@@ -489,8 +302,7 @@ export function EmployeeClient({
       // Wait for React to process selectedDelegationId state update so availableMaxNear recalculates
       setTimeout(() => {
         setCaveatForm(formFromDelegation(delegation, availableMaxNear));
-        setFormErrors({});
-      }, 0);
+        }, 0);
     },
     [dashboardState, availableMaxNear],
   );
@@ -501,7 +313,6 @@ export function EmployeeClient({
       if (auth.status !== "authenticated" || !auth.address || !dashboardState) return;
       const walletAddress = auth.address;
       setError(null);
-
 
       // If already delegated, open rules or task drawer
       const existing = dashboardState.outboundDelegations.find(
@@ -531,8 +342,7 @@ export function EmployeeClient({
           } : current);
           setSelectedDelegationId(pending.id);
           setCaveatForm(formFromDelegation(pending, parentMaxNear));
-          setFormErrors({});
-        } catch (caughtError) {
+            } catch (caughtError) {
           const message = caughtError instanceof Error ? caughtError.message : "Could not create redelegation";
           if (
             message.toLowerCase().includes("inbound") ||
@@ -593,11 +403,10 @@ export function EmployeeClient({
     const walletAddress = auth.address;
 
     const errors = validateCaveatForm(caveatForm, availableMaxNear);
-    setFormErrors(errors);
     const hasErrors = Object.keys(errors).some(
-      (k) => k !== "allowedTargetsWarning" && errors[k as keyof FormErrors],
+      (k) => k !== "allowedTargetsWarning" && errors[k as keyof typeof errors],
     );
-    if (hasErrors) return;
+    if (hasErrors) { setError(Object.entries(errors).filter(([key]) => key !== "allowedTargetsWarning").map(([, value]) => value).join(" ")); return; }
 
     activationLock.current = true;
     setActivatingDelegation(true);
@@ -610,13 +419,11 @@ export function EmployeeClient({
         const agent = dashboardState?.agents.find(row => row.id === selectedDelegation.delegateeId);
         const agentSmartAccountAddress = agent?.smartAccountAddress;
         if (!treasury || !parentPermissionId || !agentSmartAccountAddress) throw new Error("A treasury, active allowance and configured agent are required");
-        const parsedLimit = caveatForm.maxAmountNear ? parseTokenAmount(caveatForm.maxAmountNear, SPENDING_DECIMALS) : null;
-        const parsedPerTx = caveatForm.perTransactionCapNear ? parseTokenAmount(caveatForm.perTransactionCapNear, SPENDING_DECIMALS) : null;
 
         // Persist the rules and read the live parent concurrently. The server checks
         // the agent identity and full permission ancestry again before sponsorship.
         const [, liveParent] = await Promise.all([
-          saveEmployeeRedelegationCaveats({ walletAddress, delegationId: selectedDelegation.id, caveats: buildServerCaveats(caveatForm) }),
+          saveEmployeeRedelegationCaveats({ walletAddress, delegationId: selectedDelegation.id, caveats: buildServerCaveats(caveatForm), policyPrompt: caveatForm.policyPrompt }),
           (async () => {
             const childCaller = await getUnifiedNearCaller(auth);
             return getTreasuryClient(childCaller, treasury).getPermission(parentPermissionId);
@@ -624,29 +431,7 @@ export function EmployeeClient({
         ]);
         const parentRule = liveParent?.rules.find(rule => sameAsset(rule.asset, SPENDING_ASSET));
         if (!liveParent || !parentRule || liveParent.revoked || liveParent.delegate !== walletAddress) throw new Error("Employee permission is unavailable");
-        const childSpec: PermissionSpec = {
-          delegate: agentSmartAccountAddress,
-          valid_from_ms: Date.now().toString(),
-          expires_at_ms: liveParent.expires_at_ms,
-          max_executions: caveatForm.limitedCallsEnabled && caveatForm.limitedCalls ? Number(caveatForm.limitedCalls) : liveParent.max_executions,
-          rules: [
-            {
-              asset: SPENDING_ASSET,
-              recipients: caveatForm.allowedTargets && caveatForm.allowedTargets.length > 0
-                ? { type: "Only", accounts: splitAddresses(caveatForm.allowedTargets) }
-                : parentRule.recipients,
-              min_per_action: parentRule.min_per_action,
-              max_per_action: parsedPerTx ?? parentRule.max_per_action,
-              lifetime_limit: parsedLimit,
-              fixed_window: parentRule.fixed_window,
-              streaming: parentRule.streaming,
-              approval: parentRule.approval,
-              acknowledge_unbounded_budget: !parsedLimit,
-            },
-          ],
-          redelegation_depth: 0,
-          metadata_hash: null,
-        };
+        const childSpec = buildAgentPolicySpec(caveatForm, agentSmartAccountAddress, liveParent);
 
         setActivationStage("signing");
         const sponsored = await auth.createAdapterPermission({ treasury, delegationId: selectedDelegation.id, parentId: parentPermissionId, spec: childSpec });
@@ -683,10 +468,8 @@ export function EmployeeClient({
     });
   }, [selectedDelegation, auth, caveatForm, availableMaxNear, dashboardState, setDashboardState, refreshDashboard]);
 
-
-
   // Persist a request before signing. Retrying an uncertain dispatch reuses it.
-  const handleExecuteSpend = async (details: { toAddress: string; amountNear: string; purpose?: string; isFlagged?: boolean }) => {
+  const handleExecuteSpend = async (details: { toAddress: string; amountNear: string; purpose?: string; isFlagged?: boolean }, onSettled?: (hash: string) => void) => {
     if (auth.status !== "authenticated") throw new Error("Connect your NEAR signing wallet");
     const activePermissionId = dashboardState?.inboundDelegation?.delegationHash;
     const company = dashboardState?.company;
@@ -703,26 +486,32 @@ export function EmployeeClient({
       delegationId: dashboardState?.inboundDelegation?.id,
       readExecution: requestId => client.getExecutionByRequest(auth.accountId, requestId),
     });
-    if (!existing) {
-      const preview = await client.previewExecute(auth.accountId, saved.request);
-      if (!preview.allowed) { if (!saved.attempted) localStorage.removeItem(key); throw new Error(preview.error_message || preview.error_code || "Payment is outside your spending permission"); }
+    let record;
+    if (existing?.status === "Succeeded" && saved.transactionHash) {
+      if (existing.actor !== auth.accountId || existing.request_hash !== client.getExecuteHash(auth.accountId, saved.request)) throw new Error("Saved payment does not match its confirmed execution.");
+      record = existing;
+      saved.executionId = existing.id;
+    } else {
+      // The sponsor validates before signing and again before dispatch; the
+      // contract independently enforces every rule. Avoid a third browser preview.
+      saved.attempted = true;
+      localStorage.setItem(key, JSON.stringify(saved));
+      const outcome = await client.execute(saved.request);
+      saved.executionId = outcome.executionId;
+      saved.transactionHash = saved.transactionHash || outcome.transactionHash;
+      localStorage.setItem(key, JSON.stringify(saved));
+      record = await outcome.waitForOutcome(60000, 1500);
     }
-    saved.attempted = true;
-    localStorage.setItem(key, JSON.stringify(saved));
-    const outcome = await client.execute(saved.request);
-    saved.executionId = outcome.executionId;
-    saved.transactionHash = saved.transactionHash || outcome.transactionHash;
-    localStorage.setItem(key, JSON.stringify(saved));
-    const record = await outcome.waitForOutcome(60000, 1500);
     if (record.status === "Failed") {
       localStorage.removeItem(key);
       throw new Error("The transfer failed. Funds and budget were released; a new attempt needs a new request.");
     }
     if (!saved.transactionHash) throw new Error("Payment settled but its transaction reference is missing. Keep this request for reconciliation.");
+    onSettled?.(saved.transactionHash);
     const response = await fetch("/api/wallet/spend", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
       companyId: dashboardState?.company?.id, employeeId: dashboardState?.employee?.id,
-      delegationId: saved.delegationId || dashboardState?.inboundDelegation?.id, ...details, txHash: saved.transactionHash, executionId: outcome.executionId,
-    }) });
+      delegationId: saved.delegationId || dashboardState?.inboundDelegation?.id, ...details, txHash: saved.transactionHash, executionId: saved.executionId, requestId: saved.request.request_id,
+    }), signal: AbortSignal.timeout(20_000) });
     if (!response.ok) {
       const failure = await response.json();
       throw new Error(`Payment settled on-chain, but history was not saved: ${failure.error || "retry the same payment to synchronize"}`);
@@ -854,6 +643,7 @@ export function EmployeeClient({
 
         {/* Summary cards */}
         <EmployeeSectionCards
+          onRefresh={refreshDashboard}
           approvedLimitNear={summary.approvedLimitNear}
           redelegatedNear={summary.redelegatedNear}
           remainingNear={formatNearTrimmed(remainingYocto)}
@@ -882,293 +672,27 @@ export function EmployeeClient({
       </div>
 
       {/* ── Caveat Configuration Drawer (Tasks 5 & 6) ──────────────────────── */}
-      <Drawer
-        direction={isMobile ? "bottom" : "right"}
-        open={Boolean(selectedDelegation)}
-        onOpenChange={(open) => {
-          if (!open) {
-            setSelectedDelegationId(null);
-            setFormErrors({});
-            setError(null);
-          }
+      {selectedDelegation && <PolicyConfigurationDrawer
+        key={`${currentAuthAddress}:${company.id}:${selectedDelegation.id}`}
+        open mobile={isMobile} audience="agent" delegationId={selectedDelegation.id}
+        identity={agentDisplayName(dashboardState.agents.find(agent => agent.id === selectedDelegation.delegateeId)?.name || "Agent")}
+        account={dashboardState.agents.find(agent => agent.id === selectedDelegation.delegateeId)?.smartAccountAddress || ""}
+        companyId={company.id} status={selectedDelegation.status}
+        form={caveatForm} setForm={setCaveatForm} balance={availableMaxNear}
+        normalizeForm={form => {
+          const parent = dashboardState.inboundDelegation?.signedDelegation as PermissionSpec | null;
+          if (!parent?.rules) throw new Error("Refresh your allowance before configuring agent access.");
+          const resolved = resolveAgentPolicyForm(form, parent);
+          if (!hasFormErrors(validateCaveatForm(resolved, availableMaxNear))) buildAgentPolicySpec(resolved, dashboardState.agents.find(agent => agent.id === selectedDelegation.delegateeId)?.smartAccountAddress || "", parent);
+          return resolved;
         }}
-      >
-        <DrawerContent>
-          <DrawerHeader>
-            <DrawerTitle>Agent policy</DrawerTitle>
-            <DrawerDescription>
-              {selectedDelegation?.status === "active"
-                ? "These rules are active for agent use and follow your employer’s allowance."
-                : "Set spending rules for agent use within your employer’s allowance. Gas is sponsored."}
-            </DrawerDescription>
-          </DrawerHeader>
-
-          <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-4 py-2">
-            {actionError && <p role="alert" className="break-words text-sm text-muted-foreground">{actionError}</p>}
-            {selectedDelegation && (
-              <div>
-                <Badge
-                  variant={selectedDelegation.status === "active" ? "secondary" : "outline"}
-                  className="mb-2"
-                >
-                  {formatDelegationStatus(selectedDelegation.status)}
-                </Badge>
-                <p className="text-xs text-muted-foreground">
-                  Remaining available: <span className="font-semibold text-foreground">{availableMaxNear} {TOKEN_SYMBOL}</span>
-                </p>
-              </div>
-            )}
-
-            {/* Drawer-level error */}
-            {error && (
-              <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-[0.8rem] text-destructive">
-                {error}
-              </p>
-            )}
-
-            {/* Section 1: Spending Limits */}
-            <div className="flex flex-col gap-4">
-              <h4 className="text-sm font-semibold text-foreground">1. Spending Limits</h4>
-
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="emp-max-amount">Lifetime Spending Limit ({TOKEN_SYMBOL})</Label>
-                <Input
-                  id="emp-max-amount"
-                  value={caveatForm.maxAmountNear}
-                  className={formErrors.maxAmountNear ? "border-destructive" : ""}
-                  disabled={selectedDelegation?.status === "active"}
-                  onChange={(e) =>
-                    setCaveatForm((f) => ({ ...f, maxAmountNear: e.target.value }))
-                  }
-                />
-                {formErrors.maxAmountNear ? (
-                  <p className="text-[0.8rem] text-destructive">{formErrors.maxAmountNear}</p>
-                ) : (
-                  <p className="text-[0.8rem] text-muted-foreground">
-                    Max: {availableMaxNear} {TOKEN_SYMBOL} (your remaining available balance).
-                  </p>
-                )}
-              </div>
-
-              <div className="flex flex-col gap-2 mt-2">
-                <Label>Recurring Allowance</Label>
-                <Select
-                  value={caveatForm.period}
-                  disabled={selectedDelegation?.status === "active"}
-                  onValueChange={(period) =>
-                    setCaveatForm((f) => ({ ...f, period: period as CaveatForm["period"] }))
-                  }
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      <SelectItem value="none">None</SelectItem>
-                      <SelectItem value="hourly">Hourly</SelectItem>
-                      <SelectItem value="daily">Daily</SelectItem>
-                      <SelectItem value="weekly">Weekly</SelectItem>
-                      <SelectItem value="monthly">30 days (fixed)</SelectItem>
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-                <p className="text-[0.8rem] text-muted-foreground">
-                  Reset the agent&apos;s spending on a recurring schedule.
-                </p>
-              </div>
-
-              {caveatForm.period !== "none" && (
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="emp-period-amount">Allowance per Period ({TOKEN_SYMBOL})</Label>
-                  <Input
-                    id="emp-period-amount"
-                    value={caveatForm.periodAmountNear}
-                    className={formErrors.periodAmountNear ? "border-destructive" : ""}
-                    disabled={selectedDelegation?.status === "active"}
-                    onChange={(e) =>
-                      setCaveatForm((f) => ({ ...f, periodAmountNear: e.target.value }))
-                    }
-                  />
-                  {formErrors.periodAmountNear ? (
-                    <p className="text-[0.8rem] text-destructive">{formErrors.periodAmountNear}</p>
-                  ) : (
-                    <p className="text-[0.8rem] text-muted-foreground">
-                      How much the agent can spend per {caveatForm.period} period.
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <Separator />
-
-            {/* Section 2: Transaction Restrictions */}
-            <div className="flex flex-col gap-4">
-              <h4 className="text-sm font-semibold text-foreground">2. Transaction Restrictions</h4>
-
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="emp-value-lte">Maximum Per-Transaction ({TOKEN_SYMBOL})</Label>
-                <Input
-                  id="emp-value-lte"
-                  value={caveatForm.perTransactionCapNear}
-                  className={formErrors.perTransactionCapNear ? "border-destructive" : ""}
-                  disabled={selectedDelegation?.status === "active"}
-                  onChange={(e) =>
-                    setCaveatForm((f) => ({ ...f, perTransactionCapNear: e.target.value }))
-                  }
-                />
-                {formErrors.perTransactionCapNear ? (
-                  <p className="text-[0.8rem] text-destructive">{formErrors.perTransactionCapNear}</p>
-                ) : (
-                  <p className="text-[0.8rem] text-muted-foreground">
-                    Cap per single transaction. Leave blank for no cap.
-                  </p>
-                )}
-              </div>
-
-              <div className="flex flex-col gap-2 mt-2">
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id="emp-limited-calls-enabled"
-                    checked={caveatForm.limitedCallsEnabled}
-                    disabled={selectedDelegation?.status === "active"}
-                    onCheckedChange={(checked) =>
-                      setCaveatForm((f) => ({ ...f, limitedCallsEnabled: checked === true }))
-                    }
-                  />
-                  <Label htmlFor="emp-limited-calls-enabled">Limit Total Transactions</Label>
-                </div>
-                {caveatForm.limitedCallsEnabled && (
-                  <>
-                    <Input
-                      value={caveatForm.limitedCalls}
-                      disabled={selectedDelegation?.status === "active"}
-                      onChange={(e) =>
-                        setCaveatForm((f) => ({ ...f, limitedCalls: e.target.value }))
-                      }
-                      className={cn("mt-1", formErrors.limitedCalls ? "border-destructive" : "")}
-                    />
-                    {formErrors.limitedCalls ? (
-                      <p className="text-[0.8rem] text-destructive">{formErrors.limitedCalls}</p>
-                    ) : (
-                      <p className="text-[0.8rem] text-muted-foreground">
-                        Restrict the agent to this many total transactions.
-                      </p>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-
-            <Separator />
-
-            {/* Section 3: Address Whitelist */}
-            <div className="flex flex-col gap-4">
-              <h4 className="text-sm font-semibold text-foreground">3. Address Whitelist</h4>
-
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="emp-targets">Permitted Addresses</Label>
-                <Input
-                  id="emp-targets"
-                  value={caveatForm.allowedTargets}
-                  className={formErrors.allowedTargets ? "border-destructive" : ""}
-                  disabled={selectedDelegation?.status === "active"}
-                  onChange={(e) =>
-                    setCaveatForm((f) => ({ ...f, allowedTargets: e.target.value }))
-                  }
-                  placeholder="One address per line or comma-separated"
-                />
-                {formErrors.allowedTargets ? (
-                  <p className="text-[0.8rem] text-destructive">{formErrors.allowedTargets}</p>
-                ) : formErrors.allowedTargetsWarning ? (
-                  <p className="text-[0.8rem] text-amber-500">{formErrors.allowedTargetsWarning}</p>
-                ) : (
-                  <p className="text-[0.8rem] text-muted-foreground">
-                    Restrict the agent to these recipient addresses only.
-                  </p>
-                )}
-              </div>
-            </div>
-
-            <Separator />
-
-            {/* Section 4: AI Policy Prompt */}
-            {selectedDelegation?.delegateeType === "agent" && (
-              <div className="flex flex-col gap-4">
-                <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                  <BotIcon className="h-4 w-4 text-chart-5" />
-                  4. AI Policy Prompt
-                </h4>
-
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="emp-policy-prompt">Natural Language Rules</Label>
-                  <Textarea
-                    id="emp-policy-prompt"
-                    value={caveatForm.policyPrompt}
-                    disabled={selectedDelegation?.status === "active"}
-                    onChange={(event) =>
-                      setCaveatForm((form) => ({
-                        ...form,
-                        policyPrompt: event.target.value,
-                      }))
-                    }
-                    placeholder="e.g. Do not reimburse alcohol. Limit meals to $50. Flights must be economy."
-                    className="min-h-[100px] resize-none"
-                  />
-                  <p className="text-[0.8rem] text-muted-foreground">These rules will be fed to the AI Agent. The hard on-chain limits above still apply as a security net.</p>
-                </div>
-              </div>
-            )}
-
-            <div className="pb-4" />
-          </div>
-
-          {Boolean(selectedDelegation) && (
-            <DrawerFooter className="border-t pt-4">
-              {selectedDelegation?.status === "active" ? (
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button variant="destructive" disabled={isPending || revokingAgent}>
-                      <BanIcon data-icon="inline-start" />
-                      Revoke delegation
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        This will permanently revoke this agent&apos;s active sub-delegation on NEAR Testnet.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={() => {
-                          const id = selectedDelegation.id;
-                          setSelectedDelegationId(null);
-                          handleRevokeDelegation(id);
-                        }}
-                        className="bg-red-600 text-white hover:bg-red-700"
-                      >
-                        Yes, revoke delegation
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              ) : selectedDelegation?.status === "pending_config" ? (
-                <Button type="button" onClick={handleActivateDelegation} disabled={creatingAgent || activatingDelegation}>
-                  {activatingDelegation ? (
-                    <LoaderCircleIcon data-icon="inline-start" className="animate-spin" />
-                  ) : (
-                    <ShieldCheckIcon data-icon="inline-start" />
-                  )}
-                  {activatingDelegation ? activationStage === "checking" ? "Checking policy…" : activationStage === "confirming" ? "Confirming agent access…" : "Signing and confirming permission…" : creatingAgent ? "Preparing configuration…" : "Sign & activate agent access"}
-                </Button>
-              ) : null}
-            </DrawerFooter>
-          )}
-        </DrawerContent>
-      </Drawer>
+        busy={isPending || activatingDelegation || revokingAgent}
+        stage={activationStage === "checking" ? "Checking your allowance…" : activationStage === "signing" ? "Sign the agent policy…" : "Confirming agent access…"}
+        error={actionError} recovery={false}
+        onClose={() => { setSelectedDelegationId(null); setError(null); }}
+        onActivate={handleActivateDelegation}
+        onRevoke={() => { handleRevokeDelegation(selectedDelegation.id); setSelectedDelegationId(null); }}
+      />}
     </DashboardShell>
   );
 }

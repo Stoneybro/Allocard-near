@@ -336,7 +336,7 @@ describe("NEAR AI Cloud Integration", () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const fetchArgs = mockFetch.mock.calls[0];
-    expect(fetchArgs[0]).toContain("https://api.near.ai/v1/chat/completions");
+    expect(fetchArgs[0]).toContain("https://cloud-api.near.ai/v1/chat/completions");
     expect(fetchArgs[1].headers.Authorization).toBe("Bearer test-near-key");
 
     expect(result.provider).toBe("near-ai");

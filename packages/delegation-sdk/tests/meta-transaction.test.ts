@@ -21,6 +21,7 @@ describe("NEP-366 empty outer return values", () => {
     expect(result.transactionHash).toBe("original-meta-transaction");
     expect(read).toHaveBeenCalledWith({ contractId: "shared.testnet", methodName: "get_execution_by_request", args: { actor, request_id: request.request_id, company_id: companyId } });
     expect(await result.waitForOutcome()).toEqual(record);
+    expect(read).toHaveBeenCalledTimes(1); // Reuse the already verified terminal replay record.
     expect(send).toHaveBeenCalledTimes(1);
   });
   it("allows a pending execution to continue through normal settlement polling", async () => {

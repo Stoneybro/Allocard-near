@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "pnpm --filter @allocard/delegation-sdk run build && cross-env NODE_OPTIONS=\"--dns-result-order=ipv4first --no-network-family-autoselection\" next dev -H 0.0.0.0",
-    "build": "pnpm --filter @allocard/delegation-sdk run build && next build",
+    "build": "pnpm --filter @allocard/delegation-sdk run build && node scripts/verify-ai.mjs && next build",
     "start": "cross-env NODE_OPTIONS=\"--dns-result-order=ipv4first --no-network-family-autoselection\" next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",

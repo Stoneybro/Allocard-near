@@ -1719,37 +1719,9 @@ function validateChildCaveats(
     }
   }
 
-  // ── Period transfer amount ──────────────────────────────────────────────────
-  if (childCaveats.period && childCaveats.period !== "none") {
-    const parentPeriodCaveat = parentCaveats.find(
-      (c) => c.caveatType === "nativeTokenPeriodTransfer",
-    );
-    if (parentPeriodCaveat) {
-      const parentVal = parentPeriodCaveat.caveatValue as Record<string, unknown>;
-      const parentPeriodYocto = extractNativeAllowanceYocto(
-        parentVal.periodAmount ?? parentVal.amount ?? "0",
-      );
-      const childPeriodYocto = parsePositiveNearToYocto(
-        childCaveats.periodAmountNear ?? childCaveats.maxAmountNear,
-        "Period amount",
-      );
-      if (childPeriodYocto > parentPeriodYocto) {
-        throw new Error(
-          `Period allowance (${formatNearAllowance(childPeriodYocto)} ${TOKEN_SYMBOL}) cannot exceed the parent period limit (${formatNearAllowance(parentPeriodYocto)} ${TOKEN_SYMBOL}).`,
-        );
-      }
-
-      // Child period duration must be >= parent (child cannot be more permissive)
-      const parentPeriodDuration =
-        typeof parentVal.periodDuration === "number" ? parentVal.periodDuration : 0;
-      const childPeriodDuration = periodDurations[childCaveats.period] ?? 0;
-      if (childPeriodDuration < parentPeriodDuration) {
-        throw new Error(
-          "Child delegation period cannot be more frequent than the parent period.",
-        );
-      }
-    }
-  }
+  // Every ancestor window is enforced during execution. An additional child
+  // window can use another period; comparing its amount to a different parent
+  // period would reject valid, more restrictive combinations.
 
   // ── Per-transaction cap ─────────────────────────────────────────────────────
   if (childCaveats.perTransactionCapNear?.trim()) {
@@ -1923,6 +1895,7 @@ export async function saveEmployeeRedelegationCaveats(input: {
   walletAddress: string;
   delegationId: string;
   caveats: DelegationCaveatInput;
+  policyPrompt?: string;
 }): Promise<void> {
   const profile = await getEmployeeProfileOrThrow(input.walletAddress);
   await validateSessionWallet(input.walletAddress);
@@ -1946,6 +1919,12 @@ export async function saveEmployeeRedelegationCaveats(input: {
   // Validate child caveats don't exceed parent limits
   validateChildCaveats(parentCaveats.map(toCompanyDelegationCaveat), input.caveats);
 
+  const validation = validateCaveatForm({ ...emptyCaveatForm, ...input.caveats,
+    allowedTargets: (input.caveats.allowedTargets ?? []).join(","),
+    limitedCallsEnabled: input.caveats.limitedCalls != null, limitedCalls: String(input.caveats.limitedCalls ?? 1),
+    expiresAt: input.caveats.expiresAt ?? "", policyPrompt: input.policyPrompt ?? "",
+  }, null);
+  if (hasFormErrors(validation)) throw new Error(Object.values(validation).join(" "));
   const caveatRows = buildCaveatRows(input.caveats);
 
   await db
@@ -1960,6 +1939,7 @@ export async function saveEmployeeRedelegationCaveats(input: {
 
 
 
+  await db.update(delegations).set({ policyPrompt: input.policyPrompt?.trim() || null }).where(eq(delegations.id, delegation.id));
 
 }
 

@@ -96,18 +96,19 @@ export function assertSettledPayment(record: Execution | null, expected: { actor
 export async function verifyPaymentTransaction(txHash: string, actor: string, treasury: string, requestId: string) {
   const scope = parseTreasuryReference(treasury);
   if (!/^[1-9A-HJ-NP-Za-km-z]{32,64}$/.test(txHash)) throw new Error("A real NEAR transaction hash is required");
-  let result;
   // Relayed transactions are indexed under the outer signer, while the treasury
   // execution actor remains the employee. Retain the relayer ID for historical reads.
   const senders = [...new Set([actor, process.env.NEAR_RELAYER_ACCOUNT_ID].filter((value): value is string => Boolean(value)))];
-  for (const sender of senders) {
+  const results = await Promise.all(senders.map(async sender => {
     try {
       const response = await fetch(nearRpcServerUrl(), { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
         body: JSON.stringify({ jsonrpc: "2.0", id: "verify-payment", method: "tx", params: { tx_hash: txHash, sender_account_id: sender, wait_until: "FINAL" } }), signal: AbortSignal.timeout(15000) });
       const payload = await response.json();
-      if (response.ok && !payload.error && payload.result) { result = payload.result; break; }
-    } catch { /* Try the other possible signer/shard before failing verification. */ }
-  }
+      if (response.ok && !payload.error && payload.result) return payload.result;
+    } catch { /* The other known signer may index the relayed transaction. */ }
+    return null;
+  }));
+  const result = results.find(value => value?.transaction?.hash === txHash && value.status && typeof value.status === "object" && "SuccessValue" in value.status);
   if (!result || typeof result.status !== "object" || !("SuccessValue" in result.status)) throw new Error("Payment transaction could not be verified");
   const transaction = result.transaction;
   if (transaction?.hash !== txHash) throw new Error("Payment transaction has a different hash");

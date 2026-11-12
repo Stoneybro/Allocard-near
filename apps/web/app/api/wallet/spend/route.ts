@@ -11,23 +11,27 @@ import { treasuryReader, assertSettledPayment, verifyPaymentTransaction } from "
 export async function POST(req: NextRequest) {
   try {
     const user = await requireSessionUser();
-    const { companyId, employeeId, delegationId, toAddress, amountNear, purpose, txHash, executionId } = await req.json();
+    const { companyId, employeeId, delegationId, toAddress, amountNear, purpose, txHash, executionId, requestId } = await req.json();
     if (typeof companyId !== "string" || typeof delegationId !== "string" || !isNativeNearAccount(toAddress) || typeof amountNear !== "string" || typeof txHash !== "string" || typeof executionId !== "string" || !/^[0-9]+$/.test(executionId)) {
       return NextResponse.json({ error: "A settled NEAR execution and valid payment fields are required" }, { status: 400 });
     }
     if (employeeId !== user.id) return NextResponse.json({ error: "You can only record your own payments" }, { status: 403 });
     await requireEmployeeCompany(user.id, companyId);
-    const [delegation] = await db.select().from(delegations).where(and(
+    const [[delegation], [company]] = await Promise.all([db.select().from(delegations).where(and(
       eq(delegations.id, delegationId), eq(delegations.delegatorType, "company"), eq(delegations.delegatorId, companyId),
       eq(delegations.delegateeType, "user"), eq(delegations.delegateeId, user.id),
-    )).limit(1);
-    const [company] = await db.select().from(companies).where(eq(companies.id, companyId)).limit(1);
+    )).limit(1), db.select().from(companies).where(eq(companies.id, companyId)).limit(1)]);
     if (!delegation?.delegationHash || !company?.smartAccountAddress) return NextResponse.json({ error: "Treasury permission mapping not found" }, { status: 409 });
     // Revocation after dispatch does not erase a successful payment. Verify the
     // execution itself rather than requiring that permission to still be active.
-    const record = await treasuryReader(company.smartAccountAddress).getExecution(executionId);
+    if (requestId !== undefined && (typeof requestId !== "string" || !/^[0-9a-f]{64}$/.test(requestId))) return NextResponse.json({ error: "Invalid payment request identity" }, { status: 400 });
+    const [record] = await Promise.all([
+      treasuryReader(company.smartAccountAddress).getExecution(executionId),
+      requestId ? verifyPaymentTransaction(txHash, user.embeddedWalletAddress, company.smartAccountAddress, requestId) : Promise.resolve(),
+    ]);
     assertSettledPayment(record, { actor: user.embeddedWalletAddress, permissionId: delegation.delegationHash, receiver: toAddress, amount: parseTokenAmount(amountNear, SPENDING_DECIMALS) });
-    await verifyPaymentTransaction(txHash, record.actor, company.smartAccountAddress, record.request_id);
+    if (requestId && record.request_id !== requestId) throw new Error("Execution belongs to another payment request");
+    if (!requestId) await verifyPaymentTransaction(txHash, record.actor, company.smartAccountAddress, record.request_id);
     const values = { assetNetwork: record.action.asset.type === "Nep141" ? `near:testnet:${record.action.asset.contract_id}` : "near:testnet", companyId, employeeId: user.id, delegationId, toAddress, amountNear, purpose: typeof purpose === "string" ? purpose.trim().slice(0, 2000) : "Company payment", isFlagged: false,
       txHash, executionId, treasuryContractId: company.smartAccountAddress };
     const [inserted] = await db.insert(manualTransactions).values(values).onConflictDoNothing({ target: [manualTransactions.treasuryContractId, manualTransactions.executionId] }).returning();

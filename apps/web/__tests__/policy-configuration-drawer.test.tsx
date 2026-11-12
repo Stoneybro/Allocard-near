@@ -17,7 +17,7 @@ const activate = vi.fn(), close = vi.fn(), fetchMock = vi.fn();
 const validForm: CaveatForm = { ...emptyCaveatForm, maxAmountNear: "50", period: "weekly", periodAmountNear: "10", perTransactionCapNear: "5", allowedTargets: "vendor.testnet", limitedCallsEnabled: true, limitedCalls: "20", expiresAt: "2099-01-01T00:00:00Z" };
 function Harness({ initial = emptyCaveatForm, busy = false }: { initial?: CaveatForm; busy?: boolean }) {
   const [form, setForm] = useState(initial);
-  return <PolicyConfigurationDrawer open mobile={false} identity="Alex" account="alex.testnet" companyId="company" status="pending_config" form={form} setForm={setForm} balance="100" busy={busy} stage="Confirming permission…" error={null} recovery={false} onClose={close} onActivate={activate} onRevoke={vi.fn()} />;
+  return <PolicyConfigurationDrawer open mobile={false} identity="alex@example.com" account="alex.testnet" companyId="company" status="pending_config" form={form} setForm={setForm} balance="100" busy={busy} stage="Confirming permission…" error={null} recovery={false} onClose={close} onActivate={activate} onRevoke={vi.fn()} />;
 }
 const button = (text: string) => [...host.querySelectorAll("button")].find(item => item.textContent?.includes(text))!;
 async function click(text: string) { await act(async () => button(text).click()); }
@@ -44,10 +44,13 @@ it("reviews all AI settings in plain language, with a separate acknowledged sign
   await act(async () => root.render(<Harness />));
   fetchMock.mockResolvedValue({ ok: true, json: async () => ({ success: true, provider: "near-ai", formValues: validForm, warnings: [] }) });
   await click("Review policy");
-  expect(host.textContent).toContain("20 payments");
-  expect(host.textContent).toContain("every 7 days");
+  expect(host.textContent).toContain("Up to 20");
+  expect(host.textContent).toContain("Every 7 days");
   expect(host.textContent).toContain("vendor.testnet");
-  expect(host.textContent).toContain("Expires");
+  expect(host.textContent).toContain("Access ends");
+  expect(host.querySelector("header")?.textContent).toContain("alex@example.com");
+  expect(host.querySelector("dl")?.textContent).not.toContain("alex.testnet");
+  expect(host.querySelector("details")?.open).toBe(false);
   expect(activate).not.toHaveBeenCalled();
   expect(button("Sign & activate").disabled).toBe(true);
   await act(async () => host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
@@ -68,9 +71,9 @@ it("replaces stale manual limits when the new AI policy omits them", async () =>
   fetchMock.mockResolvedValue({ ok: true, json: async () => ({ success: true, provider: "near-ai", formValues: { ...emptyCaveatForm, maxAmountNear: "50" }, warnings: [] }) });
   await click("Review policy");
   expect(host.textContent).toContain("Payments to any recipient");
-  expect(host.textContent).toContain("No expiration date");
-  expect(host.textContent).toContain("No separate limit on the number");
-  expect(host.querySelector("ul")?.textContent).not.toContain("vendor.testnet");
+  expect(host.textContent).toContain("When you revoke it");
+  expect(host.querySelector("dl")?.textContent).not.toContain("Number of payments");
+  expect(host.querySelector("dl")?.textContent).not.toContain("vendor.testnet");
 });
 it("blocks conflicting AI output instead of showing a successful review", async () => {
   await act(async () => root.render(<Harness />));

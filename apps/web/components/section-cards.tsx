@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { TOKEN_SYMBOL } from "@/lib/chain";
+import { CardRefreshButton } from "./card-refresh-button";
 
 export function SectionCards({
   loading = false,
@@ -18,6 +19,7 @@ export function SectionCards({
   reservationsSupported,
   onTopUp,
   isToppingUp,
+  onRefresh,
 }: {
   loading?: boolean;
   balanceLoading?: boolean;
@@ -29,11 +31,13 @@ export function SectionCards({
   reservationsSupported?: boolean;
   onTopUp?: () => void;
   isToppingUp?: boolean;
+  onRefresh?: () => Promise<unknown>;
 }) {
   return (
     <TooltipProvider delayDuration={300}>
       <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-4">
-        <Card className="min-w-0 gap-5 rounded-2xl border-foreground/10 bg-foreground text-background shadow-sm [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]">
+        <Card className="relative min-w-0 gap-5 rounded-2xl border-foreground/10 bg-foreground text-background shadow-sm [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]">
+          <CardRefreshButton onRefresh={onRefresh} />
           <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
             <CardDescription className="flex items-center gap-2 text-sm font-medium text-background/70">
               <Tooltip>

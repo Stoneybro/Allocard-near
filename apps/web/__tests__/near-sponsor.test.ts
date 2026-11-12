@@ -182,7 +182,7 @@ describe("bounded employee gas sponsorship", () => {
   });
   it("rejects revoked permissions before paying for account activation", async () => {
     mocks.active = false;
-    mocks.reader.mockReturnValue({ getPermission: async () => ({ delegate: employee, issuer: "owner.testnet", parent_id: null, revoked: true, epoch: "1" }) });
+    mocks.reader.mockReturnValue({ getPermission: async () => ({ delegate: employee, issuer: "owner.testnet", parent_id: null, revoked: true, epoch: "1" }), previewExecute: async () => ({ allowed: false }) });
     await expect(prepareSponsoredPayment(payment)).rejects.toThrow("On-chain employee permission");
     expect(mocks.jobs.size).toBe(0);
   });

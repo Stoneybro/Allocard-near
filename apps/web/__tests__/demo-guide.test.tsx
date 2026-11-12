@@ -145,8 +145,8 @@ it("guides a newly joined employee through delegation and spending, then stays f
   const scope = employeeDemoScope("employee", "company");
   prepareEmployeeDemo("employee", "company");
   await render(1, scope, "employee");
-  expect(prompt()?.textContent).toContain("Return to the employer dashboard");
-  expect(prompt()?.textContent).toContain("configure a policy");
+  expect(prompt()?.textContent).toContain("Go back to the employer dashboard.");
+  expect(prompt()?.textContent).not.toContain("configure a policy");
   expect(prompt()?.querySelector('[role="note"]')).toBeNull();
   await click("Okay");
   await render(2, scope, "employee");
@@ -160,7 +160,7 @@ it("guides a newly joined employee through delegation and spending, then stays f
   await click("Help & Demo Tips");
   expect(drawer()?.querySelectorAll("ol > li")).toHaveLength(2);
   await click("Restart demo guide");
-  expect(prompt()?.textContent).toContain("Return to the employer dashboard");
+  expect(prompt()?.textContent).toContain("Go back to the employer dashboard.");
   await click("Okay");
   expect(prompt()?.textContent).toContain("Your allowance is ready");
   await click("Okay");

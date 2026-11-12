@@ -5,8 +5,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { TOKEN_SYMBOL } from "@/lib/chain";
+import { CardRefreshButton } from "./card-refresh-button";
 
-export function EmployeeSectionCards({ loading = false, approvedLimitNear, redelegatedNear, remainingNear, spentNear = "0", reservationsSupported = false }: {
+export function EmployeeSectionCards({ loading = false, approvedLimitNear, redelegatedNear, remainingNear, spentNear = "0", reservationsSupported = false, onRefresh }: {
+  onRefresh?: () => Promise<unknown>;
   loading?: boolean;
   reservationsSupported?: boolean;
   approvedLimitNear?: string;
@@ -17,7 +19,8 @@ export function EmployeeSectionCards({ loading = false, approvedLimitNear, redel
   return (
     <TooltipProvider delayDuration={300}>
       <div className="grid min-w-0 grid-cols-1 gap-3 lg:gap-4 xl:grid-cols-2">
-        <Card className="min-w-0 gap-5 rounded-2xl border-foreground/10 bg-foreground text-background shadow-sm [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]">
+        <Card className="relative min-w-0 gap-5 rounded-2xl border-foreground/10 bg-foreground text-background shadow-sm [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]">
+          <CardRefreshButton onRefresh={onRefresh} />
           <CardHeader>
             <CardDescription className="text-sm font-medium text-background/70">
               <Tooltip><TooltipTrigger asChild><button type="button" className="flex cursor-default items-center gap-2 rounded-sm text-left underline decoration-background/25 decoration-dotted underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-background/60"><WalletIcon className="size-4" aria-hidden="true" />Available for direct spending</button></TooltipTrigger><TooltipContent sideOffset={8}>Company funds available for direct payments under your spending permission.</TooltipContent></Tooltip>
