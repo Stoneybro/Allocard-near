@@ -3,7 +3,7 @@ if (process.env.ALLOCARD_AI_SMOKE === "1") {
   const { aiChat, getApiKey, getBaseUrl, getTextModel } = await import("../lib/ai.ts");
   if (!getApiKey()) throw new Error("Production AI credential is missing or empty");
   const started = Date.now();
-  const result = await aiChat({ timeoutMs: 35_000, messages: [
+  const result = await aiChat({ timeoutMs: 35_000, disableThinking: true, messages: [
     { role: "system", content: `You compile spending policies. Amounts are human-readable USDC strings; the field names retain a legacy Near suffix. Return ONLY a flat JSON object matching this exact schema:
 {"confidence": number, "lifetimeLimitNear": string, "period": "none" | "hourly" | "daily" | "weekly" | "monthly", "periodLimitNear": string | null, "perTransactionCapNear": string | null, "allowedTargets": string[]}
 The lifetime total, allowance per period, and maximum per payment are separate limits. Copy the explicit amounts from the request. Recipient restrictions are exact NEAR account IDs. Do not wrap the result in another object.` },

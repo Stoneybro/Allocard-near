@@ -33,3 +33,21 @@ Employer allowance creation now uses an employer-signed NEP-366 action paid by t
 The server agent-permission preview now allows the child recurring window selected in the updated drawer. Parent windows remain independently enforced by the contract; other inherited bounds remain unchanged.
 
 Validation: all 485 web tests passed, including real-signature root/revocation coverage, authorization failures, zero-deposit gas bounds and root recovery without allocating twice. Type checking, targeted lint and production compilation/page generation passed. Deployment `dpl_72FKPykA35A6Zok3HujrMDzewhJ4` is `READY` and aliased to `https://www.allocard.xyz`. A fresh signed-in delegation from the tester remains the live end-to-end confirmation.
+
+## Follow-up: agent AI parsing timeouts
+
+Production runtime logs showed two `POST /api/policies/parse` requests returning HTTP 503 after the NEAR AI call reached its 35-second timeout. The agent drawer and authorization path were connected; the provider call was not completing within that budget. A synthetic full employer-policy request with the previous settings took 20.1 seconds locally.
+
+Policy compilation now explicitly disables additional thinking on the hosted DeepSeek V4 model using `chat_template_kwargs.enable_thinking: false` and asks for a short explanation. A live synthetic probe confirmed zero reasoning tokens; the upstream `thinking.type` parameter was ignored by this host and is not used. Policy validation, parent-bound enforcement, the signature requirement and rejection of unavailable AI remain in place. Token-truncated responses are rejected even if their content happens to parse as JSON. Timing logs include model, elapsed time, finish reason and reasoning-token count, without policy text or credentials.
+
+Validation: 23 focused provider, authorization, drawer and agent-policy tests passed; type checking and targeted lint passed. Real full-compiler synthetic checks passed for an employer policy in 7.7 seconds and an agent policy with parent limits in 6.9 seconds. The production build's opt-in credential check passed in 4.9 seconds with zero reasoning tokens. These timings are samples, not a latency guarantee; a fresh signed-in agent request is still needed to confirm the user's exact policy.
+
+Deployment `dpl_ErHMEf8Ks1ASUR47CEgdQYp8QeXL` is `READY` and aliased to `https://www.allocard.xyz`. Reload existing dashboard tabs to use the updated policy flow.
+
+## Follow-up: agent setup and dashboard layout
+
+Shared agent spending access is labeled “Agent setup” in the sidebar, delegation list, canvas and policy drawer. “Purchasing Research agent v2” is reserved for the research worker selected for a task and its results. User-facing setup errors use “agent”; internal identity names and permission checks remain compatible with existing grants.
+
+The delegation table uses a container query: above 760px of available section width it keeps aligned columns; at narrower widths each row presents identity, issuer, labeled limits and a wrapping action row. Actions remain visible without horizontal scrolling. Status appears beside the role, and the duplicate mobile detail row is removed. Hierarchy expansion and search remain functional. The Add employee modal now has one instruction explaining the email and sign-in invitation flow, with its repeated helper paragraph removed.
+
+Validation: 87 relevant hierarchy, activity, policy-drawer, agent-workspace, research, email-identity and sponsorship tests passed. Type checking passed and targeted lint had no errors; existing warnings remain. Container layout has not been inspected in an interactive browser in this session.

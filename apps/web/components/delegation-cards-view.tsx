@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
+import styles from "./delegation-cards-view.module.css";
 import { BotIcon, PlusIcon, NetworkIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
 import { DelegationResearchActivity } from "@/components/purchasing-research-panel";
 import { ADAPTER_NAME, agentDisplayName } from "@/lib/agent-adapter/shared";
@@ -155,47 +156,40 @@ export function DelegationCardsView({ loading = false, company, employees, agent
       <Fragment key={delegation.id}>
         <TableRow data-delegation-id={delegation.id} className={depth ? "bg-muted/25" : undefined}>
           <TableCell className="py-4 whitespace-normal">
-            <div className="flex min-w-0 items-center gap-1 pl-[calc(var(--depth)*16px)] sm:gap-2 md:pl-[calc(var(--depth)*32px)]" style={{ "--depth": Math.min(depth, 4) } as CSSProperties}>
-              <Button variant="ghost" size="icon" className={descendants.length ? "size-8 shrink-0" : "size-8 shrink-0 md:hidden"}
+            <div className={`flex min-w-0 items-center gap-2 ${styles.indent}`} style={{ "--depth": Math.min(depth, 4) } as CSSProperties}>
+              {descendants.length > 0 && <Button variant="ghost" size="icon" className="size-8 shrink-0"
                 aria-label={`${isExpanded ? "Collapse" : "Expand"} details for ${title}`}
                 aria-expanded={isExpanded}
                 onClick={() => setCollapsed(previous => { const next = new Set(previous); if (next.has(delegation.id)) next.delete(delegation.id); else next.add(delegation.id); return next; })}>
                 <ChevronRightIcon className={`size-4 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
-              </Button>
-              {!descendants.length && <span className="hidden w-8 shrink-0 md:block" />}
+              </Button>}
               <div className="min-w-0">
                 <p className="break-words font-medium tracking-tight">{depth > 0 && <span aria-hidden="true" className="mr-1 text-muted-foreground">↳</span>}<EmailTooltipLabel label={title} fullEmail={titleFullEmail} /></p>
-                <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{delegation.delegateeType === "user" ? "Employee" : "AI agent"}{descendants.length > 0 && ` · ${descendants.length} redelegation${descendants.length === 1 ? "" : "s"}`}</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{delegation.delegateeType === "user" ? "Employee" : "Agent access"} · {status}{descendants.length > 0 && ` · ${descendants.length} redelegation${descendants.length === 1 ? "" : "s"}`}</p>
               </div>
             </div>
           </TableCell>
-          <TableCell className="hidden whitespace-normal text-muted-foreground md:table-cell">
+          <TableCell className="text-muted-foreground">
+            <span className={styles.label}>Delegated by</span>
             <EmailTooltipLabel label={issuer} fullEmail={issuerFullEmail} />
           </TableCell>
-          <TableCell className="hidden text-right tabular-nums md:table-cell">{delegation.allowance ?? "—"}</TableCell>
-          <TableCell className="text-right font-medium tabular-nums whitespace-normal break-words">{isActive ? delegation.remainingNear ?? "—" : "—"}</TableCell>
+          <TableCell className="text-right tabular-nums"><span className={styles.label}>Limit ({TOKEN_SYMBOL})</span>{delegation.allowance ?? "—"}</TableCell>
+          <TableCell className="text-right font-medium tabular-nums"><span className={styles.label}>Remaining ({TOKEN_SYMBOL})</span>{isActive ? delegation.remainingNear ?? "—" : "—"}</TableCell>
           <TableCell className="text-right">
-            {(hasActions || hasResearchActivity) ? <div className="flex flex-col items-end gap-1.5 lg:flex-row lg:flex-wrap lg:justify-end">
+            {(hasActions || hasResearchActivity) ? <div className={styles.actions}>
               {hasResearchActivity && <Button variant="outline" size="sm" className="h-8 px-2 text-xs" aria-label={`View activity for ${title}, delegated by ${issuer}`} onClick={() => setActivityDelegation(delegation)}>View activity</Button>}
               {canManage && onConfigureDelegation && <Button variant="outline" size="sm" className="h-8 px-2 text-xs" aria-label={`${isPending ? "Configure" : "View rules for"} ${title}`} onClick={() => onConfigureDelegation(delegation.id)}>{isPending ? "Configure" : "View rules"}</Button>}
               {((canRevoke && onRevokeDelegation) || (canManage && isPending && onRemoveDelegation)) && <Button variant="outline" size="sm" className="h-8 border-border bg-muted/50 px-3 text-xs font-medium text-foreground shadow-xs hover:bg-muted" aria-label={`${isActive ? "Revoke" : "Remove"} delegation for ${title}`} onClick={() => setConfirmation(delegation)}>{isActive ? "Revoke" : "Remove"}</Button>}
             </div> : <span className="text-muted-foreground">—<span className="sr-only"> Managed by {issuer}</span></span>}
           </TableCell>
         </TableRow>
-        {isExpanded && <TableRow className="bg-muted/25 md:hidden"><TableCell colSpan={5} className="whitespace-normal px-4 py-3">
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
-            <div><dt className="text-muted-foreground">Delegated by</dt><dd className="mt-1 font-medium"><EmailTooltipLabel label={issuer} fullEmail={issuerFullEmail} /></dd></div>
-            <div><dt className="text-muted-foreground">Status</dt><dd className="mt-1 font-medium">{status}</dd></div>
-            <div><dt className="text-muted-foreground">Spending limit</dt><dd className="mt-1 font-medium tabular-nums">{delegation.allowance ?? "—"} {TOKEN_SYMBOL}</dd></div>
-          </dl>
-        </TableCell></TableRow>}
         {isExpanded && descendants.map(child => renderDelegation(child, nextPath, depth + 1))}
       </Fragment>
     );
   }
 
   return (
-    <section aria-label="Delegations" className="min-w-0 space-y-4">
+    <section aria-label="Delegations" className={`min-w-0 space-y-4 ${styles.container}`}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative w-full sm:max-w-64">
           <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
@@ -297,18 +291,18 @@ export function DelegationCardsView({ loading = false, company, employees, agent
         </div>
       </div>
       <div className="overflow-hidden rounded-xl border border-border/70 bg-card">
-        <Table aria-label={`Delegations from ${company.name}`} className="table-fixed">
+        <Table aria-label={`Delegations from ${company.name}`} className={styles.table}>
           <TableHeader className="bg-muted/40">
             <TableRow className="hover:bg-transparent">
-              <TableHead className="w-[46%] pl-4 text-xs text-muted-foreground md:w-[32%]">Delegate</TableHead>
-              <TableHead className="hidden w-[18%] text-xs text-muted-foreground md:table-cell">Delegated by</TableHead>
-              <TableHead className="hidden w-[15%] text-right text-xs text-muted-foreground md:table-cell">Limit ({TOKEN_SYMBOL})</TableHead>
-              <TableHead className="w-[27%] whitespace-normal text-right text-xs text-muted-foreground md:w-[15%]">Remaining ({TOKEN_SYMBOL})</TableHead>
-              <TableHead className="w-[27%] pr-4 text-right text-xs text-muted-foreground md:w-[20%]">Actions</TableHead>
+              <TableHead className="w-[28%] pl-4 text-xs text-muted-foreground">Delegate</TableHead>
+              <TableHead className="w-[18%] text-xs text-muted-foreground">Delegated by</TableHead>
+              <TableHead className="w-[14%] text-right text-xs text-muted-foreground">Limit ({TOKEN_SYMBOL})</TableHead>
+              <TableHead className="w-[16%] whitespace-normal text-right text-xs text-muted-foreground">Remaining ({TOKEN_SYMBOL})</TableHead>
+              <TableHead className="w-[24%] pr-4 text-right text-xs text-muted-foreground">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {loading ? [0, 1, 2].map(row => <TableRow key={row}><TableCell className="p-4"><Skeleton className="h-5 w-28 max-w-full" /></TableCell><TableCell className="hidden md:table-cell"><Skeleton className="h-5 w-20" /></TableCell><TableCell className="hidden md:table-cell"><Skeleton className="h-5 w-12" /></TableCell><TableCell><Skeleton className="ml-auto h-5 w-12" /></TableCell><TableCell><Skeleton className="ml-auto h-8 w-16 max-w-full" /></TableCell></TableRow>)
+            {loading ? [0, 1, 2].map(row => <TableRow key={row} data-loading-row><TableCell className="p-4"><Skeleton className="h-5 w-28 max-w-full" /></TableCell><TableCell ><Skeleton className="h-5 w-20" /></TableCell><TableCell ><Skeleton className="h-5 w-12" /></TableCell><TableCell><Skeleton className="ml-auto h-5 w-12" /></TableCell><TableCell><Skeleton className="ml-auto h-8 w-16 max-w-full" /></TableCell></TableRow>)
               : visibleRoots.length ? visibleRoots.map(root => renderDelegation(root, new Set()))
               : <TableRow><TableCell colSpan={5} className="whitespace-normal px-4 py-12 text-center"><p className="font-medium">{query ? "No matching delegations" : "No delegations yet"}</p><p className="mt-1 text-xs text-muted-foreground">{query ? "Try another name or clear your search." : "Add an employee or agent to set up spending authority."}</p></TableCell></TableRow>}
           </TableBody>

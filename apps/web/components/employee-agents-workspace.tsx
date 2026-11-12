@@ -45,7 +45,7 @@ export function EmployeeAgentsWorkspace({ companyId, agents, delegations, canAdd
       </div>
     </div>
     {!canAdd && <p className="text-xs text-muted-foreground">Your employer needs to activate your spending allowance before you can set up an agent.</p>}
-    {!agent && <p role="status" className="text-xs text-muted-foreground">The research agent is not configured for this workspace yet.</p>}
+    {!agent && <p role="status" className="text-xs text-muted-foreground">Agent setup is unavailable for this workspace.</p>}
     <AgentTaskTable companyId={companyId} ready={ready} />
     {ready && <AgentHireDialog key={permission.id} companyId={companyId} delegationId={permission.id} open={adding} onOpenChange={setAdding} onHired={task => {
       client.setQueryData([...key, "research", companyId], (existing: typeof task[] | undefined) => [task, ...(existing ?? []).filter(row => row.id !== task.id)]);

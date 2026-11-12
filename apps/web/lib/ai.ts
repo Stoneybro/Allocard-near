@@ -38,6 +38,7 @@ export async function aiChat<T>(params: {
   responseSchema?: Record<string, unknown>;
   disableJsonSchema?: boolean;
   timeoutMs?: number;
+  disableThinking?: boolean;
 }): Promise<T> {
   const apiKey = getApiKey();
   if (!apiKey) throw new Error("NEAR_AI_API_KEY or DASHSCOPE_API_KEY is not configured");
@@ -50,7 +51,13 @@ export async function aiChat<T>(params: {
     max_tokens: 1500,
     response_format: { type: "json_object" },
   };
+  // NEAR AI's hosted DeepSeek uses this control (the upstream `thinking`
+  // parameter is ignored). Policy extraction needs the JSON answer directly.
+  if (params.disableThinking && /^deepseek-ai\/DeepSeek-V4/i.test(model)) {
+    body.chat_template_kwargs = { enable_thinking: false };
+  }
 
+  const started = Date.now();
   const res = await fetch(`${getBaseUrl()}/chat/completions`, {
     method: "POST",
     headers: {
@@ -67,7 +74,9 @@ export async function aiChat<T>(params: {
     throw new Error(`AI service returned HTTP ${res.status}. Please retry or use manual setup.`);
   }
 
-  const json = (await res.json()) as { choices: Array<{ message: { content: string } }> };
+  const json = (await res.json()) as { choices: Array<{ finish_reason?: string; message: { content: string } }>; usage?: { completion_tokens_details?: { reasoning_tokens?: number } } };
+  console.info("[AI timing]", { model, durationMs: Date.now() - started, finishReason: json.choices?.[0]?.finish_reason, reasoningTokens: json.usage?.completion_tokens_details?.reasoning_tokens });
+  if (json.choices?.[0]?.finish_reason === "length") throw new Error("AI policy response was incomplete. Please retry or use manual setup.");
   let content = json.choices?.[0]?.message?.content;
   if (!content) throw new Error("AI returned an empty response");
 

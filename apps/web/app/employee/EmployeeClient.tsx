@@ -5,7 +5,7 @@ import { resolveAgentPolicyForm, buildAgentPolicySpec, agentFormFromPermission }
 import { employeeDemoScope } from "@/lib/demo-guide-preferences";
 
 import { revokeAndSyncEmployeeAgent } from "@/lib/employee-revocation";
-import { agentDisplayName } from "@/lib/agent-adapter/shared";
+import { ADAPTER_NAME, agentDisplayName } from "@/lib/agent-adapter/shared";
 import { EmployeeAgentsWorkspace } from "@/components/employee-agents-workspace";
 import { EmployeeSpendingWorkspace } from "@/components/employee-spending-workspace";
 
@@ -203,7 +203,7 @@ export function EmployeeClient({
         return {
           id: agent.id,
           name: agentDisplayName(agent.name),
-          detail: agent.description ?? "Platform AI agent",
+          detail: agent.name === ADAPTER_NAME ? "Spending access for agents" : agent.description ?? "Platform AI agent",
           isPlaceholder: false,
           status: isActive ? "active" : "ready",
         };

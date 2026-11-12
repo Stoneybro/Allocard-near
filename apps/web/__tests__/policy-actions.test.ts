@@ -17,6 +17,7 @@ it("allows an employee to parse only their own agent policy under an active comp
   expect(result.success).toBe(true);
   expect(mocks.membership).toHaveBeenCalledWith("owner-id", input.companyId);
   expect(mocks.ai).toHaveBeenCalledTimes(1);
+  expect(mocks.ai.mock.calls[0][0]).toMatchObject({ disableThinking: true, timeoutMs: 35000 });
   const childQuery = new PgDialect().sqlToQuery(mocks.where.mock.calls[0][0]);
   expect(childQuery.params).toContain("owner-id");
   expect(childQuery.params).toContain("pending_config");

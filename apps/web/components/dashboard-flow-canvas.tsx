@@ -1,5 +1,7 @@
 "use client";
 
+import { agentDisplayName } from "@/lib/agent-adapter/shared";
+
 import {
   type DragEvent,
   type ReactNode,
@@ -636,7 +638,7 @@ export function DashboardFlowCanvas({
           position: { x: 0, y: 0 },
           data: {
             delegationId: delegation.id,
-            title: agent.name,
+            title: agentDisplayName(agent.name),
             subtitle: delegation.parentDelegationId ? "AI Agent · Redelegated" : "AI Agent",
             address: agent.smartAccountAddress ?? undefined,
             balance:

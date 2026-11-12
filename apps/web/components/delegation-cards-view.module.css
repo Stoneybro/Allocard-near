@@ -1,0 +1,73 @@
+.container {
+  container-type: inline-size;
+}
+
+.table {
+  table-layout: fixed;
+}
+
+.table td {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.label {
+  display: none;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.375rem;
+}
+
+.indent {
+  padding-left: calc(var(--depth) * 1rem);
+}
+
+@container (max-width: 760px) {
+  .table, .table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .table thead {
+    display: none;
+  }
+
+  .table tr:is([data-delegation-id], [data-loading-row]) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0.75rem 1rem;
+    padding: 1rem;
+  }
+
+  .table tr:is([data-delegation-id], [data-loading-row]) > td {
+    min-width: 0;
+    padding: 0;
+    text-align: left;
+  }
+
+  .table tr:is([data-delegation-id], [data-loading-row]) > td:first-child,
+  .table tr:is([data-delegation-id], [data-loading-row]) > td:nth-child(2),
+  .table tr:is([data-delegation-id], [data-loading-row]) > td:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .label {
+    display: block;
+    margin-bottom: 0.25rem;
+    font-size: 0.6875rem;
+    color: var(--muted-foreground);
+    font-weight: 400;
+  }
+
+  .actions {
+    justify-content: flex-start;
+  }
+
+  .indent {
+    padding-left: calc(min(var(--depth), 2) * 0.5rem);
+  }
+}

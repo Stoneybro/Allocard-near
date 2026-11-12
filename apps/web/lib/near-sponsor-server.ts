@@ -337,12 +337,12 @@ async function authorizeAdapterPermission(permission: import("./near-sponsored-a
   if (!company) throw new Error("Registered company treasury required");
   await requireEmployeeCompany(user.id, company.id);
   const [child] = await db.select().from(delegations).where(eq(delegations.id, permission.delegationId)).limit(1);
-  if (!child || child.delegatorType !== "user" || child.delegatorId !== user.id || child.delegateeType !== "agent" || !["pending_config", "active"].includes(child.status) || !child.parentDelegationId) throw new Error("Only your adapter permission can be sponsored");
+  if (!child || child.delegatorType !== "user" || child.delegatorId !== user.id || child.delegateeType !== "agent" || !["pending_config", "active"].includes(child.status) || !child.parentDelegationId) throw new Error("Only your agent permission can be sponsored");
   const [parent] = await db.select().from(delegations).where(eq(delegations.id, child.parentDelegationId)).limit(1);
   if (!parent || parent.delegatorType !== "company" || parent.delegatorId !== company.id || parent.delegateeType !== "user" || parent.delegateeId !== user.id || parent.status !== "active" || parent.delegationHash !== permission.parentId || parent.treasuryReference !== permission.treasury) throw new Error("Permission belongs to another employee, parent or company");
   const [agent] = await db.select().from(agents).where(eq(agents.id, child.delegateeId!)).limit(1);
   const adapter = adapterAccount();
-  if (!adapter || !agent?.isActive || agent.name !== ADAPTER_NAME || agent.smartAccountAddress !== adapter || agent.signerAddress !== adapter || permission.spec.delegate !== adapter) throw new Error("Only the configured Allocard adapter can receive sponsored permission");
+  if (!adapter || !agent?.isActive || agent.name !== ADAPTER_NAME || agent.smartAccountAddress !== adapter || agent.signerAddress !== adapter || permission.spec.delegate !== adapter) throw new Error("Only the configured Allocard agent can receive sponsored permission");
   return { identity, company, child };
 }
 async function previewAdapterPermission(actor: string, company: typeof companies.$inferSelect, permission: import("./near-sponsored-action").SponsoredAdapterPermission) {
@@ -385,14 +385,14 @@ async function adapterResult(outcome: RpcOutcome, permission: import("./near-spo
   const receipts = (outcome as RpcOutcome & { receipts_outcome?: Array<{ outcome: { executor_id: string; status: { SuccessValue?: string; Failure?: unknown } } }> }).receipts_outcome ?? [];
   const candidates = new Set<string>();
   for (const receipt of receipts.filter(value => value.outcome.executor_id === scope.contractId)) {
-    if (receipt.outcome.status.Failure !== undefined) throw new Error(`Adapter permission creation failed: ${JSON.stringify(receipt.outcome.status.Failure)}`);
+    if (receipt.outcome.status.Failure !== undefined) throw new Error(`Agent permission creation failed: ${JSON.stringify(receipt.outcome.status.Failure)}`);
     if (receipt.outcome.status.SuccessValue) candidates.add(decodeMutationId({status:receipt.outcome.status}));
   }
   if (outcome.status.SuccessValue) candidates.add(decodeMutationId(outcome));
   if (candidates.size !== 1) throw new Error("Sponsored transaction confirmed but its child permission result is not available. Retry the same rules to recover the original transaction; do not create a replacement.");
   const [id] = candidates;
   const actual = await treasuryReader(permission.treasury).getPermission(id);
-  if (!actual || actual.revoked || actual.issuer !== actor || actual.parent_id !== permission.parentId || actual.delegate !== permission.spec.delegate) throw new Error("The confirmed child permission does not match this employee, parent and adapter");
+  if (!actual || actual.revoked || actual.issuer !== actor || actual.parent_id !== permission.parentId || actual.delegate !== permission.spec.delegate) throw new Error("The confirmed child permission does not match this employee, parent and agent");
   return {...outcome,adapterPermissionId:id};
 }
 export async function prepareSponsoredAdapter(input: import("./near-sponsored-action").SponsoredAdapterPermission) {
@@ -403,7 +403,7 @@ export async function prepareSponsoredAdapter(input: import("./near-sponsored-ac
   const intentHash=hash(canonicalSponsorJson(permission));
   const existing=await findSponsorJob(adapterJobId(identity.walletAddress,permission));
   if(existing)return {enabled:true,outcome:await adapterResult(await recover(existing,intentHash),permission,identity.walletAddress)};
-  if(child.status!=="pending_config")throw new Error("Adapter permission is already active");
+  if(child.status!=="pending_config")throw new Error("Agent permission is already active");
   await previewAdapterPermission(identity.walletAddress,company,permission);
   const access=await ensureSigningAccount(identity.walletAddress);
   if(!Number.isSafeInteger(access.block_height))throw new Error("Invalid NEAR block height");
@@ -418,14 +418,14 @@ export async function submitSponsoredAdapter(input: import("./near-sponsored-act
   const id=adapterJobId(identity.walletAddress,permission),intentHash=hash(canonicalSponsorJson(permission));
   const existing=await findSponsorJob(id);
   if(existing)return {enabled:true,outcome:await adapterResult(await recover(existing,intentHash),permission,identity.walletAddress)};
-  if(child.status!=="pending_config")throw new Error("Adapter permission is already active");
+  if(child.status!=="pending_config")throw new Error("Agent permission is already active");
   const delegate=sponsoredAdapterDelegate(identity.walletAddress,permission,nonce,maxBlockHeight);
   const digest=createHash("sha256").update(sponsoredSigningBytes(delegate)).digest();
   const publicKey=createPublicKey({key:Buffer.concat([Buffer.from("302a300506032b6570032100","hex"),Buffer.from(identity.walletAddress,"hex")]),format:"der",type:"spki"});
-  if(!verify(null,digest,publicKey,Buffer.from(signature.slice(2),"hex")))throw new Error("Invalid adapter permission meta-transaction signature");
+  if(!verify(null,digest,publicKey,Buffer.from(signature.slice(2),"hex")))throw new Error("Invalid agent permission meta-transaction signature");
   const access=await nearQuery({request_type:"view_access_key",account_id:identity.walletAddress,public_key:delegate.publicKey.toString()});
   if(access.permission!=="FullAccess" || delegate.nonce!==nextAccessKeyNonce(access.nonce))throw new Error("Employee nonce changed; retry the same permission with a fresh signature");
-  if(!Number.isSafeInteger(access.block_height)||delegate.maxBlockHeight<=BigInt(access.block_height)||delegate.maxBlockHeight>BigInt(access.block_height+SPONSORED_VALID_BLOCKS))throw new Error("Adapter meta-transaction expired or has an excessive validity window");
+  if(!Number.isSafeInteger(access.block_height)||delegate.maxBlockHeight<=BigInt(access.block_height)||delegate.maxBlockHeight>BigInt(access.block_height+SPONSORED_VALID_BLOCKS))throw new Error("Agent setup signature expired or has an excessive validity window");
   await previewAdapterPermission(identity.walletAddress,company,permission);
   const action=new Action({signedDelegate:{delegateAction:delegate,signature:new Signature({keyType:delegate.publicKey.keyType,data:Buffer.from(signature.slice(2),"hex")})}});
   return {enabled:true,outcome:await adapterResult(await submitOuter(id,identity.walletAddress,intentHash,identity.walletAddress,[action]),permission,identity.walletAddress)};

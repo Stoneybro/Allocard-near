@@ -60,7 +60,7 @@ it("returns the confirmed permission after one chain verification, without rebui
 it("still rejects a confirmed permission belonging to another agent before saving activation", async () => {
   mocks.delegationReads = [[draft], [parent]];
   mocks.permission.mockResolvedValue({ ...permission, delegate: "other.testnet" });
-  await expect(activateEmployeeDelegation({ walletAddress, delegationId: "child", delegationHash: "9", signedDelegation: null })).rejects.toThrow("another adapter");
+  await expect(activateEmployeeDelegation({ walletAddress, delegationId: "child", delegationHash: "9", signedDelegation: null })).rejects.toThrow("another agent");
   expect(mocks.update).not.toHaveBeenCalled();
 });
 it("rejects a mismatched session before preparing agent setup", async () => {

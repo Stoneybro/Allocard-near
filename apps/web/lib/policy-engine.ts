@@ -313,7 +313,7 @@ Key NEAR Protocol Context:
 Return ONLY valid JSON matching this schema:
 {
   "summary": "1-2 sentence human-readable executive summary of what this policy allows and restricts",
-  "reasoning": "Step-by-step interpretation of limits, periods, and constraints",
+  "reasoning": "One short sentence summarizing the interpreted limits; no step-by-step explanation",
   "confidence": number between 0 and 1,
   "lifetimeLimitNear": string or null (total budget over the delegation lifecycle),
   "period": "none" | "hourly" | "daily" | "weekly" | "monthly",
@@ -345,6 +345,7 @@ Compile this request into the JSON schema.`;
       const aiResponse = aiPolicySchema.parse(await aiChat<RawAiPolicyResponse>({
         model: getTextModel(),
         timeoutMs: 35_000,
+        disableThinking: true,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userMessage },

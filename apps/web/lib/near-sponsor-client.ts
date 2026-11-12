@@ -73,19 +73,19 @@ export async function sponsoredCreateAdapter(accountId: string, input: Sponsored
     if (raw) {
       const saved = JSON.parse(raw) as SponsoredAdapterPermission;
       const normalized = (value: SponsoredAdapterPermission) => canonicalSponsorJson({...value,spec:{...value.spec,valid_from_ms:"0"}});
-      if (normalized(saved) !== normalized(input)) throw new Error("The previous adapter request has different rules. Restore its original rules and recover it before creating another permission.");
+      if (normalized(saved) !== normalized(input)) throw new Error("The previous agent setup request has different rules. Restore its original rules and recover it before creating another permission.");
       permission = saved;
     } else localStorage.setItem(key, JSON.stringify(input));
   }
   const prepared = await sponsorRequest("prepare-adapter", permission);
-  if (!prepared.enabled) throw new Error("Adapter gas sponsorship is disabled. Ask the operator to enable NEAR_SPONSOR_ENABLED; no wallet-funded fallback was signed.");
+  if (!prepared.enabled) throw new Error("Agent gas sponsorship is disabled. Ask the operator to enable NEAR_SPONSOR_ENABLED; no wallet-funded fallback was signed.");
   if (prepared.outcome) return prepared.outcome;
   const delegate = sponsoredAdapterDelegate(accountId, permission, prepared.nonce, prepared.maxBlockHeight);
   const digest = await crypto.subtle.digest("SHA-256", sponsoredSigningBytes(delegate));
   const signature = await signHash(`0x${Buffer.from(digest).toString("hex")}`);
   if (!/^0x[0-9a-fA-F]{128}$/.test(signature)) throw new Error("Invalid employee meta-transaction signature");
   const result = await sponsorRequest("submit-adapter", {...permission,nonce:prepared.nonce,maxBlockHeight:prepared.maxBlockHeight,signature});
-  if (!result.outcome) throw new Error("Adapter sponsorship is not confirmed. Retry the same permission to recover its original transaction.");
+  if (!result.outcome) throw new Error("Agent sponsorship is not confirmed. Retry the same permission to recover its original transaction.");
   return result.outcome;
 }
 

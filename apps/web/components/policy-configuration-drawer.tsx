@@ -101,7 +101,7 @@ export function PolicyConfigurationDrawer(props: Props) {
   return <Drawer direction={props.mobile ? "bottom" : "right"} open={props.open} dismissible={!locked} onOpenChange={open => { if (!open && !locked) props.onClose(); }}>
     <DrawerContent className="data-[vaul-drawer-direction=right]:sm:max-w-xl">
       <DrawerHeader className="relative pr-12">
-        <DrawerTitle>{readOnly ? "Spending policy" : mode === "review" ? "Review spending policy" : "Set a spending policy"}</DrawerTitle>
+        <DrawerTitle>{agent ? readOnly ? "Agent spending policy" : mode === "review" ? "Review agent spending policy" : "Set up agent spending" : readOnly ? "Spending policy" : mode === "review" ? "Review spending policy" : "Set a spending policy"}</DrawerTitle>
         <DrawerDescription>{props.identity} · {CHAIN_NAME}{active ? " · Active" : status === "revoked" ? " · Revoked" : ""}</DrawerDescription>
         <Button className="absolute right-3 top-3" variant="ghost" size="icon" aria-label="Close policy drawer" disabled={locked} onClick={props.onClose}><X className="size-4" /></Button>
       </DrawerHeader>

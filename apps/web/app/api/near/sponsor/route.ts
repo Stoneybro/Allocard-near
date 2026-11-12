@@ -35,7 +35,7 @@ export async function POST(request: Request) {
     }
     if (operation === "prepare-adapter" || operation === "submit-adapter") {
       const schema = operation === "prepare-adapter" ? sponsoredAdapterSchema : sponsoredAdapterProofSchema;
-      if (!schema.safeParse(input).success) return Response.json({ error: "Invalid sponsored adapter permission" }, { status: 400, headers });
+      if (!schema.safeParse(input).success) return Response.json({ error: "Invalid sponsored agent permission" }, { status: 400, headers });
       return Response.json(operation === "prepare-adapter" ? await prepareSponsoredAdapter(sponsoredAdapterSchema.parse(input)) : await submitSponsoredAdapter(sponsoredAdapterProofSchema.parse(input)), { headers });
     }
     if (operation === "prepare-company" || operation === "submit-company") {

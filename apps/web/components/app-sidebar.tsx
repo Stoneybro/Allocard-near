@@ -212,7 +212,7 @@ function AddEmployeeDialog({
         <DialogHeader>
           <DialogTitle>Add an Employee</DialogTitle>
           <DialogDescription>
-            Add their work email, then share the Allocard link. They can accept access after signing in with that email.
+            Enter their email and share allocard.xyz. They can sign in with that email to accept the invitation.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="flex flex-col gap-4 py-2">
@@ -227,9 +227,6 @@ function AddEmployeeDialog({
               onChange={(e) => setEmail(e.target.value)}
               disabled={isSubmitting}
             />
-            <p className="text-xs text-muted-foreground">
-              They can accept after signing in with this email address. Their NEAR wallet is created automatically.
-            </p>
           </div>
 
           <div className="flex justify-end gap-2 pt-2">

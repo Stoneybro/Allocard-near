@@ -1986,8 +1986,8 @@ export async function activateEmployeeDelegation(input: {
     db.select().from(agents).where(eq(agents.id, delegation.delegateeId!)).limit(1),
     reader.getPermission(input.delegationHash),
   ]);
-  if (!agent || !agent.isActive || agent.name !== ADAPTER_NAME || agent.smartAccountAddress !== adapterAccount() || delegation.parentDelegationId !== parent.id) throw new Error("Unsupported adapter or parent permission");
-  if (permission?.delegate !== agent.smartAccountAddress || permission?.parent_id !== parent.delegationHash) throw new Error("On-chain child belongs to another adapter or parent");
+  if (!agent || !agent.isActive || agent.name !== ADAPTER_NAME || agent.smartAccountAddress !== adapterAccount() || delegation.parentDelegationId !== parent.id) throw new Error("Unsupported agent or parent permission");
+  if (permission?.delegate !== agent.smartAccountAddress || permission?.parent_id !== parent.delegationHash) throw new Error("On-chain child belongs to another agent or parent");
   if (!permission || permission.issuer !== input.walletAddress || permission.revoked || permission.parent_id == null) throw new Error("On-chain child permission does not match the signing employee");
 
   const [activated] = await db

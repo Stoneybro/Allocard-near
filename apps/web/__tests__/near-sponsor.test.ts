@@ -333,11 +333,11 @@ describe("adapter child permission gas sponsorship",()=>{
  });
  it("rejects another employee's child permission before signing or relaying",async()=>{
   configureAdapter();mocks.adapterRows=adapterRows({delegatorId:"other-employee"});
-  await expect(prepareSponsoredAdapter(adapterPermission)).rejects.toThrow("Only your adapter");expect(mocks.jobs.size).toBe(0);
+  await expect(prepareSponsoredAdapter(adapterPermission)).rejects.toThrow("Only your agent");expect(mocks.jobs.size).toBe(0);
  });
  it("rejects a different adapter recipient",async()=>{
   configureAdapter();mocks.adapterRows=adapterRows();
-  await expect(prepareSponsoredAdapter({...adapterPermission,spec:{...adapterPermission.spec,delegate:"evil.testnet"}})).rejects.toThrow("configured Allocard adapter");expect(mocks.jobs.size).toBe(0);
+  await expect(prepareSponsoredAdapter({...adapterPermission,spec:{...adapterPermission.spec,delegate:"evil.testnet"}})).rejects.toThrow("configured Allocard agent");expect(mocks.jobs.size).toBe(0);
  });
  it("rejects widened child budgets before consuming relayer gas",async()=>{
   configureAdapter();mocks.adapterRows=adapterRows();
@@ -345,7 +345,7 @@ describe("adapter child permission gas sponsorship",()=>{
  });
  it("rejects a forged signature before creating a sponsor job",async()=>{
   configureAdapter();mocks.adapterRows=adapterRows();
-  await expect(submitSponsoredAdapter({...adapterProof(),signature:`0x${"00".repeat(64)}`})).rejects.toThrow("Invalid adapter permission meta-transaction signature");expect(mocks.jobs.size).toBe(0);
+  await expect(submitSponsoredAdapter({...adapterProof(),signature:`0x${"00".repeat(64)}`})).rejects.toThrow("Invalid agent permission meta-transaction signature");expect(mocks.jobs.size).toBe(0);
  });
  it("rejects revoked on-chain parent permissions",async()=>{
   const root=configureAdapter();root.revoked=true;mocks.adapterRows=adapterRows();

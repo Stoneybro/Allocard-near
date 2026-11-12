@@ -3,7 +3,7 @@ export const ADAPTER_NAME = "Allocard Purchasing Research Adapter";
 export const WORKER_HANDLE = "purchasing-research-agent-v2";
 export const RESEARCH_AGENT_NAME = "Purchasing Research agent v2";
 export const RESEARCH_PROMPT = "Compare three project management tools for a team of 12, under $100 per month, with time tracking and guest access. Prefer monthly billing and include sources.";
-export const agentDisplayName = (name: string) => name === ADAPTER_NAME ? RESEARCH_AGENT_NAME : name;
+export const agentDisplayName = (name: string) => name === ADAPTER_NAME ? "Agent setup" : name;
 export const DEMO_LIMITS = { dailyEmployee: 25, dailyGlobal: 500, concurrentEmployee: 2, concurrentGlobal: 12, queue: 100, dailyMicros: 25_000_000, reserveMicros: 250_000 } as const;
 export const taskInput = z.object({ companyId: z.string().uuid(), delegationId: z.string().uuid(), prompt: z.string().trim().min(20).max(3000), requestId: z.string().uuid() }).strict();
 export const confirmInput = z.object({ id: z.string().uuid(), digest: z.string().regex(/^[a-f0-9]{64}$/) }).strict();

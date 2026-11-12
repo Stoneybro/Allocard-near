@@ -3,7 +3,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAccountScope } from "@/hooks/use-account-queries";
-import { ADAPTER_NAME, terminal, type ResearchTask, type Candidate } from "@/lib/agent-adapter/shared";
+import { RESEARCH_AGENT_NAME, terminal, type ResearchTask, type Candidate } from "@/lib/agent-adapter/shared";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -29,7 +29,7 @@ export function PurchasingResearchPanel({companyId,delegationId,adapterId,onConf
  return <div className="min-w-0 space-y-6">
  <div className="grid w-full max-w-[984px] grid-cols-[minmax(0,640px)] items-start gap-4 lg:grid-cols-[minmax(0,640px)_minmax(240px,320px)] lg:gap-6">
  <Card className="min-w-0 rounded-2xl border-border/70 [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]"><CardHeader className="gap-1.5"><CardTitle className="text-lg tracking-tight">New research task</CardTitle><CardDescription className="text-xs leading-relaxed">Compare business software and subscriptions for your team.</CardDescription></CardHeader><CardContent className="space-y-5">
- {!delegationId&&<Alert><AlertDescription>{adapterId?"Create and activate a child permission for the purchasing adapter before running research.":"The adapter signing identity is not configured yet."} <Button variant="outline" size="sm" disabled={!adapterId} onClick={onConfigure}>Configure adapter</Button></AlertDescription></Alert>}
+ {!delegationId&&<Alert><AlertDescription>{adapterId?"Complete agent setup before starting a research task.":"Agent setup is unavailable for this workspace."} <Button variant="outline" size="sm" disabled={!adapterId} onClick={onConfigure}>Set up agent</Button></AlertDescription></Alert>}
  <div className="space-y-2"><Label htmlFor="research-prompt" className="text-xs font-medium">What does your team need?</Label><Textarea id="research-prompt" className="min-h-32 text-sm leading-relaxed" rows={4} maxLength={3000} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder={examples[0]} /><p className="text-xs leading-relaxed text-muted-foreground">Include your team size, budget and must-have features.</p></div>
  <div className="flex flex-wrap gap-2">{examples.map((example,index)=><Button key={example} variant="ghost" size="sm" onClick={()=>setPrompt(example)}>Example {index+1}</Button>)}</div>
  <div className="flex flex-col gap-2 border-t border-border/60 pt-5"><Button className="h-11 w-full rounded-lg" disabled={!delegationId||prompt.trim().length<20||prepare.isPending} onClick={()=>prepare.mutate()}>{prepare.isPending?"Preparing proposal…":"Use Allocard demo agent"}</Button><Button variant="ghost" className="h-auto min-h-9 whitespace-normal text-xs" disabled={prompt.trim().length<20||discovery.isFetching} onClick={()=>setQuery(prompt.trim().slice(0,180))}>Find related marketplace agents</Button></div>
@@ -42,7 +42,7 @@ export function PurchasingResearchPanel({companyId,delegationId,adapterId,onConf
    <Card className="gap-4 rounded-2xl border-border/60 bg-muted/20 shadow-none [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]">
      <CardHeader><CardTitle className="text-sm">Research details</CardTitle></CardHeader>
      <CardContent className="space-y-5">
-       <div><p className="text-xs text-muted-foreground">Selected agent</p><p className="mt-2 text-base font-medium tracking-tight">{ADAPTER_NAME}</p></div>
+       <div><p className="text-xs text-muted-foreground">Selected agent</p><p className="mt-2 text-base font-medium tracking-tight">{RESEARCH_AGENT_NAME}</p></div>
        <dl className="space-y-3 border-t border-border/60 pt-4 text-xs">
          <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Access</dt><dd className="text-right font-medium">Research only</dd></div>
          <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Purchases</dt><dd className="text-right font-medium">Not permitted</dd></div>
@@ -52,7 +52,7 @@ export function PurchasingResearchPanel({companyId,delegationId,adapterId,onConf
    </Card>
  </aside>
  </div>
- <Dialog open={!!proposal} onOpenChange={open=>{if(!open&&!confirm.isPending)setProposal(null);}}><DialogContent><DialogHeader><DialogTitle>Confirm research task</DialogTitle><DialogDescription>{ADAPTER_NAME} will execute directly on Vercel. No marketplace hire, escrow or charge is created. Hosting and model usage still apply.</DialogDescription></DialogHeader>{confirm.error&&<Alert role="alert"><AlertDescription>{confirm.error.message}</AlertDescription></Alert>}<p className="whitespace-pre-wrap break-words text-sm">{proposal?.prompt}</p><p className="text-xs text-muted-foreground">Proposal expires {proposal?new Date(proposal.expiresAt).toLocaleTimeString():""}. Expected execution deadline: 3 minutes after starting.</p><DialogFooter><Button variant="outline" disabled={confirm.isPending} onClick={()=>setProposal(null)}>Cancel</Button><Button disabled={confirm.isPending} onClick={()=>proposal&&confirm.mutate(proposal)}>{confirm.isPending?"Submitting…":"Confirm task"}</Button></DialogFooter></DialogContent></Dialog>
+ <Dialog open={!!proposal} onOpenChange={open=>{if(!open&&!confirm.isPending)setProposal(null);}}><DialogContent><DialogHeader><DialogTitle>Confirm research task</DialogTitle><DialogDescription>{RESEARCH_AGENT_NAME} will create a research report. This demo does not make purchases or charge your treasury.</DialogDescription></DialogHeader>{confirm.error&&<Alert role="alert"><AlertDescription>{confirm.error.message}</AlertDescription></Alert>}<p className="whitespace-pre-wrap break-words text-sm">{proposal?.prompt}</p><p className="text-xs text-muted-foreground">Proposal expires {proposal?new Date(proposal.expiresAt).toLocaleTimeString():""}. Expected execution deadline: 3 minutes after starting.</p><DialogFooter><Button variant="outline" disabled={confirm.isPending} onClick={()=>setProposal(null)}>Cancel</Button><Button disabled={confirm.isPending} onClick={()=>proposal&&confirm.mutate(proposal)}>{confirm.isPending?"Submitting…":"Confirm task"}</Button></DialogFooter></DialogContent></Dialog>
  <Card className="min-w-0 rounded-2xl border-border/70"><CardHeader><CardTitle className="text-sm">Your research requests</CardTitle></CardHeader><CardContent className="space-y-3">{tasks.isPending&&<Skeleton className="h-14 w-full"/>}{tasks.error&&<p role="alert" className="text-sm text-muted-foreground">{tasks.error.message}</p>}{tasks.data?.map(task=><ResearchJob key={task.id} task={task} onReview={()=>setProposal(task)} onUpdate={()=>{void client.invalidateQueries({queryKey:taskKey});}}/>)}{tasks.data?.length===0&&<p className="text-sm text-muted-foreground">No research requests yet.</p>}</CardContent></Card>
  </div>;
 }
