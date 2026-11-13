@@ -189,7 +189,7 @@ export function DelegationCardsView({ loading = false, company, employees, agent
   }
 
   return (
-    <section aria-label="Delegations" className={`min-w-0 space-y-4 ${styles.container}`}>
+    <section aria-label="Delegations" className="min-w-0 space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative w-full sm:max-w-64">
           <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />

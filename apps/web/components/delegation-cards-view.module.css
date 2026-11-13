@@ -1,7 +1,3 @@
-.container {
-  container-type: inline-size;
-}
-
 .table {
   table-layout: fixed;
 }
@@ -26,48 +22,36 @@
   padding-left: calc(var(--depth) * 1rem);
 }
 
-@container (max-width: 760px) {
-  .table, .table tbody {
-    display: block;
-    width: 100%;
+@media (max-width: 767px) {
+  .table {
+    min-width: 800px;
   }
 
-  .table thead {
-    display: none;
+  .table th:last-child {
+    width: 132px;
   }
 
-  .table tr:is([data-delegation-id], [data-loading-row]) {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 0.75rem 1rem;
-    padding: 1rem;
-  }
-
-  .table tr:is([data-delegation-id], [data-loading-row]) > td {
-    min-width: 0;
-    padding: 0;
-    text-align: left;
-  }
-
-  .table tr:is([data-delegation-id], [data-loading-row]) > td:first-child,
-  .table tr:is([data-delegation-id], [data-loading-row]) > td:nth-child(2),
+  .table th:last-child,
   .table tr:is([data-delegation-id], [data-loading-row]) > td:last-child {
-    grid-column: 1 / -1;
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    background: var(--card);
+    border-left: 1px solid var(--border);
+    box-shadow: -6px 0 10px -9px var(--foreground);
   }
 
-  .label {
-    display: block;
-    margin-bottom: 0.25rem;
-    font-size: 0.6875rem;
-    color: var(--muted-foreground);
-    font-weight: 400;
+  .table th:last-child {
+    z-index: 2;
+  }
+
+  .table td:nth-child(3),
+  .table td:nth-child(4) {
+    white-space: nowrap;
   }
 
   .actions {
-    justify-content: flex-start;
-  }
-
-  .indent {
-    padding-left: calc(min(var(--depth), 2) * 0.5rem);
+    flex-direction: column;
+    align-items: flex-end;
   }
 }
