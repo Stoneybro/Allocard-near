@@ -43,6 +43,13 @@ export async function releaseRejectedSponsorJob(id: string, transactionHash: str
   await db.delete(jobs).where(and(eq(jobs.id, id), eq(jobs.state, "submitted"), eq(jobs.transactionHash, transactionHash)));
 }
 
+/** Preserve the audit record after finalized proof that its delegate never ran. */
+export async function archiveExpiredUnusedSponsorJob(id: string, transactionHash: string) {
+  const rows = await db.update(jobs).set({ id: `${id}:expired:${transactionHash}`, state: "expired_unexecuted" })
+    .where(and(eq(jobs.id, id), eq(jobs.state, "submitted"), eq(jobs.transactionHash, transactionHash))).returning({ id: jobs.id });
+  return rows.length === 1;
+}
+
 /** A final FT resolver result of zero proves this claim credited no tokens. */
 export async function releaseUncreditedFaucetJob(id: string, transactionHash: string) {
   await db.delete(jobs).where(and(eq(jobs.id, id), eq(jobs.transactionHash, transactionHash)));

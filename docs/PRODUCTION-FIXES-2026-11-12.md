@@ -63,3 +63,13 @@ The sponsor now retries transient read-only network, gas-price and transaction-s
 Validation: 75 focused sponsorship, transport, hierarchy and loading tests passed, with type checking and targeted lint also passing. Browser verification was blocked by missing Chromium system libraries; no visual verification is claimed.
 
 Deployment `dpl_DRbSC4q9yfp5sZoqQFuRxjVhm1Td` is `READY` and aliased to `https://www.allocard.xyz`. Production compilation and type checking passed. Reload dashboard tabs before retrying the original agent setup.
+
+## Follow-up: expired agent transaction recovery
+
+The saved agent transaction `9eHVxqUwpTp8tp6gr32byUvxn7yuEJtHEZ1zGUPMDNKB` remained in `submitted` state after an unconfirmed broadcast attempt. Repeated `tx` lookups using `wait_until: FINAL` returned HTTP 408. Explicit non-waiting lookups returned `UNKNOWN_TRANSACTION` from both the configured and public testnet RPCs. Both finalized access-key reads showed nonce `276559766000014`, below the signed delegate nonce `276559766000015`, at heights beyond its expiry `277475865`.
+
+Agent recovery now uses a non-waiting status lookup. An unknown result alone never releases an attempt. After exact journal intent and transaction-hash verification, recovery can archive an expired delegate only if a fresh finalized FullAccess key read proves its nonce remains unused. A conservative nonce-floor check rules out ambiguous key-replacement cases. Consumed nonces, live signatures, unverifiable bytes and failed reads remain blocked. Archiving renames the original journal key and retains the saved bytes with state `expired_unexecuted`, allowing a fresh user signature under the original stable intent key. No broadcast is replayed. HTTP 408 is retried only for read operations.
+
+The reported attempt passed these checks and was archived without sending a chain transaction. Its signed delegate did not execute. The user must reload and sign again to activate agent access. Validation covered 76 focused sponsorship and transport tests, including recovery without a second broadcast, preserved ambiguous attempts and key-replacement bounds; type checking and targeted lint passed. No contract deployment or database migration is required.
+
+Deployment `dpl_789hRAybFtuR3QrLwbTMpCL2JEJz` is `READY` and aliased to `https://www.allocard.xyz`. Production build/type checks and live homepage, treasury and authentication-gate checks passed.

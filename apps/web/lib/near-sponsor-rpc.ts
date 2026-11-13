@@ -30,12 +30,12 @@ export async function relayRpc(method: string, params: object, txHash?: string):
       if (payload.result == null) throw new ProviderFailure("INVALID_RESPONSE");
       return payload.result;
     } catch (caught) {
-      if (caught instanceof NearRpcError && caught.rpcCause === "INVALID_TRANSACTION") throw caught;
+      if (caught instanceof NearRpcError && (caught.rpcCause === "INVALID_TRANSACTION" || (method === "tx" && caught.rpcCause === "UNKNOWN_TRANSACTION"))) throw caught;
       const failure = caught instanceof ProviderFailure ? caught : null;
       const code = failure?.code ?? (caught instanceof NearRpcError ? "RPC_ERROR" : caught instanceof Error && caught.name === "TimeoutError" ? "TIMEOUT" : "CONNECTION_ERROR");
       // Never log provider URLs, bodies, call arguments or signed transactions.
       console.warn("[sponsor RPC]", { method, attempt: attempt + 1, code, status: failure?.status, submitted: Boolean(txHash) });
-      const transient = failure ? failure.status === 429 || (failure.status != null && failure.status >= 500) || code === "INVALID_RESPONSE"
+      const transient = failure ? failure.status === 408 || failure.status === 429 || (failure.status != null && failure.status >= 500) || code === "INVALID_RESPONSE"
         : !(caught instanceof NearRpcError) || ["TIMEOUT_ERROR", "INTERNAL_ERROR", "UNAVAILABLE_SHARD"].includes(caught.rpcCause ?? "");
       if (read && attempt === 0 && transient) {
         if (!failure?.response || await backoffNearRead(url, failure.response)) continue;

@@ -27,6 +27,7 @@ import { invalidateNearReadCache } from "./near-read-coordinator";
 import { NearRpcError } from "./near-rpc-error";
 import { releaseRejectedSponsorJob, releaseUncreditedFaucetJob } from "./near-sponsor-store";
 import { TransactionNotSubmittedError } from "./payment-submission";
+import { archiveExpiredUnusedDelegate } from "./near-expired-sponsor";
 
 const decimal = z.string().regex(/^(0|[1-9][0-9]*)$/).max(39);
 const account = z.string().min(2).max(64).regex(/^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/);
@@ -380,6 +381,20 @@ async function adapterResult(outcome: RpcOutcome, permission: import("./near-spo
   if (!actual || actual.revoked || actual.issuer !== actor || actual.parent_id !== permission.parentId || actual.delegate !== permission.spec.delegate) throw new Error("The confirmed child permission does not match this employee, parent and agent");
   return {...outcome,adapterPermissionId:id};
 }
+async function recoverAdapterJob(job: SponsorJob, intentHash: string, permission: import("./near-sponsored-action").SponsoredAdapterPermission, actor: string) {
+  if (job.intentHash !== intentHash || !job.transactionHash) throw new Error("Restore the original agent policy to recover its saved transaction.");
+  try {
+    const result = await relayRpc("tx", { tx_hash: job.transactionHash, sender_account_id: job.relayerId, wait_until: "NONE" }, job.transactionHash);
+    return await adapterResult(assertOutcome(result, job.transactionHash), permission, actor);
+  } catch (caught) {
+    if (!(caught instanceof NearRpcError) || caught.rpcCause !== "UNKNOWN_TRANSACTION") throw caught;
+    if (await archiveExpiredUnusedDelegate(job, intentHash)) {
+      console.info("[sponsor recovery]", { transactionHash: job.transactionHash, state: "expired_unexecuted" });
+      return null;
+    }
+    throw new Error(`The original agent transaction ${job.transactionHash} is not visible yet. Its execution could not be ruled out, so no replacement was created. Retry the same policy shortly.`);
+  }
+}
 export async function prepareSponsoredAdapter(input: import("./near-sponsored-action").SponsoredAdapterPermission) {
   const permission = sponsoredAdapterSchema.parse(input);
   sponsorConfig();
@@ -387,7 +402,7 @@ export async function prepareSponsoredAdapter(input: import("./near-sponsored-ac
   await assertTestnet();
   const intentHash=hash(canonicalSponsorJson(permission));
   const existing=await findSponsorJob(adapterJobId(identity.walletAddress,permission));
-  if(existing)return {enabled:true,outcome:await adapterResult(await recover(existing,intentHash),permission,identity.walletAddress)};
+  if(existing){const outcome=await recoverAdapterJob(existing,intentHash,permission,identity.walletAddress);if(outcome)return {enabled:true,outcome};}
   if(child.status!=="pending_config")throw new Error("Agent permission is already active");
   await previewAdapterPermission(identity.walletAddress,company,permission);
   const access=await ensureSigningAccount(identity.walletAddress);
@@ -402,7 +417,7 @@ export async function submitSponsoredAdapter(input: import("./near-sponsored-act
   await assertTestnet();
   const id=adapterJobId(identity.walletAddress,permission),intentHash=hash(canonicalSponsorJson(permission));
   const existing=await findSponsorJob(id);
-  if(existing)return {enabled:true,outcome:await adapterResult(await recover(existing,intentHash),permission,identity.walletAddress)};
+  if(existing){const outcome=await recoverAdapterJob(existing,intentHash,permission,identity.walletAddress);if(outcome)return {enabled:true,outcome};throw new TransactionNotSubmittedError("The previous agent signature expired without execution. Retry the same policy and sign again.");}
   if(child.status!=="pending_config")throw new Error("Agent permission is already active");
   const delegate=sponsoredAdapterDelegate(identity.walletAddress,permission,nonce,maxBlockHeight);
   const digest=createHash("sha256").update(sponsoredSigningBytes(delegate)).digest();

@@ -24,6 +24,10 @@ vi.mock("@/lib/near-sponsor-store", () => ({
   saveSponsorTransaction: async (id: string, transactionHash: string, signedTransaction: string) => { Object.assign(mocks.jobs.get(id)!, { transactionHash, signedTransaction, state: "submitted" }); },
   finishSponsorJob: async (id: string, state: string) => { Object.assign(mocks.jobs.get(id)!, { state }); },
   releaseRejectedSponsorJob: async (id: string, hash: string) => { if (mocks.jobs.get(id)?.transactionHash === hash) mocks.jobs.delete(id); },
+  archiveExpiredUnusedSponsorJob: async (id: string, hash: string) => {
+    const job = mocks.jobs.get(id); if (!job || job.state !== "submitted" || job.transactionHash !== hash) return false;
+    mocks.jobs.delete(id); mocks.jobs.set(`${id}:expired:${hash}`, { ...job, id: `${id}:expired:${hash}`, state: "expired_unexecuted" }); return true;
+  },
   releaseUnbroadcastJob: async (id: string) => { if (!mocks.jobs.get(id)?.transactionHash) mocks.jobs.delete(id); },
 }));
 import { prepareSponsoredAdapter, submitSponsoredAdapter, prepareSponsoredCompany, submitSponsoredCompany, prepareSponsoredPayment, submitSponsoredPayment, sponsoredPaymentSchema } from "@/lib/near-sponsor-server";
@@ -367,6 +371,28 @@ it("recovers a confirmed adapter's inner receipt instead of issuing a replacemen
  mocks.adapterRows=adapterRows();
  expect((await prepareSponsoredAdapter(adapterPermission)).outcome?.adapterPermissionId).toBe("9");
  expect(rpc.mock.calls.filter(call=>JSON.parse(call[1].body as string).method==="send_tx")).toHaveLength(1);
+});
+
+it("offers a fresh signature only after a missing child transaction expired with an unused finalized nonce", async () => {
+ configureAdapter(); mocks.adapterRows = adapterRows();
+ const base = mockRpc();
+ const rpc = vi.fn(async (url: unknown, options: RequestInit) => {
+   const method = JSON.parse(options.body as string).method;
+   if (method === "send_tx") return new Response("timeout", { status: 408 });
+   if (method === "tx") return Response.json({ error: { cause: { name: "UNKNOWN_TRANSACTION" } } });
+   return base(url, options);
+ });
+ vi.stubGlobal("fetch", rpc);
+ await expect(submitSponsoredAdapter(adapterProof())).rejects.toThrow("not yet confirmed");
+ const original = [...mocks.jobs.values()][0];
+ const query = mocks.query.getMockImplementation()!;
+ mocks.query.mockImplementation(async params => params.request_type === "view_access_key" && params.account_id === employee
+   ? { permission: "FullAccess", nonce: "1", block_height: 221 } : query(params));
+ mocks.adapterRows = adapterRows();
+ expect(await prepareSponsoredAdapter(adapterPermission)).toMatchObject({ enabled: true, nonce: "2", maxBlockHeight: "341" });
+ expect([...mocks.jobs.values()]).toEqual([expect.objectContaining({ transactionHash: original.transactionHash, state: "expired_unexecuted" })]);
+ expect(rpc.mock.calls.filter(call => JSON.parse(call[1].body as string).method === "send_tx")).toHaveLength(1);
+ expect(rpc.mock.calls.find(call => JSON.parse(call[1].body as string).method === "tx")?.[1].body).toContain('"wait_until":"NONE"');
 });
 
 it.each([{ batched: false, sufficient: false }, { batched: true, sufficient: true }, { batched: true, sufficient: false }])("credits activation once with batched=$batched sufficient=$sufficient and accepts repeat claims", async ({ batched, sufficient }) => {

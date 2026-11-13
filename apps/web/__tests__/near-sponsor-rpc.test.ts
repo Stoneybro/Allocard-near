@@ -50,3 +50,15 @@ it("recovers a known transaction by read only after a transient response", async
     expect.objectContaining({ method: "tx", params: expect.objectContaining({ tx_hash: "original" }) }),
   ]);
 });
+it("preserves UNKNOWN_TRANSACTION for a non-waiting status lookup without treating it as rejection", async () => {
+  fetchMock.mockResolvedValueOnce(Response.json({ error: { cause: { name: "UNKNOWN_TRANSACTION" }, message: "Unknown" } }));
+  await expect(relayRpc("tx", { tx_hash: "original", wait_until: "NONE" }, "original")).rejects.toMatchObject({ rpcCause: "UNKNOWN_TRANSACTION" });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+it("retries HTTP 408 on reads without repeating a timed-out broadcast", async () => {
+  fetchMock.mockResolvedValueOnce(new Response("timeout", { status: 408 })).mockResolvedValueOnce(Response.json({ result: { chain_id: "testnet" } }));
+  expect(await relayRpc("status", {})).toEqual({ chain_id: "testnet" });
+  fetchMock.mockReset().mockResolvedValue(new Response("timeout", { status: 408 }));
+  await expect(relayRpc("send_tx", {}, "original")).rejects.toThrow("not yet confirmed");
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
