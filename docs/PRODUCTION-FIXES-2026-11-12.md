@@ -51,3 +51,15 @@ Shared agent spending access is labeled “Agent setup” in the sidebar, delega
 The delegation table uses a container query: above 760px of available section width it keeps aligned columns; at narrower widths each row presents identity, issuer, labeled limits and a wrapping action row. Actions remain visible without horizontal scrolling. Status appears beside the role, and the duplicate mobile detail row is removed. Hierarchy expansion and search remain functional. The Add employee modal now has one instruction explaining the email and sign-in invitation flow, with its repeated helper paragraph removed.
 
 Validation: 87 relevant hierarchy, activity, policy-drawer, agent-workspace, research, email-identity and sponsorship tests passed. Type checking passed and targeted lint had no errors; existing warnings remain. Container layout has not been inspected in an interactive browser in this session.
+
+## Follow-up: mobile rows, empty state and sponsor connectivity
+
+The mobile stacked-row layout was replaced by a horizontally scrollable table below 768px, with an opaque Actions column pinned to the right. Desktop uses the regular table. Empty and filtered-empty messages sit outside the horizontal scroll area so they remain centered in the visible frame, including tablet widths.
+
+Production agent activation returned the sponsor's generic RPC connection error. Historical logs showed failed sponsor requests but did not preserve the underlying provider response. A later read-only check of the locally configured RPC returned testnet status and gas price successfully; this does not establish the cause of the earlier production failures.
+
+The sponsor now retries transient read-only network, gas-price and transaction-status calls at most once. It shares provider cooldown handling with regular reads, stops on credential failures, and distinguishes HTTP rate limits and access errors. Safe diagnostic logs record operation, attempt, HTTP status and failure category without credentials, provider URLs, arguments or signed data. Broadcasts are never retried automatically; existing transaction journals and authoritative rejection handling remain in place.
+
+Validation: 75 focused sponsorship, transport, hierarchy and loading tests passed, with type checking and targeted lint also passing. Browser verification was blocked by missing Chromium system libraries; no visual verification is claimed.
+
+Deployment `dpl_DRbSC4q9yfp5sZoqQFuRxjVhm1Td` is `READY` and aliased to `https://www.allocard.xyz`. Production compilation and type checking passed. Reload dashboard tabs before retrying the original agent setup.

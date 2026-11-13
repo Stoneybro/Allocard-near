@@ -18,12 +18,13 @@ import { getSessionIdentity } from "./session";
 import { nearQuery, treasuryReader, verifyTreasuryOwner, assertEmployeePermission } from "./near-server";
 import { verifiedSharedConfig } from "./shared-server";
 import { NearReadError } from "./near-read-error";
-import { nearRpcServerUrl } from "./near-rpc-server";
+import { relayRpc } from "./near-sponsor-rpc";
+export { relayRpc } from "./near-sponsor-rpc";
 import { nextAccessKeyNonce } from "./near-nonce";
 import { COMPANY_STORAGE_TOP_UP, COMPANY_OPERATING_TOP_UP, MAX_SPONSORED_COMPANY_DEPOSIT, canonicalSponsorJson, sponsoredCompanyDelegate, sponsoredDelegate, sponsoredSigningBytes, SPONSORED_VALID_BLOCKS, type SponsoredCompany, type SponsoredCompanyProof, type SponsoredPayment, type SponsoredProof } from "./near-sponsored-action";
 import { acquireSponsorKey, allocateSponsorNonce, claimSponsorJob, findSponsorJob, finishSponsorJob, releaseSponsorKey, releaseUnbroadcastJob, saveSponsorTransaction, type SponsorJob } from "./near-sponsor-store";
 import { invalidateNearReadCache } from "./near-read-coordinator";
-import { NearRpcError, describeNearRpcError } from "./near-rpc-error";
+import { NearRpcError } from "./near-rpc-error";
 import { releaseRejectedSponsorJob, releaseUncreditedFaucetJob } from "./near-sponsor-store";
 import { TransactionNotSubmittedError } from "./payment-submission";
 
@@ -92,22 +93,6 @@ async function previewPayment(actor: string, company: typeof companies.$inferSel
 }
 
 export type RpcOutcome = { status: { SuccessValue?: string; Failure?: unknown }; transaction: { hash: string; signer_id: string; receiver_id: string; actions: unknown[] } };
-export async function relayRpc(method: string, params: object, txHash?: string): Promise<Record<string, unknown>> {
-  try {
-    const response = await fetch(nearRpcServerUrl(), { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
-      body: JSON.stringify({ jsonrpc: "2.0", id: "allocard-sponsor", method, params }), signal: AbortSignal.timeout(method === "send_tx" || method === "tx" ? 40000 : 10000) });
-    const payload = await response.json();
-    if (payload.error?.cause) {
-      const detail = describeNearRpcError(payload.error);
-      throw new NearRpcError(detail.message, detail.rpcCause, detail.invalidReason);
-    }
-    if (!response.ok || payload.error || !payload.result) throw new Error("RPC rejected request");
-    return payload.result;
-  } catch (caught) {
-    if (caught instanceof NearRpcError && caught.rpcCause === "INVALID_TRANSACTION") throw caught;
-    throw new Error(txHash ? `Sponsored transaction ${txHash} is not yet confirmed. Retry this same action to check its status; it will not be submitted again.` : "The gas sponsor could not reach NEAR testnet. Retry shortly.");
-  }
-}
 export async function assertTestnet() {
   const status = await relayRpc("status", {});
   if (status.chain_id !== "testnet") throw new Error("Gas sponsorship is only enabled for NEAR testnet");

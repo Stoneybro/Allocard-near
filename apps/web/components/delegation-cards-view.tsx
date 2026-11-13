@@ -304,9 +304,10 @@ export function DelegationCardsView({ loading = false, company, employees, agent
           <TableBody>
             {loading ? [0, 1, 2].map(row => <TableRow key={row} data-loading-row><TableCell className="p-4"><Skeleton className="h-5 w-28 max-w-full" /></TableCell><TableCell ><Skeleton className="h-5 w-20" /></TableCell><TableCell ><Skeleton className="h-5 w-12" /></TableCell><TableCell><Skeleton className="ml-auto h-5 w-12" /></TableCell><TableCell><Skeleton className="ml-auto h-8 w-16 max-w-full" /></TableCell></TableRow>)
               : visibleRoots.length ? visibleRoots.map(root => renderDelegation(root, new Set()))
-              : <TableRow><TableCell colSpan={5} className="whitespace-normal px-4 py-12 text-center"><p className="font-medium">{query ? "No matching delegations" : "No delegations yet"}</p><p className="mt-1 text-xs text-muted-foreground">{query ? "Try another name or clear your search." : "Add an employee or agent to set up spending authority."}</p></TableCell></TableRow>}
+              : null}
           </TableBody>
         </Table>
+        {!loading && !visibleRoots.length && <div role="status" className="flex w-full flex-col items-center justify-center px-4 py-12 text-center"><p className="font-medium">{query ? "No matching delegations" : "No delegations yet"}</p><p className="mt-1 text-xs text-muted-foreground">{query ? "Try another name or clear your search." : "Add an employee or agent to set up spending authority."}</p></div>}
       </div>
       <Dialog open={Boolean(activityDelegation)} onOpenChange={open => { if (!open) setActivityDelegation(null); }}>
         <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
