@@ -24,4 +24,4 @@ A draft is not a submitted transaction. Pending payment records retain original 
 
 Legacy reimbursement/fulfillment routes are not part of this demo; company and employee dashboard state marks reimbursements unavailable. Historical records and schema compatibility remain. Do not remove database migrations or recovery artifacts just because the UI no longer offers an old flow.
 
-See [walkthrough checks](delegation/TODAY.md) and [sponsorship recovery](delegation/SPONSORSHIP.md). Mocked client tests do not establish successful live sign-in or settlement.
+See [walkthrough checks](delegation/TODAY.md), [sponsorship recovery](delegation/SPONSORSHIP.md), and the [verification guide](VERIFICATION.md).

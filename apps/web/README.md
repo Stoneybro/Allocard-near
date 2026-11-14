@@ -20,4 +20,4 @@ pnpm --filter @allocard/web run typecheck
 pnpm web:build
 ```
 
-Tests use mocked external services where appropriate; passing them does not establish live Privy login, AI availability, or testnet payment settlement.
+See the [verification guide](../../docs/VERIFICATION.md) for claim-to-code evidence and the end-to-end walkthrough.

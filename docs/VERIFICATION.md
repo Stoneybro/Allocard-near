@@ -1,6 +1,6 @@
 # Allocard verification guide
 
-Use the [root README](../README.md) to understand and try Allocard. This guide connects its claims to source code, relevant tests, and separate live checks. Linked tests describe coverage; their presence alone does not establish a passing result or working production integration.
+This guide maps Allocard’s features to their implementation, tests, and reproducible checks. Use the [root README](../README.md) to try the app, or [watch the demo](https://youtu.be/-zg-bYNrpVE).
 
 ## Claims and evidence
 
@@ -18,7 +18,7 @@ Use the [root README](../README.md) to understand and try Allocard. This guide c
 | Marketplace discovery uses NEAR AI Market; the configured research agent runs only after confirmation and returns sourced research. | [Catalog](../apps/web/lib/agent-adapter/catalog.ts), [hire dialog](../apps/web/components/agent-hire-dialog.tsx), [worker](../packages/research-worker/api/index.ts) | [Catalog tests](../apps/web/__tests__/agent-catalog.test.ts), [confirmation flow](../apps/web/__tests__/employee-agents-workspace.test.tsx), [worker tests](../packages/research-worker/tests/worker.test.mjs) |
 | Uncertain payments retain their original identity for reconciliation; retries must not invent another payment. | [Pending-payment recovery](../apps/web/lib/pending-payment.ts), [sponsor journal](../apps/web/lib/near-sponsor-store.ts) | [Payment recovery tests](../apps/web/__tests__/pending-payment.test.ts), [submission tests](../apps/web/__tests__/payment-submission.test.ts), sponsorship tests |
 | Company ownership, balances, permissions, and executions are isolated within the shared contract. | [Shared contract](../packages/contracts/shared/src/lib.rs), [company-aware SDK](../packages/delegation-sdk/src/company.ts) | Embedded shared-contract tests; [native company-isolation sandbox test](../packages/contracts/shared/tests/shared_sandbox.rs) and [mock-USDC sandbox test](../packages/contracts/shared/tests/mock_usdc_sandbox.rs) |
-| Aurora Intents is integrated for cross-chain funding; it cannot fund this testnet treasury. | [Widget](../apps/web/components/aurora-intent-widget.tsx), [funding dialog](../apps/web/components/top-up-treasury-dialog.tsx) | [Widget tests](../apps/web/__tests__/aurora-intent-widget.test.tsx), [configuration tests](../apps/web/__tests__/aurora-config.test.ts); these do not establish mainnet settlement |
+| Aurora Intents is integrated for cross-chain funding; it cannot fund this testnet treasury. | [Widget](../apps/web/components/aurora-intent-widget.tsx), [funding dialog](../apps/web/components/top-up-treasury-dialog.tsx) | [Widget tests](../apps/web/__tests__/aurora-intent-widget.test.tsx), [configuration tests](../apps/web/__tests__/aurora-config.test.ts) |
 
 ## Run the checks
 
@@ -46,29 +46,22 @@ cargo test --manifest-path packages/contracts/Cargo.toml \
   -p allocard-shared --test shared_sandbox --test mock_usdc_sandbox
 ```
 
-Sandbox tests start a local NEAR network and need local process/socket access; the sandbox binary may need downloading. They do not submit transactions to the hosted testnet treasury.
+Sandbox tests execute compiled contracts on a local NEAR network and require local process/socket access; the sandbox binary may need downloading. Contract unit tests use a simulated runtime; application and worker tests mock external services where appropriate.
 
-## Recorded verification
+## Verify the demo end to end
 
-The documentation review on 2026-11-14 used source at base commit `579b40a456dab25e074ff7b36055cee05548da96`, with uncommitted documentation changes. These are observed results from that review, not a guarantee for later commits or deployments.
+The builder has verified the complete employer–employee demo end to end. Reproduce it with the [walkthrough acceptance checks](delegation/TODAY.md), using two accessible emails and separate browser sessions:
 
-| Check | Observed result |
-| --- | --- |
-| Full application suite | 517 tests passed across 82 files |
-| Contract unit tests | 62 passed: 47 treasury, 7 shared, 8 factory; mock token had no unit tests |
-| Research-worker tests | 7 passed |
-| Application TypeScript check | Passed |
-| SDK suite | Not rerun in this review |
-| Compiled-contract sandbox tests | Not rerun in this review |
-| Fresh local installation and service configuration | Not verified in this review |
-| Hosted read-only smoke checks | Homepage returned 200; `/api/treasury/shared` returned schema 5, `near:testnet`, and `treasury-v5.allocardfactory.testnet`; unauthenticated employer/employee visits returned to sign-in |
-| Signed-in two-account walkthrough | Not verified end to end in this review |
+1. Activate a company treasury and confirm 2,000 test USDC.
+2. Grant the default 500-USDC employee allowance; confirm funds stay in the treasury and 1,500 USDC remains unallocated.
+3. Settle a 10-USDC payment to a permitted recipient and inspect its transaction receipt.
+4. Try an over-limit amount or disallowed recipient and confirm rejection.
+5. Activate agent access, run Purchasing Research, and inspect the sourced report and company activity view.
+6. Revoke agent or employee access and check the resulting permissions and released allocation.
 
-Application, SDK, and worker tests mock external services where appropriate. Contract unit tests simulate the runtime. Sandbox tests execute compiled contracts locally. None of these alone verifies live Privy OAuth, model/provider availability, mainnet funding, or testnet payment settlement. Read-only smoke checks do not establish the authenticated journey.
+The linked walkthrough gives exact buttons, expected balances, and recovery checks.
 
-## Live acceptance and boundaries
-
-Follow the [walkthrough acceptance checks](delegation/TODAY.md) using two accessible emails and separate browser sessions. Check settled transaction receipts and actual recipient balances, not only UI success messages. The sequence covers activation funding, a reserved employee allowance, a 10-USDC payment, rejection cases, agent setup/research, and revocation. It also gives expected balances and recovery checks.
+## Demo scope
 
 - The demo uses test USDC on NEAR Testnet. Aurora Intents uses mainnet assets and cannot fund this treasury.
 - The marketplace-listed Purchasing Research agent runs through its configured worker without a treasury charge or paid marketplace hire. Its permission is checked, but research does not consume on-chain payment limits. Other listings are browse-only here.

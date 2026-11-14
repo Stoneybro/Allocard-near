@@ -30,7 +30,7 @@ export function SmartAccountActivationButton({
 }) {
   const auth = useAuth();
   const [error, setError] = useState<string | null>(null);
-  const [stage, setStage] = useState("Preparing your account…");
+  const [stage, setStage] = useState<"setup" | "funding">("setup");
   const activationLock = useRef(false);
   const { key } = useAccountScope();
   const queryClient = useQueryClient();
@@ -51,7 +51,7 @@ export function SmartAccountActivationButton({
   const activate = () => {
     if (activationLock.current) return;
     activationLock.current = true;
-    setStage("Checking your account…");
+    setStage("setup");
     startTransition(async () => {
       try {
         setError(null);
@@ -61,12 +61,11 @@ export function SmartAccountActivationButton({
 
         let target = "";
         if (mode === "company") {
-          setStage("Checking treasury setup…");
           if (!companyKey) throw new Error("Workspace identity is required to create its treasury");
           const config = shared ?? await sharedConfig();
-          target = await registerCompany(await getUnifiedNearCaller(auth), config, companyKey, setStage);
+          target = await registerCompany(await getUnifiedNearCaller(auth), config, companyKey);
           parseTreasuryReference(target);
-          setStage("Adding your demo funds…");
+          setStage("funding");
         } else {
           target = auth.accountId;
           if (!isNativeNearAccount(target)) throw new Error("Enter a NEAR account ID");
@@ -76,7 +75,6 @@ export function SmartAccountActivationButton({
           walletAddress: auth.accountId || walletAddress,
           smartAccountAddress: target,
         });
-        setStage("Refreshing your dashboard…");
         await queryClient.cancelQueries({ queryKey: key, predicate: query => ["profile", "dashboard", "treasury"].includes(String(query.queryKey[key.length])) });
         onActivated?.(result);
         void queryClient.invalidateQueries({ queryKey: key, predicate: query => ["profile", "dashboard", "treasury"].includes(String(query.queryKey[key.length])) }, { cancelRefetch: false });
@@ -97,15 +95,13 @@ export function SmartAccountActivationButton({
       >
         {pending && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}
         {pending
-          ? mode === "company"
-            ? "Activating company account"
-            : "Activating account"
+          ? "Activating…"
           : mode === "company"
             ? "Activate your company account"
             : "Activate your account"}
         {!pending && <ArrowRight className="size-4" aria-hidden="true" />}
       </Button>
-      {pending && <OperationStatus message={stage} />}
+      {pending && <OperationStatus message={stage === "funding" ? "Adding your demo funds…" : "Setting up your account…"} delayedMessage={stage === "setup" ? "Setting up your account. This may take a few seconds." : undefined} />}
       {(error || configError) && (
         <p role="alert" className="text-xs text-destructive">
           {error || configError}

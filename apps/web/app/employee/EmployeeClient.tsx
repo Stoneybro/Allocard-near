@@ -692,7 +692,7 @@ export function EmployeeClient({
           return resolved;
         }}
         busy={isPending || activatingDelegation || revokingAgent}
-        stage={activationStage === "checking" ? "Checking your allowance…" : activationStage === "signing" ? "Sign the agent policy…" : "Confirming agent access…"}
+        stage={activationStage === "confirming" ? "Finishing activation…" : "Setting up spending access…"}
         error={actionError} recovery={false}
         onClose={() => { setSelectedDelegationId(null); setError(null); }}
         onActivate={handleActivateDelegation}

@@ -1,6 +1,6 @@
 # Walkthrough acceptance checks
 
-The [root README](../../README.md#try-the-demo) is the user-facing walkthrough. These checks describe expected results for a fresh company using the default mock-USDC policy. They are a procedure, not a claim that a live two-account run has been performed.
+The builder has verified the complete employer–employee demo end to end. The [root README](../../README.md#try-the-demo) is the user-facing walkthrough; these checks let reviewers reproduce it with a fresh company and the default mock-USDC policy.
 
 ## Preconditions
 
@@ -32,5 +32,3 @@ See [shared setup](SHARED.md), [sponsorship](SPONSORSHIP.md), and [research oper
 - Only authoritative failure or proof that an expired request was unused permits replacing an uncertain request. Timeout alone is not proof.
 - A company registration retry checks the existing deterministic company ID before requesting another deposit.
 - Repeat with two companies when checking tenant isolation: permissions, payments, research, and history must not cross company boundaries.
-
-Application tests mock external services. Contract unit tests simulate the runtime; sandbox tests execute compiled contracts locally. None alone establishes working live OAuth, provider availability, or testnet settlement.

@@ -2,16 +2,12 @@
 
 import { useEffect, useState } from "react";
 
-/** Mount while an operation runs. Elapsed time is feedback, not invented progress. */
-export function OperationStatus({ message }: { message: string }) {
-  const [elapsed, setElapsed] = useState(0);
+/** One status line; optionally replace the initial text after a short wait. */
+export function OperationStatus({ message, delayedMessage }: { message: string; delayedMessage?: string }) {
+  const [takingLonger, setTakingLonger] = useState(false);
   useEffect(() => {
-    const started = Date.now();
-    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
-    return () => clearInterval(timer);
+    const timer = setTimeout(() => setTakingLonger(true), 5000);
+    return () => clearTimeout(timer);
   }, []);
-  return <div className="space-y-1 text-xs leading-5 text-muted-foreground">
-    <div className="flex flex-wrap items-center gap-x-2"><span role="status" aria-live="polite">{message}</span>{elapsed > 0 && <span aria-hidden="true" className="tabular-nums">{elapsed}s</span>}</div>
-    {elapsed >= 15 && <p>Still working. Keep this tab open; no need to submit again.</p>}
-  </div>;
+  return <p role="status" aria-live="polite" className="text-xs leading-5 text-muted-foreground">{takingLonger && delayedMessage ? delayedMessage : message}</p>;
 }

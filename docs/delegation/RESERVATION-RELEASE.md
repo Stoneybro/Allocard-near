@@ -37,4 +37,4 @@ Core implementation and embedded accounting tests are in `packages/contracts/tre
 cargo test --manifest-path packages/contracts/Cargo.toml --workspace --lib
 ```
 
-Unit tests do not establish live settlement. Compiled-contract sandbox tests and the [walkthrough acceptance checks](TODAY.md) cover separate verification layers.
+For compiled-contract integration tests and end-to-end reproduction, see the [verification guide](../VERIFICATION.md) and [walkthrough acceptance checks](TODAY.md).

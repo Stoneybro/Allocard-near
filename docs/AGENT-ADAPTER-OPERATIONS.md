@@ -7,19 +7,25 @@ The Purchasing Research agent is listed on NEAR AI Market. Allocard discovers ma
 Configure these server-only app variables in `apps/web/.env.local`:
 
 - `NEAR_ADAPTER_ACCOUNT_ID`: dedicated adapter identity registered in the app database.
-- `ALLOCARD_AGENT_URL`: fixed HTTPS origin of the deployed research worker.
+- `ALLOCARD_AGENT_URL`: explicitly set the HTTPS origin of your deployed `packages/research-worker` service before running the adapter setup script. Use the worker service, not the marketplace listing URL.
 - `ALLOCARD_AGENT_SECRET`: at least 32 characters, matching the worker.
 - `ALLOCARD_WORKER_BYPASS`: optional credential for a protected worker deployment.
 - `CRON_SECRET`: optional, for an external queue scheduler.
 
-Apply all database migrations, including research task/call tables. From the repository root:
+Deploy and configure the worker as described below, then put its origin in `apps/web/.env.local`, for example:
+
+```dotenv
+ALLOCARD_AGENT_URL=https://your-research-worker.vercel.app
+```
+
+The origin must expose `/allocard/health` and `/allocard/jobs`, and its service secret must match the app's. Apply all database migrations, including research task/call tables. From the repository root:
 
 ```sh
 pnpm --filter @allocard/web run db:migrate
 pnpm --filter @allocard/web run adapter:configure -- --register
 ```
 
-The adapter script generates an identity/service secret if absent and registers its public identity. Set `ALLOCARD_AGENT_URL` to your actual worker, rather than relying on the script's older default origin. Registration grants no spending authority; the employee must separately sign its child permission. Generated credentials remain in ignored environment files.
+The adapter script generates an identity/service secret if absent and registers its public identity. Set `ALLOCARD_AGENT_URL` explicitly to override the older built-in default. Registration grants no spending authority; the employee must separately sign its child permission. Generated credentials remain in ignored environment files. If setup generated the service secret, set that same value on the worker before running research.
 
 Deploy `packages/research-worker` as a Vercel project. Configure its `ALLOCARD_APP_URL` as the reachable HTTPS app origin, the matching `ALLOCARD_AGENT_SECRET`, `NEAR_AI_API_KEY`, and `NEARAI_MODEL`. Localhost is not reachable from a remote worker: use a configured HTTPS development origin for callback verification. `ALLOCARD_APP_BYPASS` is optional for protected app deployments. Marketplace channel credentials are not required by this demo worker. See the [worker README](../packages/research-worker/README.md).
 
@@ -49,4 +55,4 @@ Run worker tests with:
 node packages/research-worker/tests/worker.test.mjs
 ```
 
-These mock provider and callback responses. A live two-session run and a sourced report are separate acceptance evidence; see [walkthrough checks](delegation/TODAY.md).
+See the [verification guide](VERIFICATION.md) for implementation and test evidence, and [walkthrough checks](delegation/TODAY.md) to reproduce agent setup and sourced research.

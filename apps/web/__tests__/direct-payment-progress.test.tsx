@@ -6,7 +6,7 @@ import { expect, it, vi } from "vitest";
 vi.mock("@/hooks/use-account-queries", () => ({ useAccountScope: () => ({ key: ["test"] }), useSettlementRefresh: () => vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 import { DirectSpendForm } from "@/app/employee/DirectSpendForm";
-it("normalizes typed recipients and keeps confirmation busy until the payment completes", async () => {
+it("closes confirmation immediately and keeps the payment button busy without duplicate submission", async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   const host = document.createElement("div"); document.body.append(host); const root = createRoot(host);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -24,9 +24,8 @@ it("normalizes typed recipients and keeps confirmation busy until the payment co
     await act(async () => [...host.querySelectorAll("button")].find(button => button.textContent === "Review payment")!.click());
     await act(async () => [...document.querySelectorAll("button")].find(button => button.textContent?.includes("Confirm & Execute"))!.click());
     expect(execute.mock.calls[0][0].toAddress).toBe("vendor.testnet");
-    const dialog = document.querySelector('[role="alertdialog"]')!;
-    expect(dialog.textContent).toContain("Confirming payment on NEAR");
-    const submit = [...dialog.querySelectorAll("button")].find(button => button.textContent?.includes("Sending payment"))!;
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    const submit = [...host.querySelectorAll("button")].find(button => button.textContent?.includes("Sending payment"))!;
     expect(submit.disabled).toBe(true);
     await act(async () => submit.click()); expect(execute).toHaveBeenCalledTimes(1);
     await act(async () => finish("confirmed-hash")); expect(host.textContent).toContain("Spend Settled");

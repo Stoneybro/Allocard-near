@@ -18,6 +18,8 @@ Teams control these permissions and can revoke unused allowances at any time, re
 
 We’re sorry for the extra setup. We chose this approach so you can experience both sides of Allocard as a company and its employee would.
 
+Guide cards in the app prompt your next step, making it easier to follow the demo across both windows. Open **Help & Demo Tips** anytime for instructions or to restart the guide.
+
 1. **Create your company.** Open [allocard.xyz](https://allocard.xyz), click **Enter App**, and sign in through Privy using email or Google. Enter your company name and click **Create company account**.
 2. **Activate the treasury.** Click **Activate your company account**. Once activation completes, your company treasury receives **2,000 test USDC**.
 3. **Invite an employee.** Click **Add Employee** in the left sidebar and enter your second email. Invitations appear in-app; no email is sent.
@@ -27,8 +29,6 @@ We’re sorry for the extra setup. We chose this approach so you can experience 
 7. **Enable agent access.** Open the **Agents** tab and click **Set up agent**. Review and activate its spending policy using the same confirmation process. The agent receives a narrower permission within the employee’s existing allocation.
 8. **Run research.** Click **Add agent**, keep the prefilled research brief, and click **Find agents**. Choose **Purchasing Research agent v2**, click **Hire**, then **Confirm and start**. Follow the task’s progress and open the completed report to review its findings and source links.
 9. **Revoke access.** Return to the company dashboard. In the delegation table, click **Revoke** on the employee’s or agent’s row, then **Revoke delegation** to confirm. Employee revocation also stops future spending through their agents and releases unused allowance. Agent-only revocation leaves the employee’s permission active. A research task already running may still finish.
-
-In-app guide cards walk you through the demo on your first visit.
 
 ## Built for small teams (how NEAR powers Allocard)
 
@@ -54,7 +54,7 @@ The company dashboard shows the [employee–agent delegation hierarchy and resea
 
 **Current demo scope**
 
-- The treasury runs on NEAR Testnet with test USDC. Aurora Intents uses mainnet assets and cannot fund this testnet treasury.
+- Activation adds **2,000 test USDC**; the built-in faucet provides **1,000 more** when needed. Aurora Intents uses mainnet assets and cannot fund this testnet treasury.
 - Our Purchasing Research agent is listed on NEAR AI Market and runs without a treasury charge in this demo. Other listings are browsable but cannot execute here.
 
 ## Run locally
@@ -78,7 +78,7 @@ Configure `apps/web/.env.local` with:
 | Policy interpretation | `NEAR_AI_API_KEY` |
 | Agent research | `NEAR_ADAPTER_ACCOUNT_ID`, `ALLOCARD_AGENT_URL`, and `ALLOCARD_AGENT_SECRET`, matching the research-worker configuration |
 
-Automatic test-USDC funding requires a mock token that authorizes your relayer to mint. Treasury verification also requires the matching `packages/contracts/res/allocard_shared.wasm` artifact.
+For the [treasury, mock token](docs/delegation/SHARED.md), [relayer](docs/delegation/SPONSORSHIP.md), and [research worker](docs/AGENT-ADAPTER-OPERATIONS.md), follow the linked setup guides. Automatic test-USDC funding requires a token that authorizes your relayer to mint. Treasury verification uses the matching `packages/contracts/res/allocard_shared.wasm` artifact included in this repository.
 
 Apply the database migrations and start the app:
 
@@ -91,7 +91,7 @@ Open `http://localhost:3000` and follow the demo walkthrough above. Research tas
 
 ### Verify the implementation
 
-See the [verification guide](docs/VERIFICATION.md) for implementation pointers, test coverage, recorded results, and live acceptance checks.
+See the [verification guide](docs/VERIFICATION.md) for implementation pointers, test coverage, and end-to-end verification steps.
 
 Run the SDK and application tests:
 
@@ -115,3 +115,11 @@ Allocard was built for this hackathon. Its delegation model was inspired by Meta
 - **Autonomous Business:** Rule-based employee and agent spending, with recurring allowances and automatic expiry.
 - **Agent Economy:** Employees can discover and run a research agent listed on NEAR AI Market.
 - **AI Security & Defense:** Contract-enforced spending limits, recipient restrictions, expiry, and revocable permissions for employees and agents.
+
+## The team and what’s next
+
+I’m Zion Livingstone, product lead at Oasis and Brooks, the team behind Allocard.
+
+We intend to continue building Allocard beyond this hackathon. Our experience managing expenses as a small agency shapes the product, and we’ll keep working with other small teams to understand what they need.
+
+The current prototype establishes delegated spending for onchain expenses. Next, we plan to explore virtual cards and merchant-payment integrations so teams can use Allocard for more of their everyday spending.

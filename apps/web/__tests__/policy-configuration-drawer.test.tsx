@@ -17,7 +17,7 @@ const activate = vi.fn(), close = vi.fn(), fetchMock = vi.fn();
 const validForm: CaveatForm = { ...emptyCaveatForm, maxAmountNear: "50", period: "weekly", periodAmountNear: "10", perTransactionCapNear: "5", allowedTargets: "vendor.testnet", limitedCallsEnabled: true, limitedCalls: "20", expiresAt: "2099-01-01T00:00:00Z" };
 function Harness({ initial = emptyCaveatForm, busy = false }: { initial?: CaveatForm; busy?: boolean }) {
   const [form, setForm] = useState(initial);
-  return <PolicyConfigurationDrawer open mobile={false} identity="alex@example.com" account="alex.testnet" companyId="company" status="pending_config" form={form} setForm={setForm} balance="100" busy={busy} stage="Confirming permission…" error={null} recovery={false} onClose={close} onActivate={activate} onRevoke={vi.fn()} />;
+  return <PolicyConfigurationDrawer open mobile={false} identity="alex@example.com" account="alex.testnet" companyId="company" status="pending_config" form={form} setForm={setForm} balance="100" busy={busy} stage="Finishing activation…" error={null} recovery={false} onClose={close} onActivate={activate} onRevoke={vi.fn()} />;
 }
 const button = (text: string) => [...host.querySelectorAll("button")].find(item => item.textContent?.includes(text))!;
 async function click(text: string) { await act(async () => button(text).click()); }
@@ -52,9 +52,9 @@ it("reviews all AI settings in plain language, with a separate acknowledged sign
   expect(host.querySelector("dl")?.textContent).not.toContain("alex.testnet");
   expect(host.querySelector("details")?.open).toBe(false);
   expect(activate).not.toHaveBeenCalled();
-  expect(button("Sign & activate").disabled).toBe(true);
+  expect(button("Activate delegation").disabled).toBe(true);
   await act(async () => host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
-  await click("Sign & activate");
+  await click("Activate delegation");
   expect(activate).toHaveBeenCalledTimes(1);
 });
 it("keeps unclear or unavailable AI results out of the signing flow", async () => {
@@ -63,7 +63,7 @@ it("keeps unclear or unavailable AI results out of the signing flow", async () =
   await click("Review policy");
   expect(host.textContent).toContain("Which total budget should apply?");
   expect(host.querySelector("#ai-policy")).toBeTruthy();
-  expect(button("Sign & activate")).toBeUndefined();
+  expect(button("Activate delegation")).toBeUndefined();
   expect(activate).not.toHaveBeenCalled();
 });
 it("replaces stale manual limits when the new AI policy omits them", async () => {
@@ -80,14 +80,14 @@ it("blocks conflicting AI output instead of showing a successful review", async 
   fetchMock.mockResolvedValue({ ok: true, json: async () => ({ success: true, provider: "near-ai", formValues: { ...validForm, periodAmountNear: "100" }, warnings: [] }) });
   await click("Review policy");
   expect(host.textContent).toContain("recurring allowance cannot exceed");
-  expect(button("Sign & activate")).toBeUndefined();
+  expect(button("Activate delegation")).toBeUndefined();
 });
 it("locks editing and close while signing and announces progress", async () => {
   await act(async () => root.render(<Harness busy />));
   expect(host.querySelector<HTMLTextAreaElement>("#ai-policy")?.disabled).toBe(true);
   expect(host.querySelector<HTMLButtonElement>('[aria-label="Close policy drawer"]')?.disabled).toBe(true);
   expect(button("Configure manually").disabled).toBe(true);
-  expect(host.querySelector('[role="status"]')?.textContent).toContain("Confirming");
+  expect(host.querySelector('[role="status"]')?.textContent).toBe("Finishing activation…");
 });
 it("uses the same review and acknowledgement for manual configuration", async () => {
   await act(async () => root.render(<Harness initial={validForm} />));
@@ -95,9 +95,9 @@ it("uses the same review and acknowledgement for manual configuration", async ()
   await click("Review policy");
   expect(fetchMock).not.toHaveBeenCalled();
   expect(host.textContent).toContain("vendor.testnet");
-  expect(button("Sign & activate").disabled).toBe(true);
+  expect(button("Activate delegation").disabled).toBe(true);
   await act(async () => host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
-  await click("Sign & activate");
+  await click("Activate delegation");
   expect(activate).toHaveBeenCalledTimes(1);
 });
 it("shows AI network failures inline and leaves manual setup available", async () => {

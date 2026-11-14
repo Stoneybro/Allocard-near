@@ -189,7 +189,7 @@ export function LandingPageClient({
             >
               GitHub
             </a>
-            <a href="" onClick={(event) => event.preventDefault()} className="text-sm text-[#666666] hover:text-[#111111] transition-colors">Documentation</a>
+            <a href="https://github.com/Stoneybro/Allocard#readme" target="_blank" rel="noopener noreferrer" className="text-sm text-[#666666] hover:text-[#111111] transition-colors">Documentation</a>
           </div>
           <Button
             id="nav-cta"
@@ -215,7 +215,7 @@ export function LandingPageClient({
           </h1>
 
           <p className="max-w-xl text-base sm:text-lg text-[#666666] leading-relaxed mb-10">
-            Give employees and AI agents permission to spend within rules you control. No shared cards, no pre-funded wallets, and no paperwork.
+            Give employees and AI agents permission to spend within rules you control. Company funds stay in one treasury until a payment is made.
           </p>
 
           <div className="flex flex-col sm:flex-row gap-3 mb-6">
@@ -263,11 +263,11 @@ export function LandingPageClient({
         <section className="border-y border-[#eaeaea] bg-[#fafafa]">
           <div className="max-w-6xl mx-auto px-6 py-5 flex flex-wrap items-center justify-center gap-x-10 gap-y-3">
             {[
-              "Zero Money Sent Upfront",
-              "Instant 1-Click Revocation",
+              "Funds Stay in Your Treasury",
+              "Onchain Access Revocation",
               "Multi-Chain Treasury Funding",
-              "Instant Social & Email Login",
-              "Instant Global Settlements",
+              "Google & Email Login",
+              "Direct Treasury Payments",
             ].map((label) => (
               <span key={label} className="text-xs font-semibold text-[#666666] tracking-wide whitespace-nowrap">
                 {label}
@@ -321,7 +321,7 @@ export function LandingPageClient({
                 Permissions under rules, not money transfers.
               </h2>
               <p className="max-w-xl mx-auto text-sm text-[#666666] leading-relaxed">
-                Instead of sending funds upfront or sharing company credentials, your capital stays 100% in your company treasury contract. You grant cryptographic permissions that define exactly what can be bought, up to what cap, and on what schedule. Funds only leave your treasury when a valid transaction matches your rules.
+                Your capital stays in your company treasury. Spending permissions define how much employees can spend, which recipient accounts they can pay, and when access expires. Funds leave the treasury when a payment passes the contract’s checks.
               </p>
             </div>
 
@@ -332,11 +332,11 @@ export function LandingPageClient({
               <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-3">
                 {[
                   { title: "Hard Spending Caps", desc: "Set strict lifetime or periodic budget limits that cannot be exceeded." },
-                  { title: "Rolling Periodic Budgets", desc: "Reset team allowances automatically weekly or monthly with zero manual top-ups." },
+                  { title: "Recurring Allowances", desc: "Reset spending limits at fixed intervals from activation, within the total budget." },
                   { title: "Per-Transaction Caps", desc: "Prevent any single checkout from exceeding approved policy limits." },
-                  { title: "Approved Vendor Whitelists", desc: "Restrict spending authority exclusively to verified vendor accounts or contracts." },
-                  { title: "Instant 1-Click Revocation", desc: "Cancel or freeze any spending permission instantly with zero stranded cash." },
-                  { title: "Multi-Chain Funding", desc: "Top up your company treasury from Ethereum, Base, Solana, or Bitcoin with zero manual bridging." },
+                  { title: "Approved Recipients", desc: "Restrict payments to the NEAR recipient accounts selected by your company." },
+                  { title: "Access Revocation", desc: "Revoke future spending and release the unused allowance after confirmation." },
+                  { title: "Allowance Expiry", desc: "Set an expiry date to end access and release the unused allocation automatically." },
                 ].map(({ title, desc }) => (
                   <div key={title} className="p-4 rounded-lg border border-[#eaeaea] bg-[#ffffff]">
                     <p className="text-sm font-semibold text-[#111111] mb-1">{title}</p>
@@ -352,12 +352,12 @@ export function LandingPageClient({
         <section id="spend-rails" className="border-t border-[#eaeaea] bg-[#ffffff]">
           <div className="max-w-6xl mx-auto px-6 py-24">
             <div className="text-center mb-14">
-              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[#999999] mb-4">Universal Spending Rails</p>
+              <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[#999999] mb-4">Company Spending</p>
               <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] text-[#111111] mb-4">
-                Every way modern companies spend, unified.
+                Manage spending from one company treasury.
               </h2>
               <p className="max-w-lg mx-auto text-sm text-[#666666] leading-relaxed">
-                One company treasury powers direct vendor payments, multi-chain liquidity, policy-enforced allowances, and real-time spending controls.
+                Pay vendors directly, configure employee allowances, and manage access through one dashboard.
               </p>
             </div>
 
@@ -365,17 +365,17 @@ export function LandingPageClient({
               {[
                 {
                   tag: "Direct Spend",
-                  pattern: "Direct vendor payment · Native NEAR & NEP-141 · Sub-second finality",
+                  pattern: "Direct vendor payment · Native NEAR & NEP-141 · Confirmed settlement",
                   title: "Pay vendors directly from company treasury.",
-                  body: "Employees execute direct business payments within their delegated cap. The exact amount settles in under two seconds on NEAR directly from the company treasury.",
+                  body: "Employees pay permitted recipients directly from the company treasury within their spending limits. The app shows settlement after the payment is confirmed on NEAR.",
                   engine: "Executed via native NEAR treasury delegation contracts with canonical SHA-256 dispatch envelopes.",
                 },
                 {
                   tag: "Cross-Chain Funding",
-                  pattern: "Ethereum, Solana, Bitcoin · Zero manual bridging · Instant liquidity",
-                  title: "Fund treasury from any chain with Aurora Intent.",
-                  body: "Top up your company treasury balance directly from any major blockchain and wallet. Intent-based cross-chain routing eliminates manual token bridging and complex swaps.",
-                  engine: "Integrated with Aurora Intent Connect for frictionless multi-chain treasury deposits.",
+                  pattern: "Supported tokens and chains · Intent-based routing · Mainnet integration",
+                  title: "Cross-chain funding with Aurora Intents.",
+                  body: "Aurora Intents routes supported assets across chains without manual swaps and bridges. The testnet demo uses test USDC; cross-chain funding uses mainnet assets.",
+                  engine: "Aurora Intents widget integration for cross-chain funding.",
                 },
                 {
                   tag: "Cryptographic Delegations",
@@ -386,10 +386,10 @@ export function LandingPageClient({
                 },
                 {
                   tag: "AI Policy Setup",
-                  pattern: "Plain English · Instant extraction · Deterministic rules",
+                  pattern: "Plain English · User review · Contract-enforced rules",
                   title: "Define spending policies in plain English.",
-                  body: "Describe your spending requirements in natural language—such as budget caps, approved recipients, or periodic resets—and let AI parse them into deterministic on-chain rules.",
-                  engine: "Powered by structured AI parameter extraction for automated policy generation.",
+                  body: "Describe budgets, recipients, and time limits in plain English. Review the proposed settings before signing, or configure them manually.",
+                  engine: "NEAR AI Cloud proposes settings; Allocard validates them and the contracts enforce the signed rules.",
                 },
               ].map(({ tag, pattern, title, body, engine }) => (
                 <div key={tag} className="p-6 rounded-xl border border-[#eaeaea] bg-[#fafafa] flex flex-col gap-3">
@@ -418,10 +418,10 @@ export function LandingPageClient({
             <div className="text-center mb-12">
               <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[#999999] mb-4">Visual Spend Map</p>
               <h2 className="text-3xl sm:text-4xl font-bold tracking-[-0.03em] text-[#111111] mb-4">
-                Your entire company spend, live on canvas.
+                See your company’s spending permissions.
               </h2>
               <p className="max-w-lg mx-auto text-sm text-[#666666] leading-relaxed">
-                Replace rigid spreadsheets with an interactive visual tree showing your company treasury and active employee spending permissions in real time.
+                View your company treasury, employee permissions, and agent delegations in an interactive tree or table.
               </p>
             </div>
 
@@ -446,8 +446,8 @@ export function LandingPageClient({
             <div className="grid sm:grid-cols-3 gap-4 mt-6">
               {[
                 { title: "Central Treasury", body: "View your company balance and every active spending authorization in one central interactive canvas." },
-                { title: "Granular Authorizations", body: "Configure precise spending rules, budget caps, and authorized recipients directly on each node." },
-                { title: "Instant Cascading Revocation", body: "Revoke or adjust any active permission in real time on-chain with zero stranded company cash." },
+                { title: "Granular Authorizations", body: "Set employee budgets and permitted recipients, and inspect the agents delegated under each employee." },
+                { title: "Cascading Revocation", body: "Revoke an employee permission to stop future spending across its agent branch and release the unused allocation." },
               ].map(({ title, body }) => (
                 <div key={title} className="p-4 rounded-lg border border-[#eaeaea] bg-[#ffffff]">
                   <p className="text-sm font-semibold text-[#111111] mb-1">{title}</p>
@@ -468,26 +468,26 @@ export function LandingPageClient({
                 A corporate spend system you truly own.
               </h2>
               <p className="text-sm text-[#666666] leading-relaxed mb-4">
-                Allocard delivers complete control over corporate spending without handing custody to third parties. Your treasury contract runs directly on NEAR with zero intermediaries.
+                Your company controls its funds and spending permissions inside the shared NEAR treasury contract. The company owner decides who can spend and sets their limits.
               </p>
               <p className="text-sm text-[#666666] leading-relaxed">
-                Your funds stay in your custody. Your rules remain under your control. You get the speed of modern automation with the safety of cryptographic guarantees.
+                Allocard has no retained contract administrator key to withdraw company funds or rewrite spending rules. Payments require the appropriate signed authority and must pass the contract’s checks.
               </p>
             </div>
 
             <div className="grid grid-cols-1 gap-3">
               {[
                 {
-                  title: "Zero Custody Risk",
-                  body: "Allocard never holds your funds. Everything runs on your native NEAR treasury contract. We cannot freeze your balance or alter your rules.",
+                  title: "Company-Controlled Funds",
+                  body: "Company balances and permissions are isolated in the shared treasury. Employees spend through bounded permissions; unused allowances remain under company control.",
                 },
                 {
                   title: "AI Policy Extraction",
-                  body: "Company spending policies are translated from natural language into deterministic contract constraints with strict validation.",
+                  body: "NEAR AI Cloud translates spending instructions into settings for you to review and sign. The contract enforces the supported limits and recipient rules.",
                 },
                 {
-                  title: "Tamper-Proof Audit Trail",
-                  body: "Every authorization, budget adjustment, and payment is permanently logged and verifiable on NEAR.",
+                  title: "Onchain Spending Records",
+                  body: "Signed permission creation, revocation, and payment execution can be inspected on NEAR. Company activity views connect these actions to your team.",
                 },
               ].map(({ title, body }) => (
                 <div key={title} className="p-4 rounded-lg border border-[#eaeaea] bg-[#fafafa]">
@@ -504,13 +504,13 @@ export function LandingPageClient({
         <section id="cta" className="border-t border-[#eaeaea] bg-[#fafafa]">
           <div className="max-w-6xl mx-auto px-6 py-24 flex flex-col items-center text-center">
             <p className="text-xs font-semibold tracking-[0.15em] uppercase text-[#999999] mb-5">
-              Ready in two minutes · Multi-chain funding · Cryptographic delegation
+              Email sign-in · Sponsored gas · Contract-enforced permissions
             </p>
             <h2 className="text-4xl sm:text-5xl font-bold tracking-[-0.03em] leading-[1.05] max-w-xl text-[#111111] mb-5">
               Take total control of your company spend today.
             </h2>
             <p className="text-sm text-[#666666] max-w-md mb-10 leading-relaxed">
-              Sign in with email, Google, or any Web3 wallet, deploy your company treasury contract, and issue your first spending permission in under sixty seconds.
+              Sign in with email or Google, activate your company treasury, and give employees permission to spend within your rules.
             </p>
             <div className="flex flex-col sm:flex-row gap-3">
               <Button
@@ -546,7 +546,7 @@ export function LandingPageClient({
             <span className="text-sm font-semibold text-[#111111]">Allocard</span>
           </div>
           <p className="text-xs text-[#999999] text-center">
-            NEAR Protocol · Built on NEAR with native treasury delegation contracts and multi-chain liquidity.
+            NEAR contracts · Shared treasury · Employee and agent permissions.
           </p>
           <a
             href="https://github.com/Stoneybro/Allocard"

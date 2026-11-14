@@ -62,6 +62,6 @@ For an uncertain submission, retry the same payment to reconcile its stored hash
 
 ## Verification
 
-Unit tests cover activation, real employee/owner signatures, ownership and membership gates, nonce/expiry rejection, exact gas/deposit bounds, the registration opt-in and repeated registration without quota restrictions, insufficient relayer balance, journal recovery, and signature tampering. Before rollout, register a company from a new zero-balance Privy owner, check the resulting owner and reserves, and repeat activation to verify no second deposit is paid. Then perform a live testnet run with a newly created Privy employee, zero employee gas balance and an active company permission. Confirm activation, sponsored transfer settlement, receipt verification, retry recovery, revocation and concurrent submissions from separate web instances. Mocked RPC tests do not establish live protocol or database concurrency behavior.
+The [verification guide](../VERIFICATION.md) links tests for signature validation, ownership and membership checks, nonce/expiry rejection, deposit bounds, idempotent funding, journal recovery, and permission revocation. Reproduce gas-sponsored activation, allowance creation, payment, and revocation with the [walkthrough acceptance checks](TODAY.md).
 
 Protocol references: [NEAR meta-transactions](https://docs.near.org/protocol/transactions/meta-tx) and [implicit account initialization](https://docs.near.org/integrations/accounts).

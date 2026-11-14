@@ -23,6 +23,6 @@ Research requests disable extra reasoning and request a concise report. Only a c
 
 The provider can exceed the requested `max_tool_calls`: the production canary returned five searches despite requesting three. Treat that setting as advisory and the pricing reservation as an estimate, not a provider-enforced billing cap. The worker retains its request timeout and app admission quotas.
 
-Run tests with `node packages/research-worker/tests/worker.test.mjs` from the repository root. These tests mock provider responses and app callbacks; live research must be checked separately using the [walkthrough acceptance checks](../../docs/delegation/TODAY.md).
+Run tests with `node packages/research-worker/tests/worker.test.mjs` from the repository root. Follow the [walkthrough acceptance checks](../../docs/delegation/TODAY.md) to reproduce research through the app.
 
 Deploy this directory as a Vercel project with the included `vercel.json`. See [research operations](../../docs/AGENT-ADAPTER-OPERATIONS.md) for adapter registration, app configuration, and reachable callbacks. The marketplace Eve project stays independent.

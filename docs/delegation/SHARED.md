@@ -48,7 +48,7 @@ The browser uses the same-origin `/api/near/rpc` gateway. Keep provider credenti
 
 ## Prepare mock USDC and the relayer
 
-Create a dedicated, funded testnet relayer with a registered Ed25519 FullAccess key. In the operator shell set `NEAR_RELAYER_ACCOUNT_ID`, `NEAR_RELAYER_PRIVATE_KEY`, and `MOCK_USDC_ACCOUNT_ID` to a distinct funded testnet token account. Set `MOCK_USDC_DEPLOY_KEY` for that token account.
+Create a dedicated, funded testnet relayer with a registered Ed25519 FullAccess key. In the operator shell set `NEAR_RELAYER_ACCOUNT_ID` and `NEAR_RELAYER_PRIVATE_KEY` to that relayer’s credentials. Set `MOCK_USDC_ACCOUNT_ID` to a separate funded testnet token account and `MOCK_USDC_DEPLOY_KEY` to its deployment key.
 
 ```sh
 pnpm mock-usdc:build

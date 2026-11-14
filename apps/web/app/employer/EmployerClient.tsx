@@ -564,7 +564,7 @@ export function EmployerClient({
     const errors = validateCaveatForm(caveatForm, recovering ? null : treasuryBudget?.unallocated ?? null, Date.now(), recovering);
     if (hasFormErrors(errors)) { setActivationError(Object.values(errors).join(" ")); return; }
     setActivationError(null);
-    setActivationStage("Checking treasury and policy…");
+    setActivationStage("Setting up spending access…");
 
     startTransition(async () => {
       try {
@@ -605,7 +605,7 @@ export function EmployerClient({
         if (!permissionId) {
           assertRootPermissionRetrySafe(intent, Boolean(readPendingNearTransaction(auth.accountId)));
           localStorage.setItem(intentKey, JSON.stringify({ ...intent, attempted: true, sponsored: true }));
-          setActivationStage("Waiting for wallet signature and network confirmation…");
+          setActivationStage("Setting up spending access…");
           try {
             const sponsored = await auth.createEmployeePermission({ treasury: company.smartAccountAddress, delegationId: selectedDelegation.id, spec: intent.spec });
             permissionId = decodeMutationId(sponsored && typeof sponsored === "object" && "rootPermissionId" in sponsored ? sponsored.rootPermissionId : sponsored);
@@ -618,7 +618,7 @@ export function EmployerClient({
           localStorage.setItem(intentKey, JSON.stringify({ ...intent, permissionId }));
           setRecoveringPermission(true);
         }
-        setActivationStage("Confirming permission and saving access…");
+        setActivationStage("Finishing activation…");
         const confirmed = await client.getPermission(permissionId);
         if (!confirmed || confirmed.delegate !== delegateAddress || confirmed.revoked) throw new Error("Permission was not confirmed on-chain");
 

@@ -164,9 +164,9 @@ export function PolicyConfigurationDrawer(props: Props) {
         {confirmRevoke && <div role="alert" className="rounded-lg border border-destructive/40 p-4 space-y-3 text-sm"><p>Revoke access for {props.identity}? Future payments and agent access under this permission will stop. Completed payments remain unchanged.</p><div className="flex gap-2"><Button variant="outline" disabled={busy} onClick={() => setConfirmRevoke(false)}>Keep access</Button><Button variant="destructive" disabled={busy} onClick={props.onRevoke}>Confirm revocation</Button></div></div>}
       </div>
       <DrawerFooter className="border-t">
-        {busy && <OperationStatus message={props.stage || "Updating spending access…"} />}
+        {busy && <OperationStatus message={props.stage === "Finishing activation…" ? "Finishing activation…" : "Setting up spending access…"} delayedMessage={props.stage === "Finishing activation…" ? undefined : "Setting up spending access. This may take a few seconds."} />}
         {active ? <Button variant="destructive" disabled={locked} onClick={() => setConfirmRevoke(true)}>Revoke access</Button> : status === "pending_config" ?
-          mode === "review" ? <Button disabled={locked || !acknowledged} onClick={() => { const next = validateCaveatForm(form, props.recovery ? null : props.balance, Date.now(), props.recovery); if (hasFormErrors(next)) { showErrors(next); return; } props.onActivate(); }}>{busy && <LoaderCircleIcon className="mr-2 size-4 animate-spin" />}{props.recovery ? "Check and recover activation" : `Sign & activate on ${CHAIN_NAME}`}</Button> :
+          mode === "review" ? <Button disabled={locked || !acknowledged} onClick={() => { const next = validateCaveatForm(form, props.recovery ? null : props.balance, Date.now(), props.recovery); if (hasFormErrors(next)) { showErrors(next); return; } props.onActivate(); }}>{busy && <LoaderCircleIcon className="mr-2 size-4 animate-spin" />}{busy ? "Activating…" : "Activate delegation"}</Button> :
           <Button disabled={locked || (mode === "ai" && !prompt.trim())} onClick={mode === "ai" ? reviewAI : reviewManual}>{parsing ? <><LoaderCircleIcon className="mr-2 size-4 animate-spin" />Reviewing policy…</> : "Review policy"}</Button> : null}
       </DrawerFooter>
     </DrawerContent>
