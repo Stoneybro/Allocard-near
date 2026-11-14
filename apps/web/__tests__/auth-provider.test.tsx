@@ -8,8 +8,10 @@ const mocks = vi.hoisted(() => ({
   privy: { ready: true, authenticated: false, user: null as TestPrivyUser | null, login: vi.fn(), logout: vi.fn(), getAccessToken: vi.fn() },
   createWallet: vi.fn(), signRawHash: vi.fn(), createPrivySession: vi.fn(), clearSession: vi.fn(),
   baseCall: vi.fn(), baseSend: vi.fn(),
+  loginCallbacks: {} as { onError?: (error: string) => void },
 }));
-vi.mock("@privy-io/react-auth", () => ({ PrivyProvider: ({ children }: { children: ReactNode }) => children, usePrivy: () => mocks.privy }));
+vi.mock("@privy-io/react-auth", () => ({ PrivyProvider: ({ children }: { children: ReactNode }) => children, usePrivy: () => mocks.privy,
+  useLogin: (callbacks: typeof mocks.loginCallbacks) => { mocks.loginCallbacks = callbacks; return { login: mocks.privy.login }; } }));
 vi.mock("@privy-io/react-auth/extended-chains", () => ({ useCreateWallet: () => ({ createWallet: mocks.createWallet }), useSignRawHash: () => ({ signRawHash: mocks.signRawHash }) }));
 vi.mock("@/lib/privy-near", () => ({ createPrivyNearTransport: () => ({ caller: { functionCall: mocks.baseCall }, sendActions: mocks.baseSend }) }));
 vi.mock("@/lib/session-client", async importOriginal => ({ ...await importOriginal<typeof import("@/lib/session-client")>(), createPrivySession: mocks.createPrivySession, clearSession: mocks.clearSession }));
@@ -45,6 +47,15 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 describe("Privy-only authentication", () => {
+  it("locks repeated sign-in clicks and releases the busy state when login is cancelled", async () => {
+    await render();
+    if (state.status !== "unauthenticated") throw new Error("Expected sign-in");
+    const connect = state.connect;
+    await act(async () => { connect(); connect(); });
+    expect(state.status).toBe("connecting"); expect(mocks.privy.login).toHaveBeenCalledTimes(1);
+    await act(async () => mocks.loginCallbacks.onError?.("exited_auth_flow"));
+    expect(state.status).toBe("unauthenticated");
+  });
   it("discards a restored revoked Privy session and opens a fresh login on the next click", async () => {
     signIn();
     mocks.createPrivySession.mockRejectedValueOnce(new SessionClientError("This sign-in was logged out. Sign in with Privy again.", 403, "SESSION_REVOKED"));

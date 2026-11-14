@@ -16,7 +16,7 @@ export function reviewParsedPolicy(result: ParsedPolicyResult): ParsedPolicyResu
   const currencies = [...text.matchAll(/\b\d+(?:\.\d+)?\s*(near|usdc|usd|eth|btc|eur|gbp|ngn)\b/g)].map(match => match[1].toUpperCase());
   if (currencies.some(currency => currency !== TOKEN_SYMBOL)) questions.push(`This treasury spends ${TOKEN_SYMBOL}. State all monetary limits in ${TOKEN_SYMBOL}; currency conversion is not supported.`);
   if (result.provider !== "near-ai") questions.push("AI is unavailable or returned an unreadable response. Try again or use manual configuration; no guessed settings have been applied.");
-  if (!Number.isFinite(result.confidence) || result.confidence < 0.85) questions.push("The policy could not be interpreted confidently. Use explicit amounts, a total budget, recipient accounts, and durations.");
+  if (!Number.isFinite(result.confidence) || result.confidence < 0.85) questions.push("The total budget could not be interpreted confidently. State the amount clearly; other spending limits are optional.");
   const form: CaveatForm = { ...emptyCaveatForm, ...result.formValues, expiresAt: result.formValues.expiresAt || "" };
   const errors = validateCaveatForm(form, null);
   questions.push(...Object.entries(errors).filter(([key]) => key !== "allowedTargetsWarning").map(([, message]) => message!));

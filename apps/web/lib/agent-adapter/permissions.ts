@@ -23,10 +23,14 @@ export async function authorizeAdapter(employeeId: string, wallet: string, compa
   const now = BigInt(Date.now());
   for (const permission of path) {
     if (permission.revoked || permission.epoch !== config.authority_epoch || BigInt(permission.valid_from_ms) > now || (permission.expires_at_ms && BigInt(permission.expires_at_ms) <= now)) throw new Error("Forbidden: agent permission expired or revoked");
-    if (permission.max_executions != null) { const usage = await reader.caller.viewFunction({contractId:reader.contractId, methodName:"get_permission_usage", args:{permission_id:permission.id}}); if (!Number.isSafeInteger(usage?.executions_count) || usage.executions_count >= permission.max_executions) throw new Error("Forbidden: permission execution limit reached"); }
-    for (const principal of new Set([permission.delegate, permission.issuer])) {
-      if (await reader.caller.viewFunction({ contractId: reader.contractId, methodName: "is_principal_blocked", args: { account: principal } })) throw new Error("Forbidden: blocked principal");
-    }
   }
+  const limited = path.filter(permission => permission.max_executions != null);
+  const principals = [...new Set(path.flatMap(permission => [permission.delegate, permission.issuer]))];
+  const [usage, blocked] = await Promise.all([
+    Promise.all(limited.map(permission => reader.caller.viewFunction({ contractId: reader.contractId, methodName: "get_permission_usage", args: { permission_id: permission.id } }))),
+    Promise.all(principals.map(principal => reader.caller.viewFunction({ contractId: reader.contractId, methodName: "is_principal_blocked", args: { account: principal } }))),
+  ]);
+  if (usage.some((value, index) => !Number.isSafeInteger(value?.executions_count) || value.executions_count >= limited[index].max_executions!)) throw new Error("Forbidden: permission execution limit reached");
+  if (blocked.some(Boolean)) throw new Error("Forbidden: blocked principal");
   return { delegation, parentDelegation, company, account };
 }

@@ -220,6 +220,7 @@ function AddEmployeeDialog({
             <Label htmlFor="invite-employee-email">Employee email</Label>
             <Input
               id="invite-employee-email"
+              autoCapitalize="none" autoCorrect="off" spellCheck={false}
               type="email"
               placeholder="colleague@company.com"
               autoComplete="email"

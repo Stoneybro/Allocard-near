@@ -1,5 +1,6 @@
 "use client";
 import { isUnsubmittedPayment } from "@/lib/pending-payment";
+import { OperationStatus } from "@/components/operation-status";
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -33,7 +34,7 @@ type Props = {
   delegationId: string;
   pendingStorageKey?: string;
   remainingBalanceNear: string;
-  onExecute: (details: { toAddress: string; amountNear: string; purpose?: string; isFlagged?: boolean }, onSettled?: (hash: string) => void) => Promise<string>;
+  onExecute: (details: { toAddress: string; amountNear: string; purpose?: string; isFlagged?: boolean }, onSettled?: (hash: string) => void, onProgress?: (message: string) => void) => Promise<string>;
 };
 
 export function DirectSpendForm({ loading = false, companyId, delegationId, pendingStorageKey, remainingBalanceNear, onExecute }: Props) {
@@ -50,11 +51,12 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const settled = useRef(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [paymentStage, setPaymentStage] = useState("Checking payment…");
   const execution = useMutation({ mutationFn: (details: Parameters<Props["onExecute"]>[0]) => onExecute(details, hash => {
     settled.current = true;
     setTxHash(hash); setLastExecutedAmount(details.amountNear); setLastExecutedRecipient(details.toAddress);
     setStep("done"); setIsConfirmOpen(false); setSyncError(null);
-  }), retry: false });
+  }, setPaymentStage), retry: false });
   const isExecuting = execution.isPending;
   const refreshAfterSettlement = useSettlementRefresh();
   const { key } = useAccountScope();
@@ -110,7 +112,7 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
   }, [pendingStorageKey]);
 
   const validateInputs = (): boolean => {
-    const trimmedTo = toAddress.trim();
+    const trimmedTo = toAddress.trim().toLowerCase();
     if (!trimmedTo || !amountNear) {
       setError("Please fill in recipient account and amount.");
       return false;
@@ -132,6 +134,7 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
       return false;
     }
 
+    setToAddress(trimmedTo);
     setError(null);
     return true;
   };
@@ -144,7 +147,7 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
 
   const handleExecute = async () => {
     setError(null); setSyncError(null); settled.current = false;
-    const recipient = toAddress.trim();
+    const recipient = toAddress.trim().toLowerCase();
     const amount = amountNear.trim();
 
     try {
@@ -224,6 +227,7 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
               <Label htmlFor="ds-to" className="text-xs font-medium">Recipient Account</Label>
               <Input
                 id="ds-to"
+                autoCapitalize="none" autoCorrect="off" spellCheck={false}
                 placeholder="vendor.testnet"
                 value={toAddress}
                 onChange={(e) => setToAddress(e.target.value)}
@@ -246,7 +250,7 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
               />
             </div>
 
-            <AlertDialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
+            <AlertDialog open={isConfirmOpen} onOpenChange={open => { if (!isExecuting) setIsConfirmOpen(open); }}>
               <Button
                 onClick={handleStartExecute}
                 disabled={loading || (!delegationId && !hasPendingRequest) || !toAddress || !amountNear || isExecuting}
@@ -269,14 +273,15 @@ export function DirectSpendForm({ loading = false, companyId, delegationId, pend
                 <AlertDialogFooter>
                   <AlertDialogCancel disabled={loading || isExecuting}>Cancel</AlertDialogCancel>
                   <AlertDialogAction
-                    onClick={handleExecute}
+                    onClick={event => { event.preventDefault(); void handleExecute(); }}
                     disabled={loading || isExecuting}
                     className="text-xs"
                   >
                     {isExecuting ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
-                    Confirm & Execute
+                    {isExecuting ? "Sending payment…" : "Confirm & Execute"}
                   </AlertDialogAction>
                 </AlertDialogFooter>
+                {isExecuting && <OperationStatus message={paymentStage} />}
               </AlertDialogContent>
             </AlertDialog>
           </div>

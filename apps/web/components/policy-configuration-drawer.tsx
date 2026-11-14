@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { OperationStatus } from "@/components/operation-status";
 import { CHAIN_NAME, TOKEN_SYMBOL } from "@/lib/chain";
 import { DEMO_POLICY, emptyCaveatForm, hasFormErrors, splitAddresses, validateCaveatForm, type CaveatForm, type FormErrors } from "@/lib/policy-configuration";
 import type { ParsedPolicyResult } from "@/lib/policy-engine";
@@ -131,7 +132,7 @@ export function PolicyConfigurationDrawer(props: Props) {
             </select><p id="policy-period-help" className="text-sm text-muted-foreground">Starts at activation. Each period resets its allowance; the total budget never resets.</p></div>
           {form.period !== "none" && field("periodAmountNear", `Allowance per period (${TOKEN_SYMBOL})`, "Must fit within the total budget.")}
           {field("perTransactionCapNear", `Maximum per payment (${TOKEN_SYMBOL})`, agent ? "Optional. Leave empty to keep your employer's cap." : "Optional. Each payment must fit within the remaining budget and recurring allowance.")}
-          <div className="space-y-2"><Label htmlFor="policy-recipients">Permitted recipient accounts</Label><Textarea id="policy-recipients" value={form.allowedTargets} onChange={event => update("allowedTargets", event.target.value)} placeholder="vendor.testnet, supplier.testnet" aria-invalid={Boolean(errors.allowedTargets)} aria-describedby="policy-recipients-help" /><p id="policy-recipients-help" className="text-sm text-muted-foreground">{errors.allowedTargets || (agent ? "Leave empty to follow your employer's recipient rules, or enter a narrower list." : "Separate accounts with commas or new lines. Leaving this empty permits any recipient.")}</p></div>
+          <div className="space-y-2"><Label htmlFor="policy-recipients">Permitted recipient accounts</Label><Textarea id="policy-recipients" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={form.allowedTargets} onChange={event => update("allowedTargets", event.target.value)} placeholder="vendor.testnet, supplier.testnet" aria-invalid={Boolean(errors.allowedTargets)} aria-describedby="policy-recipients-help" /><p id="policy-recipients-help" className="text-sm text-muted-foreground">{errors.allowedTargets || (agent ? "Leave empty to follow your employer's recipient rules, or enter a narrower list." : "Separate accounts with commas or new lines. Leaving this empty permits any recipient.")}</p></div>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.limitedCallsEnabled} onChange={event => update("limitedCallsEnabled", event.target.checked)} /> Limit total number of payments</label>
           {form.limitedCallsEnabled && field("limitedCalls", "Maximum payment count", "Applies over the entire lifetime of this permission.")}
           {field("expiresAt", "Expiration (your local time)", agent ? "Optional. Leave empty to keep your employer's end date." : "Optional. No payments are allowed after this time.")}
@@ -163,7 +164,7 @@ export function PolicyConfigurationDrawer(props: Props) {
         {confirmRevoke && <div role="alert" className="rounded-lg border border-destructive/40 p-4 space-y-3 text-sm"><p>Revoke access for {props.identity}? Future payments and agent access under this permission will stop. Completed payments remain unchanged.</p><div className="flex gap-2"><Button variant="outline" disabled={busy} onClick={() => setConfirmRevoke(false)}>Keep access</Button><Button variant="destructive" disabled={busy} onClick={props.onRevoke}>Confirm revocation</Button></div></div>}
       </div>
       <DrawerFooter className="border-t">
-        {busy && <p role="status" aria-live="polite" className="text-sm text-muted-foreground">{props.stage}</p>}
+        {busy && <OperationStatus message={props.stage || "Updating spending access…"} />}
         {active ? <Button variant="destructive" disabled={locked} onClick={() => setConfirmRevoke(true)}>Revoke access</Button> : status === "pending_config" ?
           mode === "review" ? <Button disabled={locked || !acknowledged} onClick={() => { const next = validateCaveatForm(form, props.recovery ? null : props.balance, Date.now(), props.recovery); if (hasFormErrors(next)) { showErrors(next); return; } props.onActivate(); }}>{busy && <LoaderCircleIcon className="mr-2 size-4 animate-spin" />}{props.recovery ? "Check and recover activation" : `Sign & activate on ${CHAIN_NAME}`}</Button> :
           <Button disabled={locked || (mode === "ai" && !prompt.trim())} onClick={mode === "ai" ? reviewAI : reviewManual}>{parsing ? <><LoaderCircleIcon className="mr-2 size-4 animate-spin" />Reviewing policy…</> : "Review policy"}</Button> : null}

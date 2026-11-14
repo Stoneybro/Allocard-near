@@ -7,13 +7,20 @@ export async function workerRequest(path: string, body?: unknown) {
   const { origin, secret } = workerConfig();
   const headers: Record<string, string> = { authorization: `Bearer ${secret}`, "content-type": "application/json" };
   if (process.env.ALLOCARD_WORKER_BYPASS) headers["x-vercel-protection-bypass"] = process.env.ALLOCARD_WORKER_BYPASS;
-  const response = await fetch(new URL(path, origin), { method: body ? "POST" : "GET", headers, body: body ? JSON.stringify(body) : undefined, redirect: "error", cache: "no-store", signal: AbortSignal.timeout(15000) });
+  let response: Response;
+  try {
+    response = await fetch(new URL(path, origin), { method: body ? "POST" : "GET", headers, body: body ? JSON.stringify(body) : undefined, redirect: "error", cache: "no-store", signal: AbortSignal.timeout(20000) });
+  } catch (error) {
+    console.error("[agent-worker] connection failed", { path, errorType: error instanceof Error ? error.name : "UnknownError" });
+    throw new Error("The research worker connection timed out or could not be reached. Retry to check the same task.");
+  }
   if (response.status === 404) return null;
   if (!response.ok) {
     console.error("[agent-worker] request failed", { origin, path, status: response.status });
     throw new Error(response.status === 429 ? "Research provider is busy; please try again shortly." : response.status === 401 || response.status === 403 ? "The research service connection is not authorized. Ask the app administrator to check its configuration." : "The research worker is unavailable. Please try again shortly.");
   }
-  return response.json();
+  try { return await response.json(); }
+  catch { throw new Error("The research worker returned an incomplete response. Retry to check the same task."); }
 }
 export async function dispatchWorker(row: TaskRow) {
   const result = await workerRequest("/allocard/jobs", { id: row.id, digest: row.digest, prompt: row.prompt, deadline: Date.now()+180000 });

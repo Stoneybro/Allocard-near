@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
+import { OperationStatus } from "./operation-status";
 import { ArrowRight, LoaderCircle } from "lucide-react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useAccountScope } from "@/hooks/use-account-queries";
@@ -29,7 +30,8 @@ export function SmartAccountActivationButton({
 }) {
   const auth = useAuth();
   const [error, setError] = useState<string | null>(null);
-  const [stage, setStage] = useState<"registration" | "funding">("registration");
+  const [stage, setStage] = useState("Preparing your account…");
+  const activationLock = useRef(false);
   const { key } = useAccountScope();
   const queryClient = useQueryClient();
   const config = useQuery({
@@ -46,7 +48,10 @@ export function SmartAccountActivationButton({
 
   const [pending, startTransition] = useTransition();
 
-  const activate = () =>
+  const activate = () => {
+    if (activationLock.current) return;
+    activationLock.current = true;
+    setStage("Checking your account…");
     startTransition(async () => {
       try {
         setError(null);
@@ -56,12 +61,12 @@ export function SmartAccountActivationButton({
 
         let target = "";
         if (mode === "company") {
-          setStage("registration");
+          setStage("Checking treasury setup…");
           if (!companyKey) throw new Error("Workspace identity is required to create its treasury");
           const config = shared ?? await sharedConfig();
-          target = await registerCompany(await getUnifiedNearCaller(auth), config, companyKey);
+          target = await registerCompany(await getUnifiedNearCaller(auth), config, companyKey, setStage);
           parseTreasuryReference(target);
-          setStage("funding");
+          setStage("Adding your demo funds…");
         } else {
           target = auth.accountId;
           if (!isNativeNearAccount(target)) throw new Error("Enter a NEAR account ID");
@@ -71,13 +76,15 @@ export function SmartAccountActivationButton({
           walletAddress: auth.accountId || walletAddress,
           smartAccountAddress: target,
         });
+        setStage("Refreshing your dashboard…");
         await queryClient.cancelQueries({ queryKey: key, predicate: query => ["profile", "dashboard", "treasury"].includes(String(query.queryKey[key.length])) });
         onActivated?.(result);
         void queryClient.invalidateQueries({ queryKey: key, predicate: query => ["profile", "dashboard", "treasury"].includes(String(query.queryKey[key.length])) }, { cancelRefetch: false });
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "Treasury setup failed");
-      }
+      } finally { activationLock.current = false; }
     });
+  };
 
   return (
     <div className="flex w-full flex-col items-start gap-2 sm:w-auto">
@@ -98,9 +105,7 @@ export function SmartAccountActivationButton({
             : "Activate your account"}
         {!pending && <ArrowRight className="size-4" aria-hidden="true" />}
       </Button>
-      <p role="status" className="min-h-5 text-xs leading-5 text-muted-foreground">
-        {pending ? mode === "employee" ? "Preparing your employee account…" : stage === "registration" ? "Setting up your company…" : "Preparing your treasury and demo funds…" : ""}
-      </p>
+      {pending && <OperationStatus message={stage} />}
       {(error || configError) && (
         <p role="alert" className="text-xs text-destructive">
           {error || configError}

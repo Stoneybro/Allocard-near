@@ -2,7 +2,7 @@
 
 import { Fragment, useMemo, useState } from "react";
 import styles from "./delegation-cards-view.module.css";
-import { BotIcon, PlusIcon, NetworkIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
+import { BotIcon, PlusIcon, NetworkIcon, ChevronRightIcon, SearchIcon, LoaderCircleIcon } from "lucide-react";
 import { DelegationResearchActivity } from "@/components/purchasing-research-panel";
 import { ADAPTER_NAME, agentDisplayName } from "@/lib/agent-adapter/shared";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -21,6 +21,7 @@ import type { DelegationCanvasCompany, DelegationCanvasEmployee, DelegationCanva
 
 export interface DelegationCardsViewProps {
   loading?: boolean;
+  pendingDelegationId?: string | null;
   company: DelegationCanvasCompany;
   employees: DelegationCanvasEmployee[];
   agents?: DelegationCanvasAgent[];
@@ -36,7 +37,7 @@ export interface DelegationCardsViewProps {
 }
 
 
-export function DelegationCardsView({ loading = false, company, employees, agents = [], delegations: allDelegations, onViewModeChange, headerAction, onConfigureDelegation, onRevokeDelegation, onRemoveDelegation, onAddEmployee, onAddAgent }: DelegationCardsViewProps) {
+export function DelegationCardsView({ loading = false, pendingDelegationId = null, company, employees, agents = [], delegations: allDelegations, onViewModeChange, headerAction, onConfigureDelegation, onRevokeDelegation, onRemoveDelegation, onAddEmployee, onAddAgent }: DelegationCardsViewProps) {
   const delegations = useMemo(() => allDelegations.filter(delegation => delegation.status !== "revoked"), [allDelegations]);
   const [isIssueDialogOpen, setIsIssueDialogOpen] = useState(false);
   const employeeById = new Map(employees.map(employee => [employee.id, employee]));
@@ -143,6 +144,7 @@ export function DelegationCardsView({ loading = false, company, employees, agent
     const titleFullEmail = fullEmailOf(delegation);
     const descendants = children.get(delegation.id) ?? [];
     const isExpanded = !collapsed.has(delegation.id) || Boolean(query);
+    const revoking = pendingDelegationId === delegation.id;
     const isActive = delegation.status === "active";
     const isPending = delegation.status === "pending_config";
     const status = isActive ? "Active" : isPending ? "Needs setup" : delegation.status;
@@ -178,8 +180,8 @@ export function DelegationCardsView({ loading = false, company, employees, agent
           <TableCell className="text-right">
             {(hasActions || hasResearchActivity) ? <div className={styles.actions}>
               {hasResearchActivity && <Button variant="outline" size="sm" className="h-8 px-2 text-xs" aria-label={`View activity for ${title}, delegated by ${issuer}`} onClick={() => setActivityDelegation(delegation)}>View activity</Button>}
-              {canManage && onConfigureDelegation && <Button variant="outline" size="sm" className="h-8 px-2 text-xs" aria-label={`${isPending ? "Configure" : "View rules for"} ${title}`} onClick={() => onConfigureDelegation(delegation.id)}>{isPending ? "Configure" : "View rules"}</Button>}
-              {((canRevoke && onRevokeDelegation) || (canManage && isPending && onRemoveDelegation)) && <Button variant="outline" size="sm" className="h-8 border-border bg-muted/50 px-3 text-xs font-medium text-foreground shadow-xs hover:bg-muted" aria-label={`${isActive ? "Revoke" : "Remove"} delegation for ${title}`} onClick={() => setConfirmation(delegation)}>{isActive ? "Revoke" : "Remove"}</Button>}
+              {canManage && onConfigureDelegation && <Button variant="outline" size="sm" className="h-8 px-2 text-xs" aria-label={`${isPending ? "Configure" : "View rules for"} ${title}`} disabled={Boolean(pendingDelegationId)} onClick={() => onConfigureDelegation(delegation.id)}>{isPending ? "Configure" : "View rules"}</Button>}
+              {((canRevoke && onRevokeDelegation) || (canManage && isPending && onRemoveDelegation)) && <Button variant="outline" size="sm" className="h-8 border-border bg-muted/50 px-3 text-xs font-medium text-foreground shadow-xs hover:bg-muted" aria-label={`${isActive ? "Revoke" : "Remove"} delegation for ${title}`} disabled={Boolean(pendingDelegationId)} aria-busy={revoking} onClick={() => setConfirmation(delegation)}>{revoking && <LoaderCircleIcon className="size-3.5 animate-spin" aria-hidden="true" />}{revoking ? "Revoking…" : isActive ? "Revoke" : "Remove"}</Button>}
             </div> : <span className="text-muted-foreground">—<span className="sr-only"> Managed by {issuer}</span></span>}
           </TableCell>
         </TableRow>

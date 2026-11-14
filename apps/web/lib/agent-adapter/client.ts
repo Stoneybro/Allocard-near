@@ -9,7 +9,7 @@ export async function researchRequest<T>(url: string, body?: unknown): Promise<T
       cache: "no-store",
       headers: body ? { "content-type": "application/json" } : undefined,
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(45000),
+      signal: AbortSignal.timeout(95000),
     });
   } catch {
     throw new Error("The research service could not be reached. Retry to check the same request.");

@@ -6,14 +6,14 @@ export function isNativeNearAccount(value: unknown): value is string {
   return typeof value === "string" && value.length >= 2 && value.length <= 64 && !value.startsWith("0x") && nearAccountPattern.test(value);
 }
 export function isValidWalletAddress(address: string): boolean {
-  return typeof address === "string" && isNativeNearAccount(address.trim());
+  return typeof address === "string" && isNativeNearAccount(address.trim().toLowerCase());
 }
 
 export function normalizeWalletAddress(address: string): WalletAddress {
   if (!address || typeof address !== "string") {
     throw new Error("Invalid wallet address: input is required");
   }
-  const normalized = address.trim();
+  const normalized = address.trim().toLowerCase();
   if (!isValidWalletAddress(normalized)) {
     throw new Error(`Invalid NEAR account ID: "${address}"`);
   }

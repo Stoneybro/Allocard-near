@@ -18,12 +18,13 @@ type Props = {
   canAdd: boolean;
   busy?: boolean;
   settingUp?: boolean;
+  revokingAccess?: boolean;
   onSelectAgent: (id: string) => void;
   onConfigure: (id: string) => void;
   onRevoke: (id: string) => void;
 };
 
-export function EmployeeAgentsWorkspace({ companyId, agents, delegations, canAdd, busy = false, settingUp = false, onSelectAgent, onConfigure, onRevoke }: Props) {
+export function EmployeeAgentsWorkspace({ companyId, agents, delegations, canAdd, busy = false, settingUp = false, revokingAccess = false, onSelectAgent, onConfigure, onRevoke }: Props) {
   const { key } = useAccountScope();
   const client = useQueryClient();
   const [adding, setAdding] = useState(false);
@@ -36,7 +37,7 @@ export function EmployeeAgentsWorkspace({ companyId, agents, delegations, canAdd
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div><h2 className="text-base font-medium tracking-tight">Agent workspace</h2><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{ready ? "Hire agents for tasks and follow their progress." : "Set up agent access to get started."}</p></div>
       <div className="flex flex-wrap items-center gap-2">
-        {ready && <><Button variant="outline" size="sm" className="h-9 text-xs" disabled={busy} onClick={() => onConfigure(permission.id)}>View rules</Button><Button variant="outline" size="sm" className="h-9 bg-muted/30 text-xs" disabled={busy} onClick={() => setRevoking(true)}>Revoke access</Button></>}
+        {ready && <><Button variant="outline" size="sm" className="h-9 text-xs" disabled={busy} onClick={() => onConfigure(permission.id)}>View rules</Button><Button variant="outline" size="sm" className="h-9 bg-muted/30 text-xs" disabled={busy} onClick={() => setRevoking(true)}>{revokingAccess && <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />}{revokingAccess ? "Revoking access…" : "Revoke access"}</Button></>}
         <Button size="sm" className="h-9 gap-2 px-4" disabled={!canAdd || busy || settingUp || !agent} onClick={() => {
           if (ready) setAdding(true);
           else if (permission) onConfigure(permission.id);

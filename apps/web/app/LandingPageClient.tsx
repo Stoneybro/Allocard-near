@@ -39,6 +39,7 @@ export function LandingPageClient({
   const queuedConnect = useRef(false);
   const [routeError, setRouteError] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "routing">("idle");
+  const [loginRequested, setLoginRequested] = useState(false);
   const [activeTarget, setActiveTarget] = useState<"nav" | "hero">("hero");
   const isNavigatingRef = useRef(false);
 
@@ -58,6 +59,9 @@ export function LandingPageClient({
       const startedAt = Number(sessionStorage.getItem(LOGIN_INTENT_KEY));
       if (startedAt > 0 && startedAt <= Date.now() && Date.now() - startedAt < LOGIN_INTENT_TTL) {
         requestedLogin.current = startedAt;
+        // Resume the explicit OAuth interaction stored before the page reload.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setLoginRequested(true);
       } else storeLoginIntent(null);
     } catch { /* Keep the in-memory flow usable when storage is unavailable. */ }
   }, []);
@@ -102,6 +106,7 @@ export function LandingPageClient({
   }, [address, openWorkspace, auth]);
   const handleGetStarted = (target: "nav" | "hero" = "hero") => {
     setActiveTarget(target);
+    if (auth.status !== "authenticated") setLoginRequested(true);
     if (auth.status === "unauthenticated") {
       requestedLogin.current = Date.now();
       storeLoginIntent(requestedLogin.current);
@@ -115,9 +120,11 @@ export function LandingPageClient({
       storeLoginIntent(requestedLogin.current);
     }
   };
-  const isBusy = phase !== "idle";
+  const signingIn = loginRequested && auth.status === "connecting";
+  const isBusy = phase !== "idle" || signingIn;
 
   const renderNavButtonContent = () => {
+    if (signingIn) return <span className="inline-flex items-center gap-1.5"><Loader2 className="size-3.5 animate-spin" />Signing in…</span>;
     if (phase === "routing" && activeTarget === "nav") {
       return (
         <span className="inline-flex items-center gap-1.5">
@@ -133,6 +140,7 @@ export function LandingPageClient({
   };
 
   const renderHeroButtonContent = () => {
+    if (signingIn) return <span className="inline-flex items-center justify-center gap-2"><Loader2 className="size-4 animate-spin" />Signing in…</span>;
     if (phase === "routing") {
       return (
         <span className="inline-flex items-center justify-center gap-2">

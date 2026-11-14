@@ -18,7 +18,7 @@ export const emptyCaveatForm: CaveatForm = {
   allowedTargets: "", limitedCallsEnabled: false, limitedCalls: "1", policyPrompt: "", expiresAt: "",
 };
 export const periodDurations = { hourly: 3600, daily: 86400, weekly: 604800, monthly: 2592000 };
-export function splitAddresses(value: string) { return value.split(/[\n,]/).map(item => item.trim()).filter(Boolean); }
+export function splitAddresses(value: string) { return value.split(/[\n,]/).map(item => item.trim().toLowerCase()).filter(Boolean); }
 export type FormErrors = Partial<Record<keyof CaveatForm | "allowedTargetsWarning", string>>;
 export function hasFormErrors(errors: FormErrors) { return Object.keys(errors).some(key => key !== "allowedTargetsWarning"); }
 
@@ -46,7 +46,7 @@ export function validateCaveatForm(form: CaveatForm, balance: string | null, now
   if (form.period !== "none" && periodic !== null && total !== null && periodic > total) errors.periodAmountNear = "The recurring allowance cannot exceed the total budget.";
   const ceiling = form.period !== "none" ? periodic : total;
   if (perTx !== null && ceiling !== null && perTx > ceiling) errors.perTransactionCapNear = "The per-payment cap cannot exceed the recurring allowance or total budget.";
-  if (form.limitedCallsEnabled && (!/^\d+$/.test(form.limitedCalls) || !Number.isSafeInteger(Number(form.limitedCalls)) || Number(form.limitedCalls) < 1)) errors.limitedCalls = "Enter a whole transaction count from 1 to 9,007,199,254,740,991.";
+  if (form.limitedCallsEnabled && (!/^\d+$/.test(form.limitedCalls.trim()) || !Number.isSafeInteger(Number(form.limitedCalls)) || Number(form.limitedCalls) < 1 || Number(form.limitedCalls) > 4294967295)) errors.limitedCalls = "Enter a whole transaction count from 1 to 4,294,967,295.";
   const addresses = splitAddresses(form.allowedTargets);
   if (addresses.length > 64) errors.allowedTargets = "Use at most 64 recipient accounts.";
   else if (addresses.some(address => !isValidWalletAddress(address))) errors.allowedTargets = "Enter valid NEAR accounts, separated by commas or new lines.";

@@ -165,6 +165,8 @@ export function EmployerClient({
   const [isPending, startTransition] = useTransition();
   const [isRefreshing, startRefreshTransition] = useTransition();
   const [activationStage, setActivationStage] = useState("");
+  const [revokingDelegationId, setRevokingDelegationId] = useState<string | null>(null);
+  const revocationLock = useRef(false);
   const [activationError, setActivationError] = useState<string | null>(null);
   const [recoveringPermission, setRecoveringPermission] = useState(false);
   const policyDrafts = useRef(new Map<string, CaveatForm>());
@@ -404,6 +406,7 @@ export function EmployerClient({
   const handleRevokeDelegation = useCallback(
     (delegationId: string) => {
       const targetDelegation = dashboardState?.delegations.find((d) => d.id === delegationId);
+      if (revocationLock.current || !targetDelegation) return;
       const employee = targetDelegation?.delegateeType === "user"
         ? dashboardState?.employees.find((e) => e.id === targetDelegation.delegateeId)
         : null;
@@ -415,26 +418,35 @@ export function EmployerClient({
         : (agent?.name ?? "Delegation");
       const targetAddress = employee?.smartAccountAddress || employee?.walletAddress || agent?.signerAddress || "";
 
+      revocationLock.current = true;
+      setRevokingDelegationId(delegationId);
+      const pendingToast = toast.loading("Revoking spending access…");
       runDashboardMutation(async () => {
-        if (targetDelegation?.status === "active") {
-          if (auth.status !== "authenticated" || !company?.smartAccountAddress || !targetDelegation.delegationHash) throw new Error("Missing signed treasury permission");
-          const caller = await getUnifiedNearCaller(auth);
-          await getTreasuryClient(caller, company.smartAccountAddress).revokePermission(targetDelegation.delegationHash);
+        try {
+          if (targetDelegation?.status === "active") {
+            if (auth.status !== "authenticated" || !company?.smartAccountAddress || !targetDelegation.delegationHash) throw new Error("Missing signed treasury permission");
+            const caller = await getUnifiedNearCaller(auth);
+            await getTreasuryClient(caller, company.smartAccountAddress).revokePermission(targetDelegation.delegationHash);
+          }
+          const nextState = await revokeDelegation({
+            walletAddress: currentAuthAddress as string,
+            delegationId,
+          });
+
+          toast.success("Delegation Revoked", {
+            description: `Spending authority for ${targetName} has been revoked on NEAR Testnet.`,
+            action: targetAddress ? {
+              label: "View Explorer",
+              onClick: () => window.open(getAddressExplorerUrl(targetAddress), "_blank"),
+            } : undefined,
+          });
+
+          return nextState;
+        } finally {
+          revocationLock.current = false;
+          setRevokingDelegationId(null);
+          toast.dismiss(pendingToast);
         }
-        const nextState = await revokeDelegation({
-          walletAddress: currentAuthAddress as string,
-          delegationId,
-        });
-
-        toast.success("Delegation Revoked", {
-          description: `Spending authority for ${targetName} has been revoked on NEAR Testnet.`,
-          action: targetAddress ? {
-            label: "View Explorer",
-            onClick: () => window.open(getAddressExplorerUrl(targetAddress), "_blank"),
-          } : undefined,
-        });
-
-        return nextState;
       });
 
       setSelectedDelegationId((current) => (current === delegationId ? null : current));
@@ -879,6 +891,7 @@ export function EmployerClient({
               />
             ) : (
               <DelegationCardsView
+                pendingDelegationId={revokingDelegationId}
                 company={canvasCompany ?? company}
                 employees={canvasEmployees}
                 agents={dashboardState.agents.map((agent) => ({

@@ -380,6 +380,7 @@ export function EmployeeClient({
       const agent = dashboardState?.agents.find(item => item.id === target.delegateeId);
       revocationLock.current = true;
       setRevokingAgent(true);
+      const pendingToast = toast.loading("Revoking agent access…");
       runEmployeeMutation(async () => {
         try {
           const caller = await getUnifiedNearCaller(auth);
@@ -391,6 +392,7 @@ export function EmployeeClient({
         } finally {
           revocationLock.current = false;
           setRevokingAgent(false);
+          toast.dismiss(pendingToast);
         }
       });
     },
@@ -469,7 +471,8 @@ export function EmployeeClient({
   }, [selectedDelegation, auth, caveatForm, availableMaxNear, dashboardState, setDashboardState, refreshDashboard]);
 
   // Persist a request before signing. Retrying an uncertain dispatch reuses it.
-  const handleExecuteSpend = async (details: { toAddress: string; amountNear: string; purpose?: string; isFlagged?: boolean }, onSettled?: (hash: string) => void) => {
+  const handleExecuteSpend = async (details: { toAddress: string; amountNear: string; purpose?: string; isFlagged?: boolean }, onSettled?: (hash: string) => void, onProgress?: (message: string) => void) => {
+    onProgress?.("Checking your payment and spending access…");
     if (auth.status !== "authenticated") throw new Error("Connect your NEAR signing wallet");
     const activePermissionId = dashboardState?.inboundDelegation?.delegationHash;
     const company = dashboardState?.company;
@@ -496,10 +499,12 @@ export function EmployeeClient({
       // contract independently enforces every rule. Avoid a third browser preview.
       saved.attempted = true;
       localStorage.setItem(key, JSON.stringify(saved));
+      onProgress?.("Waiting for your signature and NEAR confirmation…");
       const outcome = await client.execute(saved.request);
       saved.executionId = outcome.executionId;
       saved.transactionHash = saved.transactionHash || outcome.transactionHash;
       localStorage.setItem(key, JSON.stringify(saved));
+      onProgress?.("Confirming the transfer on NEAR…");
       record = await outcome.waitForOutcome(60000, 1500);
     }
     if (record.status === "Failed") {
@@ -655,7 +660,7 @@ export function EmployeeClient({
         <EmployeeSpendingWorkspace
           agents={<EmployeeAgentsWorkspace companyId={company.id} agents={dashboardState.agents}
             delegations={dashboardState.outboundDelegations}
-            canAdd={dashboardState.inboundDelegation?.status === "active"} busy={creatingAgent || activatingDelegation || revokingAgent || isPending} settingUp={creatingAgent}
+            revokingAccess={revokingAgent} canAdd={dashboardState.inboundDelegation?.status === "active"} busy={creatingAgent || activatingDelegation || revokingAgent || isPending} settingUp={creatingAgent}
             onSelectAgent={handleSelectAgent} onConfigure={handleConfigureDelegation} onRevoke={handleRevokeDelegation} />}
           directPayment={
           <DirectSpendForm

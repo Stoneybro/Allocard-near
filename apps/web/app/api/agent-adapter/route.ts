@@ -11,6 +11,7 @@ import { companyTasks, createProposal, confirmProposal, ownTask, listTasks, view
 import { progressTask, cancelQueued } from "@/lib/agent-adapter/service";
 import { workerReady } from "@/lib/agent-adapter/worker";
 export const runtime="nodejs";
+export const maxDuration=90;
 const headers={"Cache-Control":"no-store, private"};
 function failure(error: unknown, context?: { action: string; stage: string }) {
   const message=error instanceof z.ZodError ? "Invalid research request" : error instanceof Error ? error.message : "Research service unavailable";

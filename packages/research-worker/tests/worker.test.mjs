@@ -40,7 +40,7 @@ test('uses the database brief and persists a sourced result through the original
  const actions=[];let suppliedPrompt;
  globalThis.fetch=async(url,options)=>{
   const price=provider(String(url));if(price)return price;
-  if(String(url).endsWith('/responses')){ suppliedPrompt=JSON.parse(options.body).input[1].content;return Response.json({output:[{type:'web_search_call'},{type:'message',content:[{type:'output_text',text:'## Report\nSource: https://example.com/pricing'}]}]}); }
+  if(String(url).endsWith('/responses')){ suppliedPrompt=JSON.parse(options.body).input[1].content;return Response.json({status:'completed',output:[{type:'web_search_call'},{type:'message',content:[{type:'output_text',text:'## Report\nSource: https://example.com/pricing'}]}]}); }
   const body=JSON.parse(options.body);actions.push(body);
   return Response.json(body.action==='claim'?{claimed:true,prompt:'The approved database brief'}:{saved:true});
  };
@@ -54,4 +54,38 @@ test('status comes from durable task storage and allows recovery only when no cl
  globalThis.fetch=async()=>Response.json({state:'needs_reconciliation',claimed:false,session_id:null});
  const r=await request(`jobs/${job.id}/${job.digest}`);
  assert.equal(r.status,200);assert.equal(r.data.retryable,true);
+});
+test('uses non-thinking concise research and saves only the final report',async()=>{
+ let options;let saved;let calls=0;
+ globalThis.fetch=async(url,init)=>{
+  const price=provider(String(url));if(price)return price;
+  if(String(url).endsWith('/responses')){calls++;options=JSON.parse(init.body);return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:'Interim notes'}]},{type:'web_search_call'},{type:'message',content:[{type:'output_text',text:'Final report https://example.com/pricing'}]}]});}
+  const body=JSON.parse(init.body);if(body.action==='complete')saved=body.result;
+  return Response.json(body.action==='claim'?{claimed:true,prompt:'Approved software research brief'}:{saved:true});
+ };
+ await request('jobs','POST');await Promise.all(pending);
+ assert.equal(calls,1);assert.equal(options.chat_template_kwargs.enable_thinking,false);assert.equal(options.reasoning.effort,'none');
+ assert.equal(options.max_output_tokens,1800);assert.equal(saved,'Final report https://example.com/pricing');
+});
+test('does not mark a truncated response delivered or repeat the model',async()=>{
+ const actions=[];let calls=0;
+ globalThis.fetch=async(url,init)=>{
+  const price=provider(String(url));if(price)return price;
+  if(String(url).endsWith('/responses')){calls++;return Response.json({status:'incomplete',output:[{type:'web_search_call'},{type:'message',content:[{type:'output_text',text:'Partial https://example.com'}]}]});}
+  const body=JSON.parse(init.body);actions.push(body);
+  return Response.json(body.action==='claim'?{claimed:true,prompt:'Approved software research brief'}:{saved:true});
+ };
+ await request('jobs','POST');await Promise.all(pending);
+ assert.equal(calls,1);assert.deepEqual(actions.map(body=>body.action),['claim','fail']);assert.match(actions[1].message,/incomplete/);
+});
+test('reports a useful timeout and never invokes another model call for it',async()=>{
+ const actions=[];let calls=0;
+ globalThis.fetch=async(url,init)=>{
+  const price=provider(String(url));if(price)return price;
+  if(String(url).endsWith('/responses')){calls++;throw new DOMException('aborted','TimeoutError');}
+  const body=JSON.parse(init.body);actions.push(body);
+  return Response.json(body.action==='claim'?{claimed:true,prompt:'Approved software research brief'}:{saved:true});
+ };
+ await request('jobs','POST');await Promise.all(pending);
+ assert.equal(calls,1);assert.match(actions.find(body=>body.action==='fail').message,/Research exceeded its time limit/);
 });

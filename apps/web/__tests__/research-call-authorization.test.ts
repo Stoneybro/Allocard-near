@@ -38,3 +38,15 @@ it("returns saved status without relying on a runtime session lookup", async () 
  const response = await POST(request({...binding,action:"status"}));
  expect(await response.json()).toMatchObject({state:"running",claimed:true});
 });
+it("acknowledges a report only after its task and original call are saved together", async () => {
+ mocks.execute.mockResolvedValueOnce({ rows: [{ id: binding.jobId }] });
+ const response = await POST(request({ ...binding, action: "complete", result: "Report https://example.com/pricing" }));
+ expect(await response.json()).toEqual({ saved: true });
+ expect(mocks.execute).toHaveBeenCalledTimes(1);
+ expect(mocks.after).toHaveBeenCalledTimes(1);
+});
+it("does not acknowledge an unauthorized or conflicting report", async () => {
+ mocks.execute.mockResolvedValueOnce({ rows: [] });
+ const response = await POST(request({ ...binding, action: "complete", sessionId: "other-session", result: "Different report" }));
+ expect(await response.json()).toEqual({ saved: false });
+});

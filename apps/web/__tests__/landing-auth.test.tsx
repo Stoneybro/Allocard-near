@@ -28,6 +28,20 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); client.clear(); });
 describe("landing sign-in routing", () => {
+  it("keeps both entry buttons busy between provider sign-in and dashboard navigation", async () => {
+    let finish!: (profile: { status: string }) => void;
+    mocks.profile.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>("#nav-cta")!.click());
+    mocks.auth = { status: "connecting" }; await render();
+    expect(host.querySelector<HTMLButtonElement>("#nav-cta")!.disabled).toBe(true);
+    expect(host.textContent).toContain("Signing in…");
+    mocks.auth = { status: "authenticated", address: "a".repeat(64), providerUserId: "did:privy:alice" }; await render();
+    expect(host.textContent).toContain("Opening dashboard…");
+    expect(host.querySelector<HTMLButtonElement>("#nav-cta")!.disabled).toBe(true);
+    await act(async () => finish({ status: "employer" }));
+    expect(mocks.push).toHaveBeenCalledWith("/employer");
+  });
   it.each([
     ["employer", "/employer"],
     ["employee", "/employee"],

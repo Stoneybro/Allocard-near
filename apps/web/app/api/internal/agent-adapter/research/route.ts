@@ -46,8 +46,17 @@ export async function POST(request:Request){
    return Response.json({saved:true},{headers});
   }
   if(!body.result)return Response.json({error:"Result required"},{status:400,headers});
-  const result=await db.execute(sql`UPDATE agent_research_calls c SET result=${body.result} FROM agent_research_tasks t WHERE c.job_id=t.id AND t.id=${body.jobId}::uuid AND t.digest=${body.digest} AND c.call_id=${body.callId} AND c.session_id=${body.sessionId} AND c.result IS NULL RETURNING c.job_id`);
-  await db.execute(sql`UPDATE agent_research_tasks SET state='delivered',result=${body.result},message='Research complete' WHERE id=${body.jobId}::uuid AND digest=${body.digest} AND EXISTS (SELECT 1 FROM agent_research_calls c WHERE c.job_id=${body.jobId}::uuid AND c.call_id=${body.callId} AND c.session_id=${body.sessionId} AND c.result=${body.result}) AND state IN ('dispatching','running','needs_reconciliation')`);
+  // Persist the immutable call result and visible task outcome atomically.
+  // Identical callback retries acknowledge the original result without a model rerun.
+  const result=await db.execute(sql`WITH saved_call AS (
+    UPDATE agent_research_calls c SET result=${body.result} FROM agent_research_tasks t
+    WHERE c.job_id=t.id AND t.id=${body.jobId}::uuid AND t.digest=${body.digest}
+      AND c.call_id=${body.callId} AND c.session_id=${body.sessionId}
+      AND (c.result IS NULL OR c.result=${body.result})
+      AND t.state IN ('dispatching','running','needs_reconciliation','failed','delivered')
+    RETURNING c.job_id,c.result
+  ) UPDATE agent_research_tasks t SET state='delivered',result=c.result,message='Research complete'
+    FROM saved_call c WHERE t.id=c.job_id RETURNING t.id`);
   after(()=>drainQueue());
   return Response.json({saved:result.rows.length>0},{headers});
  }catch{return Response.json({error:"Research call could not be authorized or persisted"},{status:503,headers});}

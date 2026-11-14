@@ -42,3 +42,4 @@ pnpm-debug.log*
 .agent-work/
 .vercel
 .env*
+!apps/web/.env.example

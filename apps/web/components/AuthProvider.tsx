@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
+import { PrivyProvider, usePrivy, useLogin } from "@privy-io/react-auth";
 import { useCreateWallet, useSignRawHash } from "@privy-io/react-auth/extended-chains";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createPrivyNearTransport, type NearActionSender } from "@/lib/privy-near";
@@ -38,6 +38,9 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<{ principal: string; identity: SessionIdentity } | null>(null);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [loginPending, setLoginPending] = useState(false);
+  const loginLock = useRef(false);
+  const { login } = useLogin({ onError: () => { loginLock.current = false; setLoginPending(false); } });
   const [signingOut, setSigningOut] = useState(false);
   const [retry, setRetry] = useState(0);
   const principal = privy.authenticated ? privy.user?.id ?? null : null;
@@ -45,8 +48,8 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
   const accountId = wallet && "address" in wallet ? wallet.address : null;
   // SDK callback identities may change during OAuth and wallet creation. Keep
   // their latest implementations without making them bootstrap dependencies.
-  const sdk = useRef({ createWallet, getAccessToken: privy.getAccessToken, signRawHash, logout: privy.logout, login: privy.login });
-  useEffect(() => { sdk.current = { createWallet, getAccessToken: privy.getAccessToken, signRawHash, logout: privy.logout, login: privy.login }; });
+  const sdk = useRef({ createWallet, getAccessToken: privy.getAccessToken, signRawHash, logout: privy.logout, login });
+  useEffect(() => { sdk.current = { createWallet, getAccessToken: privy.getAccessToken, signRawHash, logout: privy.logout, login }; });
   const creation = useRef<{ principal: string; promise: ReturnType<typeof createWallet> } | null>(null);
   const previousPrincipal = useRef<string | null>(null);
 
@@ -64,6 +67,7 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
     }
     const clearing = changedPrincipal && hadPrincipal ? clearSession() : Promise.resolve();
     if (!principal) {
+      if (hadPrincipal) { loginLock.current = false; setLoginPending(false); }
       void clearing.then(() => { if (!cancelled) { setBusy(false); setSession(null); } }).catch(() => setError("Could not clear your session. Please retry sign-out."));
       return () => { cancelled = true; };
     }
@@ -104,7 +108,7 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
         }
         setError(caught instanceof Error ? caught.message : "Sign-in failed");
       }
-    }).finally(() => { if (!cancelled) setBusy(false); });
+    }).finally(() => { if (!cancelled) { setBusy(false); setLoginPending(false); loginLock.current = false; } });
     return () => { cancelled = true; };
   }, [privy.ready, principal, accountId, retry, queryClient, signingOut]);
 
@@ -163,13 +167,18 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
     }
   }, [queryClient]);
   const connect = useCallback(() => {
-    if (sdk.current && principal) setRetry(n => n + 1);
-    else sdk.current.login();
+    if (loginLock.current) return;
+    loginLock.current = true;
+    setLoginPending(true); setError(undefined);
+    try {
+      if (principal) setRetry(n => n + 1);
+      else sdk.current.login();
+    } catch { loginLock.current = false; setLoginPending(false); setError("Could not start sign-in. Please try again."); }
   }, [principal]);
 
   if (signingOut) return <div className="flex min-h-dvh items-center justify-center bg-background text-sm text-muted-foreground" role="status">Signing out…</div>;
   if (identity && transport) return <AuthContext.Provider value={{ status: "authenticated", address: identity.walletAddress, accountId: identity.walletAddress, providerUserId: identity.providerUserId, email: identity.email, authMethod: "privy", disconnect, establishSession, ...transport }}>{children}</AuthContext.Provider>;
-  if (!privy.ready || (principal && busy) || (privy.authenticated && !principal)) return <AuthContext.Provider value={{ status: "connecting" }}>{children}</AuthContext.Provider>;
+  if (!privy.ready || loginPending || (principal && busy) || (privy.authenticated && !error)) return <AuthContext.Provider value={{ status: "connecting" }}>{children}</AuthContext.Provider>;
   return <AuthContext.Provider value={{ status: "unauthenticated", connecting: false, error, connect }}>{children}</AuthContext.Provider>;
 }
 export function useAuth() { return useContext(AuthContext); }

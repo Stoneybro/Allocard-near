@@ -8,6 +8,14 @@ import { parsePolicyDeterministicFallback, type ParsedPolicyResult } from "@/lib
 const now = Date.parse("2026-11-12T12:00:00Z");
 const form: CaveatForm = { ...emptyCaveatForm, maxAmountNear: "50", period: "weekly", periodAmountNear: "10", perTransactionCapNear: "5", allowedTargets: "vendor.testnet\nsupplier.testnet", limitedCallsEnabled: true, limitedCalls: "20", expiresAt: "2026-12-12T12:00:00Z" };
 describe("employee policy validation", () => {
+  it("accepts a total budget with all optional limits absent and canonicalizes recipient input", () => {
+    const minimal = { ...emptyCaveatForm, maxAmountNear: "500" };
+    expect(hasFormErrors(validateCaveatForm(minimal, "1000", now))).toBe(false);
+    const spec = buildPolicySpec(minimal, "employee.testnet", now);
+    expect(spec).toMatchObject({ expires_at_ms: null, max_executions: null, rules: [expect.objectContaining({ max_per_action: null, fixed_window: null, recipients: { type: "Any" } })] });
+    expect(buildPolicySpec({ ...minimal, allowedTargets: " Vendor.Testnet " }, "employee.testnet", now).rules[0].recipients).toEqual({ type: "Only", accounts: ["vendor.testnet"] });
+    expect(validateCaveatForm({ ...minimal, allowedTargets: "Vendor.Testnet,vendor.testnet" }, null, now).allowedTargets).toContain("duplicate");
+  });
   it("creates the exact reviewed permission across all supported restrictions", () => {
     expect(hasFormErrors(validateCaveatForm(form, "100", now))).toBe(false);
     const spec = buildPolicySpec(form, "employee.testnet", now);
