@@ -1,55 +1,36 @@
-# Company → employee → payment acceptance run
+# Walkthrough acceptance checks
 
-This build wires Privy email/Google login to native NEAR signing. Stablecoin UI and agent execution are separate integrations. No path should report simulated success. Server sessions verify Privy access tokens and linked NEAR wallets; invitations use the verified email address.
+The [root README](../../README.md#try-the-demo) is the user-facing walkthrough. These checks describe expected results for a fresh company using the default mock-USDC policy. They are a procedure, not a claim that a live two-account run has been performed.
 
-## Preparation
+## Preconditions
 
-The existing local configuration has database and session-secret variable names present. Confirm that the database is reachable from your development environment and `SESSION_SECRET` is at least 32 random characters. Never send wallet private keys to the agent, browser application server, or repository.
+- Two accessible email accounts and separate browser sessions.
+- A schema-5 shared treasury, matching WASM, and mock USDC whose minter is the configured relayer.
+- Privy email/Google and embedded NEAR accounts configured for the app origin.
+- Database migrations applied; funded relayer; both sponsorship flags enabled.
+- NEAR AI credentials for policy interpretation; configured research worker and adapter for the research steps.
 
-In the Privy dashboard, enable Email and Google and allow your app origin. Configure NEXT_PUBLIC_PRIVY_APP_ID, PRIVY_APP_ID, and server-only PRIVY_APP_SECRET for the same app. The installed Privy SDK creates a native NEAR wallet through its extended-chain API.
+See [shared setup](SHARED.md), [sponsorship](SPONSORSHIP.md), and [research operations](../AGENT-ADAPTER-OPERATIONS.md). Users do not need personal gas funds for the sponsored demo.
 
-From the repository root:
+## Expected sequence
 
-```sh
-pnpm install --frozen-lockfile
-pnpm run contracts:build
-pnpm run sdk:build
-pnpm --filter @allocard/web run db:migrate
-pnpm run dev
-```
+1. Sign in, enter a company name, and select **Create company account**. The employer dashboard opens.
+2. Select **Activate your company account**. Wait for activation and funding to finish. The treasury has 2,000 test USDC; registration reserves are separate from this spending principal. Retrying the same activation must not issue another activation grant.
+3. Select **Add Employee** and enter the second email. No email is sent. In the other session, sign in with that email and select **Accept invitation** under **Join a company**; do not create another company.
+4. Back in the employer session, select **Add delegation**, select the employee, and keep the default policy. Review and acknowledge it, then select **Sign & activate on NEAR Testnet**. The limits are 500 USDC lifetime, 100 USDC per week, 50 USDC per payment, only `vendor.testnet` and `supplier.testnet`, at most 20 payments, expiring in 30 days. Treasury principal remains 2,000 USDC; 500 is allocated and 1,500 is unallocated.
+5. Focus the employee window. Under **Direct payment**, send 10 USDC to one permitted recipient using **Review payment** and **Confirm & Execute**. Wait for **Spend Settled on NEAR** and inspect its explorer link. Treasury principal is 1,990 USDC; the employee's lifetime remainder is 490 and weekly remainder is 90. The per-payment cap remains 50. Verify the recipient and actual contract execution, not just the toast.
+6. Before agent setup, try 51 USDC or a disallowed recipient. The request must be rejected without a successful transfer or history entry.
+7. Under **Agents**, select **Set up agent**, then review and activate its narrowed permission. Its allocation must fit within the employee's permission. Direct employee capacity can decrease because the agent reserves a subdivision; company principal does not move.
+8. Select **Add agent**, **Find agents**, **Hire** for **Purchasing Research agent v2**, and **Confirm and start**. Check progress and the sourced report. This task does not debit treasury USDC or consume the on-chain payment counter. The company owner can inspect the agent's **View activity**.
+9. In the company's delegation table, select **Revoke** on the agent row and confirm with **Revoke delegation**. The employee's own permission remains active. Revoke the employee row to stop its whole branch and release the unused company allocation. With just the earlier 10-USDC payment and no other activity, allocated funds become zero and unallocated funds become 1,990 USDC. A research task already running may finish.
 
-The new migration adds unique treasury/execution identities for payment history, a single-use login nonce table, and a separate NEAR account binding for existing users. Run it before signing in with the updated app. It preserves historical rows. It does not turn old database-only delegations into valid NEAR permissions.
+## Recovery and isolation
 
-The treasury Wasm must be available to the web server at `packages/contracts/res/allocard_treasury.wasm`. A deployed host can override its location with server-only `TREASURY_WASM_PATH`. The server checks a linked treasury's code hash against this artifact, in addition to schema, owner, and network domain.
+- Cancel before signing: no permission should activate and no payment should settle.
+- An uncertain payment retains the original request and transaction identity. Retry to reconcile it; do not clear browser storage to force a replacement.
+- A settled payment whose history write failed must synchronize that execution without another payout.
+- Only authoritative failure or proof that an expired request was unused permits replacing an uncertain request. Timeout alone is not proof.
+- A company registration retry checks the existing deterministic company ID before requesting another deposit.
+- Repeat with two companies when checking tenant isolation: permissions, payments, research, and history must not cross company boundaries.
 
-Deploy and configure the shared treasury first using [SHARED.md](./SHARED.md). Set server-only `SHARED_TREASURY_ACCOUNT_ID`. The server verifies the deployed shared bytecode and zero retained keys.
-
-Use two email accounts in separate browser profiles. After login, fund the displayed employer NEAR account with roughly 3 test NEAR and the employee account with about 1 test NEAR for gas. An existing recipient account is also needed; the employer account can be the recipient. Privy signing and dashboard settings still require a live browser test.
-
-## Acceptance steps
-
-1. Employer signs in with Email or Google. The app creates a native NEAR wallet and verifies its link to the Privy identity on the server.
-2. Create the company workspace.
-3. Register the company in the shared treasury. Approve one ordinary `create_company` call with 0.2 NEAR attached. This pays for the company's state and reserves (0.1 NEAR operating budget; remaining deposit covers storage and storage funding), not spendable principal. No new contract or account is deployed per company. The caller is the initial owner. Refresh/retry reuses the deterministic company registration. The application stores a company-scoped treasury reference internally; permissions and executions are scoped to this reference.
-4. Fund the pools. One atomic transaction adds 0.5 NEAR to storage funding, 0.2 NEAR to operations, and 1 NEAR of spendable capital. The dashboard should show 1 NEAR available, not the account balance including storage collateral.
-5. Invite the employee’s verified email address. The employee signs in in the other browser profile, sees the pending workspace, and accepts. The signing account itself is the employee principal; it is not another treasury.
-6. Employer creates a delegation to that employee. Set a 0.5-NEAR lifetime limit, optionally a 0.2-NEAR per-payment limit, and an explicit recipient account. Activate it with a real signed `create_root_permission` call. A failed/cancelled call must leave it inactive.
-7. Employee pays 0.1 NEAR to the approved recipient. Preview must pass, the wallet must sign `execute`, the contract must settle `Succeeded`, and only then can the server record the payment. Confirm the recipient's balance increase and the actual transaction in the explorer.
-8. Refresh both views. Employee lifetime capacity should have decreased by 0.1 NEAR, and spendable treasury liquidity should be 0.9 NEAR. Pending transfers count against capacity.
-9. Attempt an over-limit payment and a payment to a disallowed recipient. Both must fail without moving funds or creating successful history rows.
-10. Revoke the permission from the employer view. The contract must confirm revocation before the application marks it revoked. The employee's next payment must fail.
-
-## Recovery checks
-
-- If company registration times out, retry the same workspace. Check chain registration before submitting another deposit.
-- Cancel a wallet request: the app must not activate authority or record payment success.
-- Lose connectivity after signing: keep the saved payment request. Retrying uses the same request ID, so the contract cannot send twice. The form restores the original recipient and amount after refresh.
-- If a payment settled but history saving failed, retry the same request to synchronize history. The database's unique treasury/execution identity prevents duplicate records.
-- An expired request can be discarded only after a finalized chain clock has passed its deadline and no execution exists. A pending execution remains reserved; no timeout fabricates a refund.
-- Do not clear browser storage or switch treasuries while reconciling a payment.
-
-## What still requires external verification
-
-Local automated checks validate signatures, unsigned-login rejection, nonce reuse rejection, exact payment binding, idempotent history recording, budgets, and SDK/contract behavior. A live browser/wallet/RPC/database run has not been established by those tests. The sandbox and Next.js build may be blocked in the coding environment by local socket restrictions. Run the checks and the acceptance sequence in a normal development environment before calling the main flow complete.
-
-No deployment, transaction signing, or remote database migration is performed merely by preparing this code. Those actions happen when you run the migration and confirm the wallet transactions.
+Application tests mock external services. Contract unit tests simulate the runtime; sandbox tests execute compiled contracts locally. None alone establishes working live OAuth, provider availability, or testnet settlement.

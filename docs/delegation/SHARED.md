@@ -1,66 +1,71 @@
-# Reservation release
+# Shared company treasury (schema 5)
 
-Shared schema 5 adds funded employee allocations and bounded spending snapshots. Read [RESERVATION-RELEASE.md](./RESERVATION-RELEASE.md) for current accounting, validation and migration. The notes below describe the shared-contract foundation; old deployed schema-3/4 contracts remain immutable and do not gain reservations automatically.
+The current onboarding path registers companies inside one shared NEAR contract. Registration writes company state rather than creating accounts or deploying contracts. Each company has separate ownership, permissions, allocations, ledgers, storage funding, operating reserves, and execution records.
 
-# Shared company treasury (schema 3)
+The app stores a treasury reference as `contract.testnet#<64-character-company-id>`. This is not a NEAR account ID. The SDK sends transactions to the contract account and injects `company_id`. The company ID is derived from the owner and database company UUID. Request hashes, callbacks, history, and recovery are scoped to that company.
 
-The active onboarding path is one ordinary contract for all companies. Company registration writes state; it does not create accounts, deploy code, or publish a global contract. The earlier global factory is an alternative experiment and is not used by the current onboarding component.
+See [allowance accounting](RESERVATION-RELEASE.md) for employee reservations and agent subdivisions.
 
-The shared contract reuses the existing policy engine. Every company has separate owner/epoch/pause settings, permission IDs, usage and approval maps, ledgers, execution IDs, replay records, storage funding and operating reserves. Company IDs are SHA-256 of `owner_account_id + NUL + company_key`. The application uses the database company UUID as the key; another owner cannot front-run that namespace.
+## Build and deploy
 
-The application persists a treasury reference `contract.testnet#<64-character-company-id>` in the existing text account field. It is not a NEAR account ID. The SDK separates the receiver account from company identity and injects `company_id` into every view and mutation. Native account lookups and explorer URLs use only the contract account. Existing dedicated references without `#` retain their legacy SDK behavior. No database migration is needed for shared registration. Existing balances/permissions are not automatically migrated from old deployments.
-
-Canonical request and approval hashes include company identity via the network-domain string `near:testnet:company:<company_id>`. Numeric permission and execution IDs may repeat across companies. Asynchronous transfer callbacks include `company_id`; only the contract can invoke them. Payment verification checks the actual transaction receiver, signer, request ID and company argument. Payment recovery/history keys contain the full treasury reference, preserving isolation when one employee works at multiple companies.
-
-## Accounting
-
-All native funds occupy one NEAR account. The contract tracks aggregate obligations across every company: available native principal, storage funding, callback storage reservations, and operating budgets (including each company's minimum operating reserve). Before completing mutations it checks these obligations plus actual account storage and scheduled outgoing transfers against physical account balance. A company cannot use another company's budget or reserves.
-
-A failed-transfer settlement restores only that company's principal. Since protocol refunds arrive asynchronously, settlement may temporarily precede physical liquidity; subsequent mutations still require aggregate solvency. Token deposits specify `{"company_id":"..."}` in the NEP-141 message and credit the ledger for the calling token contract only. The shared contract maintains each company's operating floor even when token transfers spend a one-yocto marker.
-
-Company registration requires exactly **0.2 NEAR**. It allocates 0.1 NEAR to that company's operating budget and uses the rest for actual company storage and remaining storage funding. None is credited as spendable principal. These are configured reserves, not a claim that creation burns 0.2 NEAR or that it is the minimum possible cost. Spending principal and later storage funding are added separately. Actual initial deployment cost depends on the shared WASM size and protocol storage pricing.
-
-## Build and test
+Run commands from the repository root. Install Rust with the `wasm32-unknown-unknown` target and install the pnpm workspace dependencies.
 
 ```sh
 pnpm contracts:build
 pnpm sdk:build
-pnpm sdk:test
-pnpm web:test
-pnpm --filter @allocard/web typecheck
 ```
 
-Rust packages can be tested with `cargo test --manifest-path packages/contracts/Cargo.toml --workspace --lib`. Sandbox integration tests require an environment that permits local sockets; unit tests do not establish live network behavior. The shared engine feature is compiled without standalone RPC wrappers, so only the outer company-aware ABI is exposed in the shared WASM.
-
-## Testnet deployment
-
-Use one fresh, funded named testnet account. No publisher account or global publication fee is needed. Review the actual artifact size from the plan and fund its ordinary storage allocation, initial state, and gas. The deployment code is testnet-only; mainnet rollout needs a separate reviewed release.
-
-Set `SHARED_TREASURY_ACCOUNT_ID` and `SHARED_TREASURY_DEPLOY_KEY` in an operator shell, keeping the private key out of application configuration and chat. Then:
+Use a fresh, funded, dedicated testnet account for the shared contract. Set `SHARED_TREASURY_ACCOUNT_ID` and `SHARED_TREASURY_DEPLOY_KEY` in the operator shell. Deployment tooling does not automatically read the app's `.env.local`.
 
 ```sh
-pnpm contracts:build
 pnpm shared:deploy
 pnpm shared:deploy --check
-# Review the plan and read-only account check before signing:
-pnpm shared:deploy --execute
-unset SHARED_TREASURY_DEPLOY_KEY
 ```
 
-`--check` reads the final account state without a signing key. It reports balance, current code hash, key count and whether this exact release is already verified. An already verified deployment is reused without signing another transaction. Failures report the phase and sanitized error details; always check account state after a submission timeout.
+The first command prints the deployment plan; `--check` performs read-only verification. Inspect the artifact size and account funding before deliberately deploying:
 
-The deployment batch installs the code, initializes the network domain and deletes every account access key. No platform withdrawal, upgrade, or administrator override is exposed. This locks the release permanently; fixes require a new deployment, with explicit withdrawal/re-registration by company owners. Do not deploy on a personal account.
+```sh
+pnpm shared:deploy --execute
+```
 
-Set server-only `SHARED_TREASURY_ACCOUNT_ID` in `apps/web/.env.local` (or host environment) and restart the app. The web server needs `packages/contracts/res/allocard_shared.wasm` from the same reviewed build; override its location with `SHARED_TREASURY_WASM_PATH` if necessary. `GET /api/treasury/shared` verifies bytecode, schema/domain, and absence of retained keys before returning the registration quote.
+Deployment installs and initializes the contract, then removes every access key. The result is immutable: there is no retained platform withdrawal or upgrade key. Do not use a personal account or attempt to overwrite an existing deployment. New companies require schema 5 and `near:testnet`.
 
-## RPC connectivity
+Company registration attaches exactly 0.2 NEAR: 0.1 NEAR funds operations, with the rest covering company storage and remaining storage funding. This is separate from spending principal. Sponsored onboarding also includes bounded reserve top-ups; see [gas sponsorship](SPONSORSHIP.md).
 
-The browser reads NEAR and submits Privy-signed transactions through the same-origin `/api/near/rpc` gateway, avoiding a browser connection to third-party RPC servers. The server defaults to the testnet RPC; configure server-only `NEAR_RPC_URL` for a different testnet provider. Keep provider credentials out of `NEXT_PUBLIC_` variables. Restart the app after changing configuration.
+## Configure the app
 
-The gateway accepts bounded public reads and requires an authenticated matching signer for transaction submission. Identical concurrent contract reads are coalesced. Advisory employee capacity snapshots can reuse a successful read for at most two seconds. Ownership verification and access-key nonces bypass these snapshots. Read transport failures may be retried once; HTTP 429 responses honor Retry-After and a provider cooldown instead of immediately resending. Persistent limits require a testnet RPC endpoint with available quota. Transaction submissions are never automatically retried; an uncertain Privy submission includes its transaction hash for reconciliation. This gateway does not sign transactions or provide gas sponsorship.
+Set these in `apps/web/.env.local`:
 
-## Acceptance
+```dotenv
+SHARED_TREASURY_ACCOUNT_ID=your-shared-treasury.testnet
+NEAR_RPC_URL=https://rpc.testnet.near.org
+NEXT_PUBLIC_MOCK_USDC_ACCOUNT_ID=your-token.testnet
+```
 
-Use two companies and two browser profiles. Register each company; verify that refresh/retry reuses its existing registration without another deposit. Fund both, invite an employee by verified email, grant a bounded permission and pay a recipient. Check actual receipt settlement, budget usage and revocation. Repeat with the same employee in both companies; permission/execution/request IDs must never cross company boundaries. Registration, funding, execution and revocation use ordinary function calls supported by Privy and NEAR Wallet Selector.
+The web server needs `packages/contracts/res/allocard_shared.wasm` matching the deployment. `SHARED_TREASURY_WASM_PATH` can override its location. `GET /api/treasury/shared` verifies code hash, schema, network domain, and the absence of retained access keys before returning registration configuration. An incompatible artifact or contract disables setup.
 
-If a registration submission times out, retry the same workspace to reconcile its deterministic company ID. A duplicate chain registration fails and its attached deposit is refunded by the protocol; the application checks existence before resubmitting. Spend retries keep the same company-scoped request. No admin may force a pending execution to succeed or refund it without an authoritative callback.
+The browser uses the same-origin `/api/near/rpc` gateway. Keep provider credentials in server-only `NEAR_RPC_URL`, not public variables. Restart the app after server configuration changes; rebuild when public variables change.
+
+## Prepare mock USDC and the relayer
+
+Create a dedicated, funded testnet relayer with a registered Ed25519 FullAccess key. In the operator shell set `NEAR_RELAYER_ACCOUNT_ID`, `NEAR_RELAYER_PRIVATE_KEY`, and `MOCK_USDC_ACCOUNT_ID` to a distinct funded testnet token account. Set `MOCK_USDC_DEPLOY_KEY` for that token account.
+
+```sh
+pnpm mock-usdc:build
+pnpm mock-usdc:deploy
+```
+
+Inspect the plan, then deliberately deploy and verify:
+
+```sh
+pnpm mock-usdc:deploy --execute
+pnpm mock-usdc:deploy --check
+```
+
+Alternatively, `--create-with-relayer` can create a direct token subaccount of the relayer; inspect its funding plan before adding `--execute`. The token is initialized with the relayer as its minter. Point `NEXT_PUBLIC_MOCK_USDC_ACCOUNT_ID` at that token and configure the same relayer in the app. A public token address without its authorized minter cannot reproduce automatic demo funding.
+
+Apply app database migrations, configure Privy and sponsorship using the [environment template](../../apps/web/.env.example) and [sponsorship guide](SPONSORSHIP.md), then follow the [root README](../../README.md).
+
+## Existing companies
+
+Existing companies retain their original treasury reference. Older immutable schemas do not gain schema-5 funding guarantees automatically. Preserve legacy verification artifacts needed by those companies. Before any deliberate migration, reconcile pending executions, revoke unused old permissions, and withdraw principal with the owner's authorization. Register and fund the new company treasury, verify its ledger, and link it only after active old permissions are cleared. Never rewrite references to simulate a migration or replace an uncertain payment with a new one. Migration withdrawals may require owner-wallet gas and are outside the gas-sponsored demo walkthrough.

@@ -2,7 +2,7 @@
 
 Allocard supports NEP-366 meta-transactions for Privy employee direct payments, employer employee-allowance creation, employee agent-permission creation, permission revocation and opt-in company setup on NEAR testnet. The employee or company owner signs an Ed25519 delegate action. A dedicated relayer signs the outer transaction and pays gas. The treasury sees the employee or owner as `predecessor_account_id`, preserving permission checks and owner attribution. This requires no contract redeployment.
 
-Payment sponsorship covers the employee's treasury `execute` call. Company setup can batch registration, asset setup and bounded reserve deposits on the verified shared contract. Permission creation and revocation use zero attached deposit; company storage and operating reserves pay contract-side costs. Server funding paths and external Wallet Selector signing retain their existing flows. Payment principal comes from the company treasury. Its mock USDC balance does not pay native NEAR transaction fees in a user's wallet.
+Payment sponsorship covers the employee's treasury `execute` call. Company setup can batch registration, asset setup and bounded reserve deposits on the verified shared contract. Permission creation and revocation use zero attached deposit; company storage and operating reserves pay contract-side costs. The relayer pays directly for mock-USDC funding and token registration. Payment principal comes from the company treasury. Its mock USDC balance does not pay native NEAR transaction fees in a user's wallet.
 
 ## Employer allowances and revocation
 
@@ -52,7 +52,7 @@ A first sponsored payment or registration can involve two outer transactions: si
 - Payments use one `execute` action with 150 TGas and zero attached deposit. Root creation and revocation each use one 80 TGas zero-deposit action. Registration uses the exact verified deposit, at most 0.2 NEAR, with separately bounded setup/reserve actions. Arbitrary calls, spendable wallet top-ups, key management and contract deployment cannot be requested.
 - Employee signatures include the NEP-461 signing domain, sender, receiver, exact canonical call arguments, access-key nonce and a maximum 120-block validity window. The server verifies the signature before relaying.
 - Sponsor balance, exact authorized actions and bounded deposits constrain sponsorship. Legacy daily quota counters are unused. Gas prices above 1,000,000,000 yoctoNEAR per gas are refused.
-- A database lease serializes relayer-key use across web instances. Allocated nonces advance monotonically. Quota and nonce mutations are not automatically retried after ambiguous database responses.
+- A database lease serializes relayer-key use across web instances. Allocated nonces advance monotonically. Journal and nonce mutations are not automatically retried after ambiguous database responses.
 - The exact signed outer transaction and its hash are saved before broadcast. A repeated payment request only queries that transaction. It never automatically submits a replacement after an uncertain result.
 - Request IDs are bound to the employee, treasury/company scope and exact payment details. Payment verification accepts chain-verified NEP-366 envelopes while still matching the employee, treasury, company and request ID.
 
