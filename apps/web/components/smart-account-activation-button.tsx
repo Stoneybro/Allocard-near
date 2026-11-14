@@ -101,7 +101,7 @@ export function SmartAccountActivationButton({
             : "Activate your account"}
         {!pending && <ArrowRight className="size-4" aria-hidden="true" />}
       </Button>
-      {pending && <OperationStatus message={stage === "funding" ? "Adding your demo funds…" : "Setting up your account…"} delayedMessage={stage === "setup" ? "Setting up your account. This may take a few seconds." : undefined} />}
+      {pending && <OperationStatus message={stage === "funding" ? "Adding your demo funds…" : "Setting up your account…"} delayedMessage={stage === "setup" ? "Setting up your account. This may take a few seconds." : undefined} extendedMessage={mode === "company" && stage === "setup" ? "Your account is still being set up…" : undefined} />}
       {(error || configError) && (
         <p role="alert" className="text-xs text-destructive">
           {error || configError}

@@ -9,10 +9,13 @@ it("replaces the single status line after five seconds and keeps the final stage
   vi.useFakeTimers();
   const host = document.createElement("div"), root = createRoot(host);
   try {
-    await act(async () => root.render(<OperationStatus message="Setting up your account…" delayedMessage="Setting up your account. This may take a few seconds." />));
+    await act(async () => root.render(<OperationStatus message="Setting up your account…" delayedMessage="Setting up your account. This may take a few seconds." extendedMessage="Your account is still being set up…" />));
     expect(host.textContent).toBe("Setting up your account…");
     await act(async () => vi.advanceTimersByTime(5000));
     expect(host.textContent).toBe("Setting up your account. This may take a few seconds.");
+    expect(host.querySelectorAll('[role="status"]')).toHaveLength(1);
+    await act(async () => vi.advanceTimersByTime(10000));
+    expect(host.textContent).toBe("Your account is still being set up…");
     expect(host.querySelectorAll('[role="status"]')).toHaveLength(1);
     await act(async () => root.render(<OperationStatus message="Adding your demo funds…" />));
     await act(async () => vi.advanceTimersByTime(60000));

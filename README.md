@@ -1,6 +1,6 @@
 # Allocard
 
-[Live app](https://allocard.xyz) · [Watch the demo](https://youtu.be/-zg-bYNrpVE) · [Demo post on X](https://x.com/useAllocard/status/2121416296466108729)
+[Live app](https://allocard.xyz) · [Watch the demo](https://youtu.be/-zg-bYNrpVE) · [Demo post on X](https://x.com/useAllocard/status/2121416296466108729) · [Sample delegation transaction](https://testnet.nearblocks.io/txns/J9mWyabKPs65DPQznyZ9bdVVNvgGCWCpK4BfphEAnfdm)
 
 ## The problem
 
